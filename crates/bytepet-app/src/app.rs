@@ -1,5 +1,6 @@
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{self, Receiver, TryRecvError};
+use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -26,6 +27,9 @@ const MENU_ROW: f32 = 30.0;
 const MENU_PAD: f32 = 6.0;
 const MENU_ROWS: f32 = 4.0;
 const MENU_SIZE: egui::Vec2 = egui::vec2(MENU_WIDTH, MENU_ROWS * MENU_ROW + MENU_PAD * 2.0);
+const ACTIVE_REPAINT: Duration = Duration::from_millis(16);
+const EVENT_POLL_REPAINT: Duration = Duration::from_millis(100);
+const IDLE_REPAINT: Duration = Duration::from_secs(1);
 #[cfg(target_os = "macos")]
 const NATIVE_MENU_OPEN_SETTINGS_ID: &str = "bytepet.open-settings";
 #[cfg(target_os = "macos")]
@@ -105,6 +109,7 @@ pub struct BytePetApp {
     state_server: Option<StateServer>,
     state_events: Option<Receiver<StateEvent>>,
     state_server_port: u16,
+    repaint_context: Arc<Mutex<Option<egui::Context>>>,
     last_health_at: Instant,
     /// Pet import / export state for the settings window.
     import_draft: String,
@@ -275,6 +280,7 @@ impl BytePetApp {
             state_server: None,
             state_events: None,
             state_server_port: state_port,
+            repaint_context: Arc::new(Mutex::new(None)),
             last_health_at: Instant::now(),
             import_draft: String::new(),
             pending_overwrite: None,
@@ -293,6 +299,9 @@ impl BytePetApp {
     }
 
     pub fn initialize(&mut self, creation_context: &eframe::CreationContext<'_>) {
+        if let Ok(mut repaint_context) = self.repaint_context.lock() {
+            *repaint_context = Some(creation_context.egui_ctx.clone());
+        }
         self.install_tray(creation_context.egui_ctx.clone());
     }
 
@@ -1030,7 +1039,17 @@ impl BytePetApp {
             return;
         }
         let (sender, receiver) = mpsc::channel();
-        match StateServer::start(port, sender) {
+        let repaint_context = Arc::clone(&self.repaint_context);
+        let wake = move || {
+            let ctx = repaint_context
+                .lock()
+                .ok()
+                .and_then(|repaint_context| repaint_context.clone());
+            if let Some(ctx) = ctx {
+                ctx.request_repaint();
+            }
+        };
+        match StateServer::start_with_waker(port, sender, wake) {
             Ok(server) => {
                 tracing::info!(port = server.port(), "state protocol listening");
                 self.state_server_port = server.port();
@@ -2036,6 +2055,7 @@ impl BytePetApp {
         let (sender, receiver) = mpsc::channel();
         self.greeting_rx = Some(receiver);
         self.greeting_inflight = true;
+        let repaint_context = Arc::clone(&self.repaint_context);
         thread::spawn(move || {
             let result = DeepSeekClient::new(config)
                 .and_then(|client| {
@@ -2050,6 +2070,13 @@ impl BytePetApp {
                 })
                 .map_err(|error| format!("{error:#}"));
             let _ = sender.send(result);
+            let ctx = repaint_context
+                .lock()
+                .ok()
+                .and_then(|repaint_context| repaint_context.clone());
+            if let Some(ctx) = ctx {
+                ctx.request_repaint();
+            }
         });
         true
     }
@@ -2101,12 +2128,115 @@ impl BytePetApp {
             until: Instant::now() + Duration::from_secs(8),
         });
     }
+
+    /// Schedule only the next state change that can make this viewport stale.
+    ///
+    /// Input events and background callbacks request an immediate repaint on
+    /// their own. The fallback poll keeps global mouse state and the local
+    /// state protocol responsive, while animation frames are scheduled at
+    /// their actual durations instead of forcing a 60 FPS redraw loop.
+    fn schedule_repaint(&self, ctx: &egui::Context) {
+        let now = Instant::now();
+        let mut after = IDLE_REPAINT;
+        let mut sooner = |candidate: Duration| {
+            if candidate < after {
+                after = candidate;
+            }
+        };
+
+        if self.pet_dragged || self.walk_until.is_some() || self.menu_open {
+            sooner(ACTIVE_REPAINT);
+        }
+
+        if self.pet_visible {
+            if let Some(pet) = &self.pet {
+                sooner(pet.next_frame_after());
+            }
+        }
+
+        if self.pet_visible && !self.settings_open {
+            // Global pointer polling is needed for pixel-level hit testing and
+            // glance detection while the window is not receiving events.
+            sooner(EVENT_POLL_REPAINT);
+        }
+        if self.greeting_inflight {
+            sooner(EVENT_POLL_REPAINT);
+        }
+
+        if self.pending_single_click {
+            if let Some(last_click) = self.last_click_at {
+                sooner(last_click.checked_add(Duration::from_millis(320)).map_or(
+                    Duration::from_millis(1),
+                    |deadline| {
+                        deadline
+                            .saturating_duration_since(now)
+                            .max(Duration::from_millis(1))
+                    },
+                ));
+            } else {
+                sooner(Duration::from_millis(1));
+            }
+        }
+
+        if self.pet_visible {
+            if let Some(bubble) = &self.bubble {
+                sooner(
+                    bubble
+                        .until
+                        .saturating_duration_since(now)
+                        .max(Duration::from_millis(1)),
+                );
+            }
+        }
+
+        sooner(
+            self.last_health_at
+                .checked_add(Duration::from_secs(1))
+                .map_or(Duration::from_millis(1), |deadline| {
+                    deadline
+                        .saturating_duration_since(now)
+                        .max(Duration::from_millis(1))
+                }),
+        );
+
+        ctx.request_repaint_after(after);
+    }
 }
 
 impl PetRuntime {
     /// Sprite that was drawn last, used for the window / tray icon.
     fn current_sprite_index(&self) -> u32 {
         self.last_sprite
+    }
+
+    /// Time until the current animation can display a different frame.
+    fn next_frame_after(&self) -> Duration {
+        let Some(animation) = self.engine.current_animation() else {
+            return IDLE_REPAINT;
+        };
+        if animation.total_ms <= 0.0 || animation.durations_ms.is_empty() {
+            return IDLE_REPAINT;
+        }
+
+        let elapsed_ms = self.anim_started.elapsed().as_secs_f32() * 1000.0;
+        let time_ms = if animation.loop_anim {
+            elapsed_ms % animation.total_ms
+        } else {
+            elapsed_ms
+        };
+        if !animation.loop_anim && time_ms >= animation.total_ms {
+            return Duration::from_millis(1);
+        }
+
+        let mut frame_end = 0.0;
+        for duration in &animation.durations_ms {
+            frame_end += duration.max(1.0);
+            if time_ms < frame_end {
+                let remaining_ms = (frame_end - time_ms).clamp(1.0, 60_000.0);
+                return Duration::from_millis(remaining_ms.ceil() as u64);
+            }
+        }
+        Duration::from_millis(1)
     }
 
     fn load(entry: PetEntry) -> Result<Self> {
@@ -2200,6 +2330,7 @@ impl eframe::App for BytePetApp {
         self.poll_native_menu(ctx);
         self.poll_menu(ctx);
         self.poll_state_events(ctx);
+        self.poll_greeting();
         self.update_pet_timers();
         self.update_auto_walk(ctx, frame);
         self.drag_pet(ctx, frame);
@@ -2212,7 +2343,7 @@ impl eframe::App for BytePetApp {
             self.publish_health();
             self.last_health_at = Instant::now();
         }
-        ctx.request_repaint_after(Duration::from_millis(100));
+        self.schedule_repaint(ctx);
     }
 
     fn clear_color(&self, _visuals: &egui::Visuals) -> [f32; 4] {
@@ -2294,9 +2425,7 @@ impl eframe::App for BytePetApp {
         if self.menu_open {
             self.show_context_menu(ui.ctx());
         }
-        self.poll_greeting();
-
-        ui.ctx().request_repaint_after(Duration::from_millis(16));
+        self.schedule_repaint(ui.ctx());
     }
 }
 

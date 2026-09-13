@@ -62,20 +62,21 @@ cargo +stable-x86_64-pc-windows-gnu test --workspace
   macOS 没有等价的自省脚本。涉及窗口、托盘、菜单的改动，交付时写清“需要用户实机确认什么”。
 - 改动较大时先说清思路再动手；改完至少跑 `fmt` / `clippy` / `test`。
 
-## 当前状态（2026-09-11）
+## 当前状态（2026-09-13）
 
-- `main` 顶端提交 `bdb3e05`；最近一次全量测试 58 个通过（core 53 + app 5）。
+- 最近一次全量测试 60 个通过（core 54 + app 6）；macOS A3、B1–B7 已由用户实测通过，B10 暂无副屏条件。
 - CI：`pull_request` → main、`push` tag `v*`、`workflow_dispatch`；直接推 `main` 不跑；
   同一 ref 的旧运行会被 concurrency 取消。
 - 已完成（**以 Windows 实测为准**）：宠物格式与动画（含 V2 look 行“注视”）、宠物库
   （本地库 + 只读引用 `~/.codex/pets`、`~/.unipet/pets`，支持导入文件夹/zip、导出、删除，
   内置 ByteBot 常驻本地库）、人格 + JSON 记忆 + DeepSeek 问候、托盘（Windows 使用自绘菜单，
   macOS 使用原生菜单）、设置窗口（可滚动、原生边框、用宠物首帧当图标）、
-  本地状态协议、真·无边框宠物窗口、点击/拖动/双击/右键/看向光标/活动提醒行走。
+  本地状态协议、真·无边框宠物窗口、点击/拖动/双击/右键/看向光标/活动提醒行走、单实例锁、
+  文件日志、按需重绘，以及 macOS `.app`/LaunchAgent/签名/公证脚本。
 
 ## 关键缺口（按优先级）
 
-### 1. macOS 交互后端（第一版已接入；当前最高优先级是实机验收）
+### 1. macOS 交互后端（核心交互已通过；当前剩余是多屏与功耗实测）
 
 `crates/bytepet-app/src/platform.rs` 已接入 macOS 原生后端：
 
@@ -85,9 +86,8 @@ cargo +stable-x86_64-pc-windows-gnu test --workspace
 - AppKit 非激活窗口样式：宠物和菜单不抢前台焦点；
 - `winit::Window::set_cursor_hittest`：继续由现有 `MousePassthrough` 路径切换点击穿透。
 
-代码已经通过编译、clippy 和自动化测试，但仍需按 `docs/MACOS_VERIFICATION.md` 的 B 节实机确认：
-点击、双击、拖拽、右键菜单、转头、副屏坐标、点击穿透和 no-activate。多显示器坐标与 Retina
-缩放尤其需要人工检查。
+代码已经通过编译、clippy 和自动化测试；用户已确认 A3、B1–B7。仍需按
+`docs/MACOS_VERIFICATION.md` 实测 B10 多显示器坐标、B11 空闲 CPU，以及 C 节的 Retina/Spaces 行为。
 
 平台差异仍保持如下：
 
@@ -101,26 +101,27 @@ cargo +stable-x86_64-pc-windows-gnu test --workspace
 
 ### 2. 日常可用性（发布形态）
 
-现在更像 `cargo run` 项目，而不是每天开机就在的应用：
+基础发布能力已经补齐，仍需目标机器做最终验收：
 
-- **单实例**：没有 mutex / lock。双击两次会开两只宠物；第二个实例的状态协议端口（17872）
-  绑定失败，config/memory 并发写是 last-write-wins。
-- **开机自启**：Windows 需要 Run 键/Startup 快捷方式；macOS 需要 `.app` + Login Item/LaunchAgent。
-- **日志**：`AppPaths` 建了 `logs_dir`，但 `tracing_subscriber` 只输出到 stderr；release 是
-  `panic = "abort"`（workspace `Cargo.toml`），从 Explorer/Finder 启动后出错会静默退出。
-- **Windows 控制台窗口**：`crates/bytepet-app/src/main.rs` 没有
-  `#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]`，release exe 双击会弹控制台。
-  加这个属性前必须先有文件日志，否则什么日志都看不到。
-- **打包/分发**：当前 `.github/workflows` 只有 `ci.yml`；Tauri 时代的 release/dmg 流程随
-  Rust-only 重写删除。macOS 需要 `.app` bundle（Login Item、Dock 行为、托盘身份都依赖它），
-  对外分发还需要签名/公证。
+- **单实例**：`crates/bytepet-app/src/instance_lock.rs` 使用数据目录锁文件；同一
+  `BYTEPET_HOME` 下第二个实例会退出，锁随进程结束自动释放。
+- **日志**：`logs/bytepet.log` 与终端双写；release 已隐藏 Windows 控制台，Finder/LaunchAgent
+  启动失败时仍可查看文件日志。
+- **macOS 打包**：`scripts/package-macos.sh` 生成 `.app` 与架构包 zip，含 Info.plist、bundle id、
+  图标和 `LSUIElement`。
+- **macOS 开机自启**：`scripts/install-macos-launch-agent.sh` 安装/卸载 LaunchAgent；需要在目标
+  用户会话中实际执行并验收。
+- **签名/公证**：`scripts/sign-macos.sh` 和 `scripts/notarize-macos.sh` 已提供流程，但实际执行
+  需要用户的 Developer ID 证书和 `notarytool` profile。
+- **发布工作流**：`.github/workflows/release-macos.yml` 在 tag 或手动触发时生成架构包；默认产物
+  未签名，签名/公证需在有凭据的环境中执行。
 
 ### 3. 重绘预算（省电）
 
-- `crates/bytepet-app/src/app.rs:2132` 在 `ui()` 末尾无条件 `request_repaint_after(16ms)`，
-  `:2055` 每 100ms 一次，空闲时也按 ~60 FPS 重绘。桌宠常驻一整天，这在笔记本上是实打实的耗电。
-- 目标：只有动画、气泡、拖拽、自动行走、菜单打开时才 16ms；其余 500ms–1s 或事件驱动。
-  状态协议来事件时要主动 wake event loop（现在靠 100ms 轮询兜底）。
+- `BytePetApp::schedule_repaint` 按动画帧时长、气泡、点击判定、拖拽/自动行走和交互轮询安排
+  下一次重绘；idle 不再无条件按 60 FPS 重绘。
+- 状态协议和后台问候完成时会主动 wake event loop；全局鼠标在需要像素穿透/转头时保留低频兜底轮询。
+- 仍需在 Activity Monitor 实测 B11，确认目标机器空闲 CPU 接近 0–1%。
 
 > 原先“偶发闪 / 气泡独立窗口 / 菜单物理像素定位 / 记住位置 / 重力开关”那批 Windows 待办
 > 已从本文件移除；需要时从 git 历史或对话里找回。
@@ -137,10 +138,11 @@ cargo +stable-x86_64-pc-windows-gnu test --workspace
   实测：`style=0x96000000 POPUP=True CAPTION=False`。
 - **不要每帧重复发 `ViewportCommand::InnerSize` / `WindowLevel`**：会反复 `SetWindowPos` → 闪。
   只在该变的时候发（`app.rs` 里有 `applied_window_size` / `applied_always_on_top` 缓存）。
-- **`tray-icon` 的原生菜单会卡死整个程序**：`TrackPopupMenu` 在事件循环线程上开模态循环，
-  期间宠物不重绘、“退出”也发不出去。所以托盘不挂 menu，改用 `TrayIconEvent::Click` 弹自己的窗口。
-- **`WS_EX_NOACTIVATE` 很有用**：宠物 / 气泡 / 菜单都不该抢焦点（点宠物不该打断用户正在编辑的窗口）。
-  macOS 上没有等价实现，需要单独处理（见「关键缺口」第 1 条）。
+- **`tray-icon` 的原生菜单会卡死 Windows 程序**：Windows 的 `TrackPopupMenu` 在事件循环线程上开模态循环，
+  期间宠物不重绘、“退出”也发不出去，所以 Windows 使用 `TrayIconEvent::Click` 弹自己的窗口；
+  macOS 使用 AppKit 原生菜单。
+- **不激活窗口很有用**：宠物 / 气泡 / 菜单都不该抢焦点（点宠物不该打断用户正在编辑的窗口）。
+  Windows 使用 `WS_EX_NOACTIVATE`，macOS 使用 AppKit 的非激活面板样式，均需实机确认。
 - **状态协议曾经的“偶发空响应”**：Windows 上 `accept()` 得到的 socket 会继承监听 socket 的非阻塞模式，
   读请求时 `WouldBlock` 就把连接丢掉。修法：accept 后显式 `set_nonblocking(false)`（见 `state_server.rs`
   的回归测试 `every_request_gets_a_response`）。
@@ -163,8 +165,8 @@ cargo +stable-x86_64-pc-windows-gnu test --workspace
   `BytePet 气泡` / `BytePet 菜单` 的窗口，再用 `GetWindowLongPtrW(hwnd, GWL_STYLE / GWL_EXSTYLE)`
   看 `POPUP` / `CAPTION` / `TRANSPARENT` / `NOACTIVATE` 位。macOS 没有等价脚本，靠
   `docs/MACOS_VERIFICATION.md` 人工验收。
-- release profile：`lto = "thin"`、`codegen-units = 1`、`strip = true`、`panic = "abort"`；目前没有
-  文件日志，崩溃不会留下痕迹。
+- release profile：`lto = "thin"`、`codegen-units = 1`、`strip = true`、`panic = "abort"`；日志写入
+  数据目录的 `logs/bytepet.log`，崩溃前的 tracing 通常会留下线索。
 
 ## Git 工作流
 

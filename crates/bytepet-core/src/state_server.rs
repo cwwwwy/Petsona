@@ -91,6 +91,24 @@ pub struct StateServer {
 impl StateServer {
     /// Bind `127.0.0.1:port` (`0` picks a free port) and start serving.
     pub fn start(port: u16, sender: Sender<StateEvent>) -> Result<Self> {
+        Self::start_inner(port, sender, None)
+    }
+
+    /// Bind the state protocol and wake the UI when a valid state event is
+    /// accepted. The callback is optional in [`Self::start`] so core users
+    /// that do not have an event loop keep the original API.
+    pub fn start_with_waker<F>(port: u16, sender: Sender<StateEvent>, wake: F) -> Result<Self>
+    where
+        F: Fn() + Send + Sync + 'static,
+    {
+        Self::start_inner(port, sender, Some(Arc::new(wake)))
+    }
+
+    fn start_inner(
+        port: u16,
+        sender: Sender<StateEvent>,
+        wake: Option<Arc<dyn Fn() + Send + Sync + 'static>>,
+    ) -> Result<Self> {
         let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, port)).map_err(|error| {
             Error::config(format!(
                 "cannot bind 127.0.0.1:{port} for the state protocol: {error}"
@@ -111,9 +129,10 @@ impl StateServer {
         let handle = {
             let health = Arc::clone(&health);
             let shutdown = Arc::clone(&shutdown);
+            let wake = wake.clone();
             std::thread::Builder::new()
                 .name("bytepet-state".to_string())
-                .spawn(move || serve(listener, sender, health, shutdown))
+                .spawn(move || serve(listener, sender, health, shutdown, wake))
                 .map_err(|error| {
                     Error::config(format!("cannot spawn the state server thread: {error}"))
                 })?
@@ -159,6 +178,7 @@ fn serve(
     sender: Sender<StateEvent>,
     health: Arc<Mutex<Health>>,
     shutdown: Arc<AtomicBool>,
+    wake: Option<Arc<dyn Fn() + Send + Sync + 'static>>,
 ) {
     while !shutdown.load(Ordering::SeqCst) {
         match listener.accept() {
@@ -169,7 +189,7 @@ fn serve(
                 // with a timeout instead.
                 let _ = stream.set_nonblocking(false);
                 let _ = stream.set_read_timeout(Some(Duration::from_secs(2)));
-                let _ = handle_connection(stream, &sender, &health);
+                let _ = handle_connection(stream, &sender, &health, wake.as_ref());
             }
             Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
                 std::thread::sleep(Duration::from_millis(50));
@@ -183,6 +203,7 @@ fn handle_connection(
     mut stream: TcpStream,
     sender: &Sender<StateEvent>,
     health: &Arc<Mutex<Health>>,
+    wake: Option<&Arc<dyn Fn() + Send + Sync + 'static>>,
 ) -> std::io::Result<()> {
     let mut reader = BufReader::new(stream.try_clone()?);
     let mut request_line = String::new();
@@ -218,7 +239,11 @@ fn handle_connection(
         ("POST", "/state") => match serde_json::from_slice::<StateEvent>(&body) {
             Ok(event) => match event.pet_state() {
                 Some(_) => {
-                    let _ = sender.send(event);
+                    if sender.send(event).is_ok() {
+                        if let Some(wake) = wake {
+                            wake();
+                        }
+                    }
                     (202, r#"{"ok":true}"#.to_string())
                 }
                 None => (
@@ -304,6 +329,22 @@ mod tests {
         let response = post(port, r#"{"state":"nonsense"}"#);
         assert!(response.starts_with("HTTP/1.1 400"), "{response}");
         assert!(receiver.try_recv().is_err());
+    }
+
+    #[test]
+    fn wakes_after_accepting_a_valid_state() {
+        let (sender, _receiver) = std::sync::mpsc::channel();
+        let (wake_sender, wake_receiver) = std::sync::mpsc::channel();
+        let server = StateServer::start_with_waker(0, sender, move || {
+            let _ = wake_sender.send(());
+        })
+        .unwrap();
+
+        let response = post(server.port(), r#"{"source":"codex","state":"waiting"}"#);
+        assert!(response.starts_with("HTTP/1.1 202"), "{response}");
+        wake_receiver
+            .recv_timeout(Duration::from_secs(2))
+            .expect("valid state events wake the UI");
     }
 
     #[test]

@@ -5,13 +5,10 @@
 
 当前已知状态（2026-09-13）：
 
-- ✅ 窗口显示、托盘、设置窗口、宠物库、状态协议、持久化等**基础功能**理论上可用，待实测。
-- ⚠️ 点击、双击、右键、拖拽、转头、点击穿透、no-activate 已接入 macOS 原生后端，尚未实机
-  验收；全局坐标使用 `NSEvent::mouseLocation`，按键使用 `NSEvent::pressedMouseButtons`，
-  Escape 使用 CoreGraphics，窗口命中测试使用 winit。
-- ⚠️ 菜单栏菜单和宠物右键菜单已改为 macOS 原生 `NSMenu`，尚未实机验收菜单定位、关闭和菜单项事件。
-- ⚠️ 空闲重绘目前是 ~60 FPS（`app.rs:2132`），Activity Monitor 里 CPU 可能不为 0。
-- ⛔ 单实例、开机自启、文件日志、`.app` 打包尚未做。
+- ✅ 用户已实测通过 A3 以及 B1–B7；B4 的 macOS 原生菜单也已验证。
+- ⚠️ B10 暂无副屏验证条件；多显示器坐标与 Retina 缩放仍需实机确认。
+- ✅ 单实例保护、文件日志、按需重绘和 `.app`/LaunchAgent/签名/公证脚本已实现；签名和公证仍需
+  用户自己的 Developer ID 证书与 `notarytool` 凭据。
 
 最小可用判定：**B1（左键）、B3（拖拽）、B5（转头）、B6（穿透）、B11（空闲 CPU）全部通过**，
 macOS 才算真正可用。
@@ -34,13 +31,13 @@ BYTEPET_HOME="$HOME/.bytepet-mac-test" cargo run -p bytepet-app
 ```
 
 - 不设置 `BYTEPET_HOME` 时，数据在 `~/Library/Application Support/BytePet/`。
-- 终端运行才能看到 `tracing` 日志；目前没有文件日志。建议：
+- 日志同时写入 `logs/bytepet.log` 和终端；Finder/LaunchAgent 启动时也可直接查看文件日志：
 
 ```bash
-RUST_LOG=debug cargo run -p bytepet-app 2>&1 | tee /tmp/bytepet-mac.log
+RUST_LOG=debug cargo run -p bytepet-app
 ```
 
-- 当前没有单实例保护：测试时不要同时开多个实例，否则状态协议端口会冲突。
+- 单实例锁位于数据目录的 `bytepet.lock`；使用不同的 `BYTEPET_HOME` 才会启动隔离实例。
 
 ## A. 基础回归（现在应该能通过）
 
@@ -48,7 +45,7 @@ RUST_LOG=debug cargo run -p bytepet-app 2>&1 | tee /tmp/bytepet-mac.log
 |---|---|---|---|
 | A1 | 启动 | 宠物窗口出现、无边框、透明背景（不是黑底/白底）、置顶 | 待实测 |
 | A2 | 看菜单栏 | 出现 BytePet 托盘图标 | 待实测 |
-| A3 | 点击托盘图标 | 弹出 macOS 原生菜单：打开设置 / 显示隐藏宠物 / 退出 | 待实测 |
+| A3 | 点击托盘图标 | 弹出 macOS 原生菜单：打开设置 / 显示隐藏宠物 / 退出 | ✅ 已验证 |
 | A4 | 打开设置 | 能打开、滚动；缩放、穿透、状态协议端口、自动行走等控件可操作 | 待实测 |
 | A5 | 切换宠物 | 本地库 + `~/.codex/pets` + `~/.unipet/pets` 都能列出；切换后动画和窗口/托盘图标更新 | 待实测 |
 | A6 | 导入/导出 | 导入文件夹或 `.zip`（含拖放到窗口）；导出 Codex 上传格式；删除本地副本需确认 | 待实测 |
@@ -72,19 +69,19 @@ curl -XPOST http://127.0.0.1:17872/state \
 
 | # | 操作 | 预期结果 | 当前状态 |
 |---|---|---|---|
-| B1 | 左键单击宠物 | 挥手 + 气泡；320ms 内的第二次点击不应先触发单击 | 待实测 |
-| B2 | 快速双击 | 跳一下；不先触发单击 | 待实测 |
-| B3 | 按住拖动 | 宠物跟手移动；左右移动时播放 running-left/right；松手停下且不触发单击 | 待实测 |
-| B4 | 右键 | macOS 原生菜单出现在光标位置；点菜单外或按 Esc 关闭 | 待实测 |
-| B5 | 鼠标在宠物左右两侧移动 | row9/row10 转头动作各播放一次；0.9s 冷却；正前方死区不触发 | 待实测 |
-| B6 | 开启 `click_through` | 透明像素点击落到桌面；不透明精灵像素仍能点击；关闭时整个窗口可交互 | 待实测 |
-| B7 | 在 TextEdit/浏览器输入时点宠物 | 前台焦点不被打断，输入继续进入原应用 | 待实测 |
+| B1 | 左键单击宠物 | 挥手 + 气泡；320ms 内的第二次点击不应先触发单击 | ✅ 已验证 |
+| B2 | 快速双击 | 跳一下；不先触发单击 | ✅ 已验证 |
+| B3 | 按住拖动 | 宠物跟手移动；左右移动时播放 running-left/right；松手停下且不触发单击 | ✅ 已验证 |
+| B4 | 右键 | macOS 原生菜单出现在光标位置；点菜单外或按 Esc 关闭 | ✅ 已验证 |
+| B5 | 鼠标在宠物左右两侧移动 | row9/row10 转头动作各播放一次；0.9s 冷却；正前方死区不触发 | ✅ 已验证 |
+| B6 | 开启 `click_through` | 透明像素点击落到桌面；不透明精灵像素仍能点击；关闭时整个窗口可交互 | ✅ 已验证 |
+| B7 | 在 TextEdit/浏览器输入时点宠物 | 前台焦点不被打断，输入继续进入原应用 | ✅ 已验证 |
 | B8 | 点击 / 右键 / 打开设置 | 宠物周围不出现任何边框闪烁 | 待实测（macOS 理论上无 Windows 那个问题） |
 | B9 | 用状态协议发带 message 的 state | 气泡完整不被裁切；显示/消失时宠物不移动、窗口不闪烁 | 待实测 |
-| B10 | 在副屏右键 | 菜单出现在光标所在显示器，且被夹在工作区内 | 待实测 |
-| B11 | 空闲时看 Activity Monitor | BytePet 空闲 CPU 接近 0–1%（允许偶发波动） | ⚠️ 当前可能 >3%（~60 FPS 重绘） |
-| B12 | 启动第二个实例 | 不出现第二只宠物；要么退出，要么唤起已有实例 | ⛔ 未实现 |
-| B13 | 注销再登录 / 重启 | 宠物自动出现 | ⛔ 未实现（需要 .app + Login Item/LaunchAgent） |
+| B10 | 在副屏右键 | 菜单出现在光标所在显示器，且被夹在工作区内 | 待实测（当前无副屏条件） |
+| B11 | 空闲时看 Activity Monitor | BytePet 空闲 CPU 接近 0–1%（允许偶发波动） | 待实测（已改为按需重绘） |
+| B12 | 启动第二个实例 | 不出现第二只宠物；要么退出，要么唤起已有实例 | 待实测（已实现锁） |
+| B13 | 注销再登录 / 重启 | 宠物自动出现 | 待实测（已提供 LaunchAgent 脚本） |
 
 ## C. 多显示器 / Spaces / 窗口系统
 
@@ -97,15 +94,32 @@ curl -XPOST http://127.0.0.1:17872/state \
 | C5 | 深色 / 浅色菜单栏 | 托盘图标在两种模式下都清晰可见 | 待实测 |
 | C6 | 隐藏/显示后 | 窗口位置、层级、穿透状态保持一致 | 待实测 |
 
-## D. 打包 / 发布（后续）
+## D. 打包 / 发布
 
-- [ ] `cargo build --release` 产物直接运行正常
-- [ ] 生成 `.app` bundle（Info.plist、bundle id、图标）
-- [ ] 如不需要 Dock 图标：`LSUIElement = true` 或 activation policy = accessory
-- [ ] Login Item / LaunchAgent 开机自启
-- [ ] 签名 + notarization（对外分发时）
-- [ ] `.dmg` / `.zip` 发布产物
-- [ ] 单实例保护（macOS 与 Windows 都要）
+- [x] `cargo build --release` 编译通过；bundle 产物已完成结构检查
+- [x] `scripts/package-macos.sh` 生成 `.app` bundle、Info.plist、bundle id、图标和 zip
+- [x] `LSUIElement = true`，默认不显示 Dock 图标
+- [x] `scripts/install-macos-launch-agent.sh` 安装/卸载 LaunchAgent
+- [x] `scripts/sign-macos.sh` 提供签名和验证流程，并已用 ad-hoc 身份验证
+- [x] `scripts/notarize-macos.sh` 提供 notarytool、stapler、spctl 流程
+- [ ] 使用真实 Developer ID 证书和 Apple 凭据完成签名、公证，并在目标 Mac 实机验证
+- [x] `.github/workflows/release-macos.yml` 在 tag / 手动触发时生成 macOS 架构包
+- [x] 单实例保护（macOS 与 Windows 共用文件锁实现）
+
+打包和开机启动命令：
+
+```bash
+./scripts/package-macos.sh
+./scripts/install-macos-launch-agent.sh install dist/BytePet.app
+./scripts/install-macos-launch-agent.sh uninstall
+```
+
+签名和公证需要用户配置证书身份与钥匙串 profile：
+
+```bash
+CODESIGN_IDENTITY="Developer ID Application: ..." ./scripts/sign-macos.sh
+NOTARYTOOL_PROFILE="bytepet-notary" ./scripts/notarize-macos.sh
+```
 
 ## E. 记录模板
 

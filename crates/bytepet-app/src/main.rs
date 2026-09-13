@@ -1,23 +1,38 @@
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+
 mod app;
 mod fonts;
 mod greeting;
+mod instance_lock;
+mod logging;
 mod platform;
 
 use bytepet_core::config::{AppConfig, AppPaths};
-use tracing_subscriber::EnvFilter;
 
 fn main() -> eframe::Result {
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")),
-        )
-        .init();
-
     let paths = AppPaths::default();
     if let Err(error) = paths.ensure() {
         eprintln!("cannot prepare BytePet data directory: {error}");
         return Ok(());
     }
+    logging::init(&paths.logs_dir);
+
+    let _instance_lock =
+        match instance_lock::InstanceLock::acquire(&paths.config_dir.join("bytepet.lock")) {
+            Ok(lock) => lock,
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+                tracing::warn!(
+                    path = %paths.config_dir.display(),
+                    "BytePet is already running",
+                );
+                return Ok(());
+            }
+            Err(error) => {
+                tracing::error!(%error, "cannot acquire BytePet instance lock");
+                return Ok(());
+            }
+        };
+
     let config = AppConfig::load(&paths.config_file).unwrap_or_default();
     let app = match app::BytePetApp::new(paths, config) {
         Ok(app) => app,

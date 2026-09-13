@@ -1,0 +1,37 @@
+name: macOS Release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    runs-on: macos-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.98.0
+          components: rustfmt, clippy
+
+      - name: Package app bundle
+        run: |
+          if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
+            BYTEPET_VERSION="${GITHUB_REF_NAME#v}" ./scripts/package-macos.sh dist
+          else
+            ./scripts/package-macos.sh dist
+          fi
+
+      - name: Upload macOS artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: BytePet-macos-${{ runner.arch }}
+          path: dist/
+          if-no-files-found: error
