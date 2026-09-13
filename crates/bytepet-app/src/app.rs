@@ -13,6 +13,9 @@ use bytepet_core::pet::{PetAtlas, PetEntry, PetLibrary};
 use bytepet_core::state_server::{Health, StateEvent, StateServer};
 use eframe::egui;
 
+#[cfg(target_os = "macos")]
+use raw_window_handle::{HasWindowHandle as _, RawWindowHandle};
+
 use crate::greeting;
 
 const PET_WINDOW_MIN_WIDTH: f32 = 220.0;
@@ -23,6 +26,14 @@ const MENU_ROW: f32 = 30.0;
 const MENU_PAD: f32 = 6.0;
 const MENU_ROWS: f32 = 4.0;
 const MENU_SIZE: egui::Vec2 = egui::vec2(MENU_WIDTH, MENU_ROWS * MENU_ROW + MENU_PAD * 2.0);
+#[cfg(target_os = "macos")]
+const NATIVE_MENU_OPEN_SETTINGS_ID: &str = "bytepet.open-settings";
+#[cfg(target_os = "macos")]
+const NATIVE_MENU_CHANGE_PET_ID: &str = "bytepet.change-pet";
+#[cfg(target_os = "macos")]
+const NATIVE_MENU_TOGGLE_PET_ID: &str = "bytepet.toggle-pet";
+#[cfg(target_os = "macos")]
+const NATIVE_MENU_QUIT_ID: &str = "bytepet.quit";
 /// How far the cursor may travel before a press becomes a drag.
 const CLICK_MOVE_TOLERANCE: f32 = 4.0;
 /// How long a press may last and still count as a click.
@@ -85,6 +96,10 @@ pub struct BytePetApp {
     last_window_pos: Option<egui::Vec2>,
     tray: Option<tray_icon::TrayIcon>,
     tray_events: Option<Receiver<tray_icon::TrayIconEvent>>,
+    #[cfg(target_os = "macos")]
+    native_tray_menu: Option<NativeMenu>,
+    #[cfg(target_os = "macos")]
+    native_menu_events: Option<Receiver<tray_icon::menu::MenuEvent>>,
     settings_pos: Option<egui::Pos2>,
     /// Local state protocol (Codex hooks -> pet).
     state_server: Option<StateServer>,
@@ -123,6 +138,12 @@ struct PetRuntime {
 struct Bubble {
     text: String,
     until: Instant,
+}
+
+#[cfg(target_os = "macos")]
+struct NativeMenu {
+    menu: tray_icon::menu::Menu,
+    toggle_pet: tray_icon::menu::MenuItem,
 }
 
 /// What the context menu should do next.
@@ -246,6 +267,10 @@ impl BytePetApp {
             pets,
             tray: None,
             tray_events: None,
+            #[cfg(target_os = "macos")]
+            native_tray_menu: None,
+            #[cfg(target_os = "macos")]
+            native_menu_events: None,
             settings_pos: None,
             state_server: None,
             state_events: None,
@@ -1270,6 +1295,47 @@ impl BytePetApp {
             .unwrap_or_else(|| "（无）".to_string())
     }
 
+    #[cfg(target_os = "macos")]
+    fn build_native_menu(&self) -> Option<NativeMenu> {
+        use tray_icon::menu::{Menu, MenuItem};
+
+        let menu = Menu::new();
+        let open_settings = MenuItem::with_id(NATIVE_MENU_OPEN_SETTINGS_ID, "打开设置", true, None);
+        let change_pet = MenuItem::with_id(NATIVE_MENU_CHANGE_PET_ID, "更换宠物", true, None);
+        let toggle_pet = MenuItem::with_id(
+            NATIVE_MENU_TOGGLE_PET_ID,
+            if self.pet_visible {
+                "隐藏宠物"
+            } else {
+                "显示宠物"
+            },
+            true,
+            None,
+        );
+        let quit = MenuItem::with_id(NATIVE_MENU_QUIT_ID, "退出", true, None);
+
+        for item in [&open_settings, &change_pet, &toggle_pet, &quit] {
+            if let Err(error) = menu.append(item) {
+                tracing::warn!(%error, "cannot build native macOS menu");
+                return None;
+            }
+        }
+
+        Some(NativeMenu { menu, toggle_pet })
+    }
+
+    #[cfg(target_os = "macos")]
+    fn refresh_native_tray_menu(&self) {
+        let Some(native_menu) = &self.native_tray_menu else {
+            return;
+        };
+        native_menu.toggle_pet.set_text(if self.pet_visible {
+            "隐藏宠物"
+        } else {
+            "显示宠物"
+        });
+    }
+
     /// Load another pet from the library and swap it in without restarting.
     fn switch_pet(&mut self, id: &str) {
         let Some(entry) = self.pets.iter().find(|pet| pet.id == id).cloned() else {
@@ -1303,15 +1369,23 @@ impl BytePetApp {
     }
 
     fn install_tray(&mut self, ctx: egui::Context) {
-        // The tray has no native menu on purpose: a native menu runs a modal
-        // Win32 menu loop on the event-loop thread, which froze the whole app
-        // (the pet stopped responding and the menu items did nothing).
-        // Clicking the icon opens our own popup menu instead - the same window
-        // the pet's right-click menu uses.
+        // Windows keeps the custom egui menu because TrackPopupMenu enters a
+        // modal loop on the event-loop thread. macOS uses AppKit's native menu
+        // so the status-item menu is positioned and dismissed by the system.
+        #[cfg(target_os = "macos")]
+        let native_tray_menu = self.build_native_menu();
+
         let mut builder = tray_icon::TrayIconBuilder::new()
             .with_menu_on_left_click(false)
             .with_menu_on_right_click(false)
             .with_tooltip("BytePet");
+        #[cfg(target_os = "macos")]
+        if let Some(native_menu) = native_tray_menu.as_ref() {
+            builder = builder
+                .with_menu(Box::new(native_menu.menu.clone()))
+                .with_menu_on_left_click(true)
+                .with_menu_on_right_click(true);
+        }
         tracing::info!("creating tray icon");
         if let Ok(icon) = tray_icon::Icon::from_rgba(tray_icon_rgba(), 32, 32) {
             builder = builder.with_icon(icon);
@@ -1328,16 +1402,40 @@ impl BytePetApp {
         // Click events arrive on the message thread, so hand them to the UI
         // through a channel we own and wake the event loop.
         let (sender, receiver) = mpsc::channel();
+        let tray_ctx = ctx.clone();
         tray_icon::TrayIconEvent::set_event_handler(Some(
             move |event: tray_icon::TrayIconEvent| {
                 let _ = sender.send(event);
-                ctx.request_repaint();
+                tray_ctx.request_repaint();
             },
         ));
         self.tray_events = Some(receiver);
+
+        #[cfg(target_os = "macos")]
+        {
+            self.native_tray_menu = native_tray_menu;
+            let (sender, receiver) = mpsc::channel();
+            let menu_ctx = ctx.clone();
+            tray_icon::menu::MenuEvent::set_event_handler(Some(
+                move |event: tray_icon::menu::MenuEvent| {
+                    let _ = sender.send(event);
+                    menu_ctx.request_repaint();
+                },
+            ));
+            self.native_menu_events = Some(receiver);
+        }
     }
 
     fn poll_tray(&mut self, ctx: &egui::Context) {
+        #[cfg(target_os = "macos")]
+        if self.native_tray_menu.is_some() {
+            // AppKit already opened and positioned the status-item menu.
+            if let Some(receiver) = &self.tray_events {
+                while receiver.try_recv().is_ok() {}
+            }
+            return;
+        }
+
         let Some(receiver) = &self.tray_events else {
             return;
         };
@@ -1369,6 +1467,33 @@ impl BytePetApp {
         }
     }
 
+    #[cfg(target_os = "macos")]
+    fn poll_native_menu(&mut self, ctx: &egui::Context) {
+        let Some(receiver) = &self.native_menu_events else {
+            return;
+        };
+        let mut ids = Vec::new();
+        while let Ok(event) = receiver.try_recv() {
+            ids.push(event.id);
+        }
+
+        for id in ids {
+            match id.as_ref() {
+                NATIVE_MENU_OPEN_SETTINGS_ID | NATIVE_MENU_CHANGE_PET_ID => {
+                    self.settings_open = true;
+                    self.settings_pos = None;
+                }
+                NATIVE_MENU_TOGGLE_PET_ID => {
+                    self.set_pet_visible(ctx, !self.pet_visible);
+                }
+                NATIVE_MENU_QUIT_ID => {
+                    ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                }
+                _ => {}
+            }
+        }
+    }
+
     /// Open the shared popup menu with its top-left at `anchor`.
     fn open_menu_at(&mut self, anchor: egui::Pos2) {
         self.menu_open = true;
@@ -1382,6 +1507,8 @@ impl BytePetApp {
     fn set_pet_visible(&mut self, ctx: &egui::Context, visible: bool) {
         tracing::info!(visible, "set pet visible");
         self.pet_visible = visible;
+        #[cfg(target_os = "macos")]
+        self.refresh_native_tray_menu();
         self.last_passthrough = None;
         self.press_origin = None;
         self.pet_dragged = false;
@@ -1597,6 +1724,8 @@ impl BytePetApp {
             return;
         };
         let scale = window.scale_factor().max(0.1);
+        let cursor_x = cursor_x / scale;
+        let cursor_y = cursor_y / scale;
         let pet_size = self.pet_size();
         let window_width = size.width as f64 / scale;
         let window_height = size.height as f64 / scale;
@@ -1719,6 +1848,30 @@ impl BytePetApp {
         }
     }
 
+    #[cfg(target_os = "macos")]
+    fn show_native_pet_menu(&self, window: &winit::window::Window) {
+        use tray_icon::menu::ContextMenu as _;
+
+        let Some(native_menu) = self.build_native_menu() else {
+            return;
+        };
+        let Ok(handle) = window.window_handle() else {
+            return;
+        };
+        let RawWindowHandle::AppKit(handle) = handle.as_raw() else {
+            return;
+        };
+
+        // Passing None asks AppKit to use the current mouse location in
+        // screen coordinates, so it handles menu-bar offsets, Retina scaling,
+        // and multi-monitor placement itself.
+        unsafe {
+            let _ = native_menu
+                .menu
+                .show_context_menu_for_nsview(handle.ns_view.as_ptr(), None);
+        }
+    }
+
     /// Read the cursor and the mouse buttons and turn them into pet input.
     ///
     /// Using the system state instead of window events keeps the per-pixel
@@ -1784,6 +1937,9 @@ impl BytePetApp {
             }
         }
         if right_pressed && over_pet {
+            #[cfg(target_os = "macos")]
+            self.show_native_pet_menu(window);
+            #[cfg(not(target_os = "macos"))]
             self.open_menu_at(egui::pos2(cursor_x as f32 / scale, cursor_y as f32 / scale));
         }
     }
@@ -2040,6 +2196,8 @@ impl PetRuntime {
 impl eframe::App for BytePetApp {
     fn logic(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
         self.poll_tray(ctx);
+        #[cfg(target_os = "macos")]
+        self.poll_native_menu(ctx);
         self.poll_menu(ctx);
         self.poll_state_events(ctx);
         self.update_pet_timers();
@@ -2062,6 +2220,13 @@ impl eframe::App for BytePetApp {
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        #[cfg(target_os = "macos")]
+        if let Some(window) = _frame.winit_window() {
+            // AppKit needs the non-activating panel mask; winit's
+            // `with_active(false)` only affects initial creation.
+            crate::platform::set_no_activate(window);
+        }
+
         #[cfg(target_os = "windows")]
         {
             use winit::platform::windows::{CornerPreference, WindowExtWindows as _};

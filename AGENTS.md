@@ -6,7 +6,7 @@ BytePet 是一个 Windows / macOS 桌宠：**Rust-only**（eframe/egui + winit +
 没有 Node、WebView 或 Tauri 运行时。它读取 Codex 宠物包（`pet.json` + 8×9 / 8×11 图集），
 按官方动画表播放，支持人格、轻量 JSON 记忆、DeepSeek 短问候，以及一个本地状态协议。
 
-**平台现状（重要）**：Windows 是当前实测平台；macOS 只是“能编译”，交互层尚未实现
+**平台现状（重要）**：Windows 是当前实测平台；macOS 交互后端已接入第一版，但尚未完成人工验收
 （见「关键缺口」第 1 条和 `docs/MACOS_VERIFICATION.md`）。不要把 CI 的 macOS 绿灯当成
 macOS 可用的证据。
 
@@ -69,40 +69,30 @@ cargo +stable-x86_64-pc-windows-gnu test --workspace
   同一 ref 的旧运行会被 concurrency 取消。
 - 已完成（**以 Windows 实测为准**）：宠物格式与动画（含 V2 look 行“注视”）、宠物库
   （本地库 + 只读引用 `~/.codex/pets`、`~/.unipet/pets`，支持导入文件夹/zip、导出、删除，
-  内置 ByteBot 常驻本地库）、人格 + JSON 记忆 + DeepSeek 问候、托盘（**不用原生菜单**，
-  点击托盘图标弹自己的菜单窗口）、设置窗口（可滚动、原生边框、用宠物首帧当图标）、
+  内置 ByteBot 常驻本地库）、人格 + JSON 记忆 + DeepSeek 问候、托盘（Windows 使用自绘菜单，
+  macOS 使用原生菜单）、设置窗口（可滚动、原生边框、用宠物首帧当图标）、
   本地状态协议、真·无边框宠物窗口、点击/拖动/双击/右键/看向光标/活动提醒行走。
 
 ## 关键缺口（按优先级）
 
-### 1. macOS 交互后端（最高优先级；用户接下来 2–3 天主力在 Mac）
+### 1. macOS 交互后端（第一版已接入；当前最高优先级是实机验收）
 
-代码现状：`crates/bytepet-app/src/platform.rs` 的所有非 Windows 实现都是空壳：
+`crates/bytepet-app/src/platform.rs` 已接入 macOS 原生后端：
 
-- `escape_pressed()` → `false`（:205）
-- `primary_button_down()` → `None`（:223）
-- `secondary_button_down()` → `None`（:237）
-- `global_cursor_position()` → `None`（:275）
-- `set_no_activate()`、`strip_frame_styles()`、`enable_transparency()`、`clear_dwm_frame()` → no-op
+- `NSEvent::mouseLocation`：全局光标位置，并转换为 winit 的屏幕坐标；
+- `NSEvent::pressedMouseButtons`：主/次按键状态；
+- CoreGraphics `CGEventSourceKeyState`：Escape 状态；
+- AppKit 非激活窗口样式：宠物和菜单不抢前台焦点；
+- `winit::Window::set_cursor_hittest`：继续由现有 `MousePassthrough` 路径切换点击穿透。
 
-`crates/bytepet-app/src/app.rs` 的交互完全依赖这些函数：
+代码已经通过编译、clippy 和自动化测试，但仍需按 `docs/MACOS_VERIFICATION.md` 的 B 节实机确认：
+点击、双击、拖拽、右键菜单、转头、副屏坐标、点击穿透和 no-activate。多显示器坐标与 Retina
+缩放尤其需要人工检查。
 
-- `update_pointer`（:1729、:1741）：macOS 上左右键永远 `false`，全局光标 `None` 直接 return →
-  单击、双击、右键、拖拽全部无效。
-- `drag_pet`（:1545）：拿不到全局光标 → `drag_grab` 永远是 `None` → 宠物拖不动。
-- `update_glance`（:1591）：拿不到全局光标 → 不转头。
-- `update_passthrough`（:1701）：拿不到全局光标 → 永远不会发 `ViewportCommand::MousePassthrough`；
-  默认 `click_through: true`（`crates/bytepet-core/src/config.rs`:91），macOS 上宠物矩形可能变成
-  挡住桌面点击的死区。
-- `poll_menu`（:508）：拿不到全局光标 → 点击外部关闭菜单失效。
-- `set_no_activate` 是 no-op → macOS 上点宠物可能抢走前台窗口焦点。
-
-修复方向：抽一层平台无关的指针后端（`PointerBackend` / `PointerSource`），至少提供全局光标位置、
-主/次按键状态、Escape 状态、no-activate、cursor hittest 切换：
+平台差异仍保持如下：
 
 - Windows：继续用现有 Win32（`GetCursorPos` / `GetAsyncKeyState` / `WS_EX_NOACTIVATE`）。
-- macOS：`NSEvent::mouseLocation` + `NSEvent::pressedMouseButtons`（需要引入 `objc2` 之类
-  macOS 专用依赖）；只靠 egui 事件拿不到窗口外的全局光标，可以先作为窗口内降级实现。
+- macOS：使用 `NSEvent` 和 AppKit；只靠 egui 事件拿不到窗口外的全局光标。
   `winit` 0.30 的 `Window::set_cursor_hittest` 在 macOS 可用，缺的是全局坐标/按键，不是穿透 API。
 - `NSEvent::mouseLocation` 是屏幕坐标，原点/Y 方向与 winit 的坐标约定不同；多显示器下要通过
   winit 的 monitor 几何做映射，别直接混用。

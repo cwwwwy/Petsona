@@ -1,3 +1,113 @@
+#[cfg(target_os = "macos")]
+mod macos {
+    use objc2::MainThreadMarker;
+    use objc2_app_kit::{NSApplication, NSEvent, NSScreen, NSView, NSWindowStyleMask};
+    use raw_window_handle::{HasWindowHandle as _, RawWindowHandle};
+
+    #[link(name = "CoreGraphics", kind = "framework")]
+    unsafe extern "C" {
+        fn CGEventSourceKeyState(state_id: i32, key: u16) -> bool;
+    }
+
+    const HID_SYSTEM_STATE: i32 = 1;
+    const ESCAPE_KEY_CODE: u16 = 53;
+
+    fn appkit_window(
+        window: &winit::window::Window,
+    ) -> Option<objc2::rc::Retained<objc2_app_kit::NSWindow>> {
+        let handle = window.window_handle().ok()?;
+        let RawWindowHandle::AppKit(handle) = handle.as_raw() else {
+            return None;
+        };
+        // winit owns the view for the lifetime of the WindowHandle. The
+        // handle is only borrowed for this synchronous AppKit call.
+        let view: &NSView = unsafe { handle.ns_view.cast::<NSView>().as_ref() };
+        view.window()
+    }
+
+    pub fn set_no_activate(window: &winit::window::Window) {
+        let Some(_main_thread) = MainThreadMarker::new() else {
+            return;
+        };
+        let Some(ns_window) = appkit_window(window) else {
+            return;
+        };
+        let style = ns_window.styleMask();
+        let wanted = style | NSWindowStyleMask::NonactivatingPanel;
+        if wanted != style {
+            ns_window.setStyleMask(wanted);
+        }
+    }
+
+    pub fn set_no_activate_for_title(title: &str) -> usize {
+        let Some(main_thread) = MainThreadMarker::new() else {
+            return 0;
+        };
+        let app = NSApplication::sharedApplication(main_thread);
+        let windows = app.windows();
+        let mut hits = 0;
+        for window in windows.iter() {
+            if window.title().to_string() != title {
+                continue;
+            }
+            let style = window.styleMask();
+            let wanted = style | NSWindowStyleMask::NonactivatingPanel;
+            if wanted != style {
+                window.setStyleMask(wanted);
+            }
+            hits += 1;
+        }
+        hits
+    }
+
+    pub fn escape_pressed() -> bool {
+        // Menus deliberately do not become key windows, so AppKit will not
+        // reliably deliver Escape to egui. Poll the HID event source instead.
+        unsafe { CGEventSourceKeyState(HID_SYSTEM_STATE, ESCAPE_KEY_CODE) }
+    }
+
+    pub fn primary_button_down() -> Option<bool> {
+        let buttons = NSEvent::pressedMouseButtons();
+        Some(buttons & 1 != 0)
+    }
+
+    pub fn secondary_button_down() -> Option<bool> {
+        let buttons = NSEvent::pressedMouseButtons();
+        Some(buttons & 2 != 0)
+    }
+
+    pub fn global_cursor_position() -> Option<(f64, f64)> {
+        let point = NSEvent::mouseLocation();
+        let main_thread = MainThreadMarker::new()?;
+        let main_screen = NSScreen::mainScreen(main_thread)?;
+        let main_height = main_screen.frame().size.height;
+
+        // NSEvent reports AppKit points with the origin at the bottom-left.
+        // winit exposes physical screen coordinates with the origin at the
+        // top-left, so flip Y and apply the scale of the display containing
+        // the cursor. For a cursor near the pet this is also the pet window's
+        // scale, including a mixed-Retina setup.
+        let screen_scale = NSScreen::screens(main_thread)
+            .iter()
+            .find_map(|screen| {
+                let frame = screen.frame();
+                let x = point.x;
+                let y = point.y;
+                let inside = x >= frame.origin.x
+                    && x <= frame.origin.x + frame.size.width
+                    && y >= frame.origin.y
+                    && y <= frame.origin.y + frame.size.height;
+                inside.then(|| screen.backingScaleFactor())
+            })
+            .unwrap_or_else(|| main_screen.backingScaleFactor());
+
+        Some((
+            point.x * screen_scale,
+            (main_height - point.y) * screen_scale,
+        ))
+    }
+}
+
 /// Re-establish per-pixel transparency.
 ///
 /// winit creates transparent windows by giving DWM an empty blur region, and
@@ -100,6 +210,11 @@ pub fn set_no_activate(window: &winit::window::Window) {
     }
 }
 
+#[cfg(target_os = "macos")]
+pub fn set_no_activate(window: &winit::window::Window) {
+    macos::set_no_activate(window);
+}
+
 /// Same as [`set_no_activate`] for a window identified by its title, used for
 /// the menus that are created on demand. Returns how many windows were changed.
 #[cfg(target_os = "windows")]
@@ -178,9 +293,14 @@ pub fn set_no_activate_for_title(title: &str) -> usize {
     lookup.hits
 }
 
-#[cfg(not(target_os = "windows"))]
+#[cfg(all(not(target_os = "windows"), not(target_os = "macos")))]
 pub fn set_no_activate_for_title(_title: &str) -> usize {
     0
+}
+
+#[cfg(target_os = "macos")]
+pub fn set_no_activate_for_title(title: &str) -> usize {
+    macos::set_no_activate_for_title(title)
 }
 
 /// Is Escape held? Menus do not take focus, so the key has to be polled.
@@ -192,9 +312,14 @@ pub fn escape_pressed() -> bool {
     (state as u16 & 0x8000) != 0
 }
 
-#[cfg(not(target_os = "windows"))]
+#[cfg(all(not(target_os = "windows"), not(target_os = "macos")))]
 pub fn escape_pressed() -> bool {
     false
+}
+
+#[cfg(target_os = "macos")]
+pub fn escape_pressed() -> bool {
+    macos::escape_pressed()
 }
 
 /// Is the left mouse button held right now?
@@ -210,9 +335,14 @@ pub fn primary_button_down() -> Option<bool> {
     Some((state as u16 & 0x8000) != 0)
 }
 
-#[cfg(not(target_os = "windows"))]
+#[cfg(all(not(target_os = "windows"), not(target_os = "macos")))]
 pub fn primary_button_down() -> Option<bool> {
     None
+}
+
+#[cfg(target_os = "macos")]
+pub fn primary_button_down() -> Option<bool> {
+    macos::primary_button_down()
 }
 
 /// Is the right mouse button held right now?
@@ -224,9 +354,14 @@ pub fn secondary_button_down() -> Option<bool> {
     Some((state as u16 & 0x8000) != 0)
 }
 
-#[cfg(not(target_os = "windows"))]
+#[cfg(all(not(target_os = "windows"), not(target_os = "macos")))]
 pub fn secondary_button_down() -> Option<bool> {
     None
+}
+
+#[cfg(target_os = "macos")]
+pub fn secondary_button_down() -> Option<bool> {
+    macos::secondary_button_down()
 }
 
 /// Reveal a folder in the platform file manager.
@@ -262,9 +397,14 @@ pub fn global_cursor_position() -> Option<(f64, f64)> {
     (ok != 0).then_some((point.x as f64, point.y as f64))
 }
 
-#[cfg(not(target_os = "windows"))]
+#[cfg(all(not(target_os = "windows"), not(target_os = "macos")))]
 pub fn global_cursor_position() -> Option<(f64, f64)> {
     None
+}
+
+#[cfg(target_os = "macos")]
+pub fn global_cursor_position() -> Option<(f64, f64)> {
+    macos::global_cursor_position()
 }
 
 #[cfg(target_os = "windows")]
