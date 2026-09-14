@@ -2326,6 +2326,8 @@ dependencies = [
  "objc2-app-kit 0.3.2",
  "petsona-core",
  "raw-window-handle",
+ "serde",
+ "serde_json",
  "time",
  "tracing",
  "tracing-subscriber",

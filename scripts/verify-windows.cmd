@@ -2,7 +2,7 @@
 setlocal
 
 cd /d "%~dp0.."
-powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File "%~dp0verify-windows.ps1"
+powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File "%~dp0verify-windows.ps1" %*
 set "exit_code=%ERRORLEVEL%"
 
 echo.

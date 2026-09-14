@@ -6,6 +6,8 @@ mod greeting;
 mod instance_lock;
 mod logging;
 mod platform;
+#[cfg(feature = "test-hooks")]
+mod test_hooks;
 
 use petsona_core::config::{AppConfig, AppPaths};
 

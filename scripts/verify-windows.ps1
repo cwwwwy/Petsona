@@ -1,5 +1,10 @@
 #requires -Version 5.1
 
+[CmdletBinding()]
+param(
+    [switch] $Full
+)
+
 $ErrorActionPreference = "Stop"
 $root = Split-Path -Parent $PSScriptRoot
 Push-Location $root
@@ -39,8 +44,29 @@ try {
     Invoke-Step "cargo test" { cargo test --workspace --locked }
     Invoke-Step "cargo build (release linker check)" { cargo build --workspace --release --locked }
 
+    if ($Full) {
+        Invoke-Step "cargo clippy (test-hooks)" {
+            cargo clippy -p petsona-app --features test-hooks --locked -- -D warnings
+        }
+        Invoke-Step "cargo test (test-hooks)" {
+            cargo test -p petsona-app --features test-hooks --locked
+        }
+        Invoke-Step "cargo build (test-hooks release)" {
+            cargo build -p petsona-app --release --features test-hooks --locked
+        }
+
+        $smoke = Join-Path $PSScriptRoot "windows-smoke.ps1"
+        Invoke-Step "Windows smoke" {
+            powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File $smoke -Configuration Release -SkipBuild -UseTestHooks
+        }
+
+        Invoke-Step "restore default release build" {
+            cargo build --workspace --release --locked
+        }
+    }
+
     Write-Host ""
-    Write-Host "All Windows Rust gates passed." -ForegroundColor Green
+    Write-Host "All Windows verification gates passed." -ForegroundColor Green
 }
 finally {
     Pop-Location

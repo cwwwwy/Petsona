@@ -18,6 +18,8 @@ use petsona_core::state_server::{Health, StateEvent, StateServer};
 use raw_window_handle::{HasWindowHandle as _, RawWindowHandle};
 
 use crate::greeting;
+#[cfg(feature = "test-hooks")]
+use crate::test_hooks::{TestActionRequest, TestHookServer, TestStatus};
 
 const PET_WINDOW_MIN_WIDTH: f32 = 220.0;
 const BUBBLE_AREA_HEIGHT: f32 = 110.0;
@@ -65,6 +67,7 @@ pub struct PetsonaApp {
     next_walk_at: Instant,
     walk_until: Option<Instant>,
     walk_origin_x: Option<f32>,
+    walk_position_x: Option<f32>,
     last_user_action: Instant,
     last_walk_tick: Instant,
     last_click_at: Option<Instant>,
@@ -109,6 +112,30 @@ pub struct PetsonaApp {
     state_server: Option<StateServer>,
     state_events: Option<Receiver<StateEvent>>,
     state_server_port: u16,
+    #[cfg(feature = "test-hooks")]
+    test_hooks: Option<TestHookServer>,
+    #[cfg(feature = "test-hooks")]
+    test_hook_events: Option<Receiver<TestActionRequest>>,
+    #[cfg(feature = "test-hooks")]
+    test_status: Arc<Mutex<TestStatus>>,
+    #[cfg(feature = "test-hooks")]
+    test_logic_count: u64,
+    #[cfg(feature = "test-hooks")]
+    test_ui_count: u64,
+    #[cfg(feature = "test-hooks")]
+    test_state_event_count: u64,
+    #[cfg(feature = "test-hooks")]
+    test_style_reapply_count: u64,
+    #[cfg(feature = "test-hooks")]
+    test_last_repaint_ms: u64,
+    #[cfg(feature = "test-hooks")]
+    test_animation_repaint_ms: u64,
+    #[cfg(feature = "test-hooks")]
+    test_repaint_fast: u64,
+    #[cfg(feature = "test-hooks")]
+    test_repaint_medium: u64,
+    #[cfg(feature = "test-hooks")]
+    test_repaint_slow: u64,
     repaint_context: Arc<Mutex<Option<egui::Context>>>,
     last_health_at: Instant,
     /// Pet import / export state for the settings window.
@@ -220,6 +247,30 @@ impl PetsonaApp {
         let fallback = greeting::fallback_greeting(&persona);
         let selected_pet = config.active_pet.clone();
         let state_port = config.state_server.port;
+        let repaint_context: Arc<Mutex<Option<egui::Context>>> = Arc::new(Mutex::new(None));
+
+        #[cfg(feature = "test-hooks")]
+        let (test_hook_sender, test_hook_receiver) = mpsc::channel();
+        #[cfg(feature = "test-hooks")]
+        let test_hooks = {
+            let wake_context = Arc::clone(&repaint_context);
+            TestHookServer::start_from_env(test_hook_sender, move || {
+                if let Some(ctx) = wake_context
+                    .lock()
+                    .ok()
+                    .and_then(|repaint_context| repaint_context.clone())
+                {
+                    ctx.request_repaint();
+                }
+            })?
+        };
+        #[cfg(feature = "test-hooks")]
+        let test_hook_events = test_hooks.as_ref().map(|_| test_hook_receiver);
+        #[cfg(feature = "test-hooks")]
+        let test_status = test_hooks
+            .as_ref()
+            .map(|server| server.status())
+            .unwrap_or_else(|| Arc::new(Mutex::new(TestStatus::default())));
         let mut app = Self {
             paths,
             config,
@@ -245,6 +296,7 @@ impl PetsonaApp {
             next_walk_at: Instant::now() + Duration::from_secs(45 * 60),
             walk_until: None,
             walk_origin_x: None,
+            walk_position_x: None,
             last_user_action: Instant::now(),
             last_walk_tick: Instant::now(),
             last_click_at: None,
@@ -280,7 +332,31 @@ impl PetsonaApp {
             state_server: None,
             state_events: None,
             state_server_port: state_port,
-            repaint_context: Arc::new(Mutex::new(None)),
+            #[cfg(feature = "test-hooks")]
+            test_hooks,
+            #[cfg(feature = "test-hooks")]
+            test_hook_events,
+            #[cfg(feature = "test-hooks")]
+            test_status,
+            #[cfg(feature = "test-hooks")]
+            test_logic_count: 0,
+            #[cfg(feature = "test-hooks")]
+            test_ui_count: 0,
+            #[cfg(feature = "test-hooks")]
+            test_state_event_count: 0,
+            #[cfg(feature = "test-hooks")]
+            test_style_reapply_count: 0,
+            #[cfg(feature = "test-hooks")]
+            test_last_repaint_ms: 0,
+            #[cfg(feature = "test-hooks")]
+            test_animation_repaint_ms: 0,
+            #[cfg(feature = "test-hooks")]
+            test_repaint_fast: 0,
+            #[cfg(feature = "test-hooks")]
+            test_repaint_medium: 0,
+            #[cfg(feature = "test-hooks")]
+            test_repaint_slow: 0,
+            repaint_context,
             last_health_at: Instant::now(),
             import_draft: String::new(),
             pending_overwrite: None,
@@ -301,6 +377,11 @@ impl PetsonaApp {
     pub fn initialize(&mut self, creation_context: &eframe::CreationContext<'_>) {
         if let Ok(mut repaint_context) = self.repaint_context.lock() {
             *repaint_context = Some(creation_context.egui_ctx.clone());
+        }
+        #[cfg(target_os = "windows")]
+        {
+            let installed = crate::platform::install_mouse_waker(&creation_context.egui_ctx);
+            tracing::info!(installed, "event-driven mouse waker");
         }
         self.install_tray(creation_context.egui_ctx.clone());
     }
@@ -340,7 +421,12 @@ impl PetsonaApp {
         ((scale * 4.0).ceil() / 4.0).max(0.5)
     }
 
-    fn apply_viewport(&mut self, ctx: &egui::Context, window_size: egui::Vec2) {
+    fn apply_viewport(
+        &mut self,
+        ctx: &egui::Context,
+        frame: &eframe::Frame,
+        window_size: egui::Vec2,
+    ) {
         let level = self.config.window.always_on_top;
         if self.applied_always_on_top != Some(level) {
             ctx.send_viewport_cmd(egui::ViewportCommand::WindowLevel(if level {
@@ -351,8 +437,33 @@ impl PetsonaApp {
             self.applied_always_on_top = Some(level);
         }
         let target = egui::vec2(window_size.x.round(), window_size.y.round());
-        if self.applied_window_size != Some(target) {
-            ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(target));
+        let previous = self.applied_window_size;
+        if previous != Some(target) {
+            let mut positioned = false;
+            if let Some(window) = frame.winit_window() {
+                if let Ok(position) = window.outer_position() {
+                    let scale = window.scale_factor().max(0.1) as f32;
+                    let current = egui::pos2(position.x as f32 / scale, position.y as f32 / scale);
+                    let actual_size = window.outer_size();
+                    let actual_size = egui::vec2(
+                        actual_size.width as f32 / scale,
+                        actual_size.height as f32 / scale,
+                    );
+                    let anchor = bottom_center_anchor(current, actual_size);
+                    let next = position_for_bottom_center(anchor, target);
+                    crate::platform::set_window_geometry(
+                        window,
+                        next.x as f64,
+                        next.y as f64,
+                        target.x as f64,
+                        target.y as f64,
+                    );
+                    positioned = true;
+                }
+            }
+            if !positioned {
+                ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(target));
+            }
             self.applied_window_size = Some(target);
             self.resize_settled_at = Some(Instant::now());
         }
@@ -1097,6 +1208,256 @@ impl PetsonaApp {
         });
     }
 
+    #[cfg(feature = "test-hooks")]
+    fn poll_test_hooks(&mut self, ctx: &egui::Context, frame: &eframe::Frame) {
+        let mut actions = Vec::new();
+        if let Some(receiver) = &self.test_hook_events {
+            while let Ok(action) = receiver.try_recv() {
+                actions.push(action);
+            }
+        }
+        for action in actions {
+            self.apply_test_action(ctx, frame, action);
+        }
+    }
+
+    #[cfg(feature = "test-hooks")]
+    fn apply_test_action(
+        &mut self,
+        ctx: &egui::Context,
+        frame: &eframe::Frame,
+        action: TestActionRequest,
+    ) {
+        match action.action.as_str() {
+            "open-menu" => {
+                let anchor = self.test_menu_anchor(frame);
+                self.open_menu_at(anchor);
+            }
+            "close-menu" => self.dismiss_menu(),
+            "open-settings" => {
+                self.settings_open = true;
+                self.settings_pos = None;
+            }
+            "close-settings" => {
+                self.settings_open = false;
+                self.settings_pos = None;
+            }
+            "hide-pet" => self.set_pet_visible(ctx, false),
+            "show-pet" => self.set_pet_visible(ctx, true),
+            "toggle-pet" => {
+                let visible = !self.pet_visible;
+                self.set_pet_visible(ctx, visible);
+            }
+            "set-scale" => {
+                if let Some(value) = action.value {
+                    self.config.window.scale = (value as f32).clamp(0.5, 2.0);
+                }
+            }
+            "set-click-through" => {
+                if let Some(enabled) = action.enabled {
+                    self.config.window.click_through = enabled;
+                    self.last_passthrough = None;
+                }
+            }
+            "set-always-on-top" => {
+                if let Some(enabled) = action.enabled {
+                    self.config.window.always_on_top = enabled;
+                    self.applied_always_on_top = None;
+                }
+            }
+            "set-auto-walk-enabled" => {
+                if let Some(enabled) = action.enabled {
+                    self.config.window.auto_walk.enabled = enabled;
+                }
+            }
+            "show-bubble" => {
+                let text = action.text.unwrap_or_else(|| "test bubble".to_string());
+                let ttl = Duration::from_millis(action.ttl_ms.unwrap_or(8_000).max(1));
+                self.bubble = Some(Bubble {
+                    text,
+                    until: Instant::now().checked_add(ttl).unwrap_or_else(Instant::now),
+                });
+            }
+            "clear-bubble" => self.bubble = None,
+            "trigger-auto-walk" => {
+                let now = Instant::now();
+                self.config.window.auto_walk.enabled = true;
+                self.next_walk_at = now;
+                self.walk_until = None;
+                self.walk_origin_x = None;
+                self.walk_position_x = None;
+                self.walk_direction = 1.0;
+                if let Some(pet) = &mut self.pet {
+                    let _ = pet.engine.clear_all();
+                    let _ = pet.engine.set_base(PetState::Idle);
+                    pet.anim_started = now;
+                    pet.last_state = pet.engine.current();
+                }
+                let grace = self.config.window.auto_walk.user_grace_seconds.max(0.0);
+                self.last_user_action = now
+                    .checked_sub(Duration::from_secs_f32(grace + 1.0))
+                    .unwrap_or(now);
+                self.last_walk_tick = now.checked_sub(Duration::from_millis(100)).unwrap_or(now);
+            }
+            "stop-auto-walk" => {
+                self.walk_until = None;
+                self.walk_origin_x = None;
+                self.walk_position_x = None;
+                self.next_walk_at = Instant::now() + Duration::from_secs(3600);
+                self.set_walk_state(PetState::Idle);
+            }
+            "click-pet" => self.on_pet_click(),
+            "double-click-pet" => self.on_double_click(),
+            "save-config" => {
+                if let Err(error) = self.config.save(&self.paths.config_file) {
+                    tracing::warn!(%error, "test hook could not save config");
+                }
+            }
+            "quit" => ctx.send_viewport_cmd(egui::ViewportCommand::Close),
+            other => tracing::warn!(action = other, "unknown test hook action"),
+        }
+        ctx.request_repaint();
+    }
+
+    #[cfg(feature = "test-hooks")]
+    fn test_menu_anchor(&self, frame: &eframe::Frame) -> egui::Pos2 {
+        if let Some(window) = frame.winit_window() {
+            let scale = window.scale_factor().max(0.1) as f32;
+            if let Ok(position) = window.outer_position() {
+                return egui::pos2(
+                    position.x as f32 / scale + 32.0,
+                    position.y as f32 / scale + 32.0,
+                );
+            }
+        }
+        egui::pos2(100.0, 100.0)
+    }
+
+    #[cfg(feature = "test-hooks")]
+    fn test_click_point(&self, frame: &eframe::Frame) -> Option<(i32, i32)> {
+        let pet = self.pet.as_ref()?;
+        let window = frame.winit_window()?;
+        let mask = &pet.atlas.mask;
+        let idle_sprites = pet
+            .engine
+            .animation(PetState::Idle)
+            .map(|animation| animation.sprites.clone())
+            .unwrap_or_else(|| vec![pet.last_sprite]);
+
+        let mut found = None;
+        for my in 0..mask.mask_height {
+            for mx in 0..mask.mask_width {
+                let x = (mx * mask.scale + mask.scale / 2) as f32;
+                let y = (my * mask.scale + mask.scale / 2) as f32;
+                if idle_sprites
+                    .iter()
+                    .all(|sprite| mask.opaque_at_cell(*sprite, x, y))
+                {
+                    found = Some((x, y));
+                    break;
+                }
+            }
+            if found.is_some() {
+                break;
+            }
+        }
+        let (x, y) = found?;
+
+        let pet_rect = self.pet_rect(self.pet_window_size());
+        let logical_x = pet_rect.min.x + x * self.config.window.scale;
+        let logical_y = pet_rect.min.y + y * self.config.window.scale;
+        let position = window.outer_position().ok()?;
+        let scale = window.scale_factor().max(0.1) as f32;
+        Some((
+            (position.x as f32 + logical_x * scale).round() as i32,
+            (position.y as f32 + logical_y * scale).round() as i32,
+        ))
+    }
+
+    #[cfg(feature = "test-hooks")]
+    fn test_click_hits(&self, frame: &eframe::Frame, x: i32, y: i32) -> bool {
+        let Some(window) = frame.winit_window() else {
+            return false;
+        };
+        let Ok(position) = window.outer_position() else {
+            return false;
+        };
+        let scale = window.scale_factor().max(0.1) as f32;
+        let local = egui::pos2(
+            (x as f32 - position.x as f32) / scale,
+            (y as f32 - position.y as f32) / scale,
+        );
+        self.cursor_over_pet(self.pet_window_size(), local)
+    }
+
+    #[cfg(feature = "test-hooks")]
+    fn publish_test_status(&mut self, frame: &eframe::Frame) {
+        let (state, base_state, sprite_index) = match &self.pet {
+            Some(pet) => (
+                pet.engine.current().name().to_string(),
+                pet.engine.base().name().to_string(),
+                pet.last_sprite,
+            ),
+            None => ("idle".to_string(), "idle".to_string(), 0),
+        };
+        let now = Instant::now();
+        let bubble_text = self
+            .bubble
+            .as_ref()
+            .filter(|bubble| bubble.until > now)
+            .map(|bubble| bubble.text.clone());
+        let window = frame.winit_window();
+        let position = window.and_then(|window| window.outer_position().ok());
+        let size = window.map(|window| window.outer_size());
+        let hooks_port = self
+            .test_hooks
+            .as_ref()
+            .map(|server| server.port())
+            .unwrap_or(0);
+        let click_point = self.test_click_point(frame);
+        let click_hits = click_point.is_some_and(|(x, y)| self.test_click_hits(frame, x, y));
+
+        if let Ok(mut status) = self.test_status.lock() {
+            status.ok = true;
+            status.version = env!("CARGO_PKG_VERSION").to_string();
+            status.process_id = std::process::id();
+            status.pet_visible = self.pet_visible;
+            status.settings_open = self.settings_open;
+            status.menu_open = self.menu_open;
+            status.click_through = self.config.window.click_through;
+            status.passthrough = self.last_passthrough.unwrap_or(false);
+            status.pointer_left_down = self.pointer_left_down;
+            status.always_on_top = self.config.window.always_on_top;
+            status.scale = self.config.window.scale;
+            status.state = state;
+            status.base_state = base_state;
+            status.sprite_index = sprite_index;
+            status.bubble_text = bubble_text;
+            status.gaze_side = self.glance_side;
+            status.pet_dragged = self.pet_dragged;
+            status.window_x = position.map(|position| position.x);
+            status.window_y = position.map(|position| position.y);
+            status.window_width = size.map(|size| size.width);
+            status.window_height = size.map(|size| size.height);
+            status.pet_click_x = click_point.map(|point| point.0);
+            status.pet_click_y = click_point.map(|point| point.1);
+            status.pet_click_hits = click_hits;
+            status.logic_count = self.test_logic_count;
+            status.ui_count = self.test_ui_count;
+            status.state_event_count = self.test_state_event_count;
+            status.cursor_poll_count = crate::platform::cursor_poll_count();
+            status.mouse_events = crate::platform::event_driven_mouse();
+            status.mouse_position_valid = crate::platform::mouse_position_valid();
+            status.style_reapply_count = self.test_style_reapply_count;
+            status.last_repaint_ms = self.test_last_repaint_ms;
+            status.animation_repaint_ms = self.test_animation_repaint_ms;
+            status.repaint_fast = self.test_repaint_fast;
+            status.repaint_medium = self.test_repaint_medium;
+            status.repaint_slow = self.test_repaint_slow;
+            status.hooks_port = hooks_port;
+        }
+    }
+
     /// Apply state events pushed by hooks.
     fn poll_state_events(&mut self, ctx: &egui::Context) {
         let Some(receiver) = &self.state_events else {
@@ -1110,6 +1471,10 @@ impl PetsonaApp {
             return;
         }
         for event in events {
+            #[cfg(feature = "test-hooks")]
+            {
+                self.test_state_event_count = self.test_state_event_count.wrapping_add(1);
+            }
             let Some(state) = event.pet_state() else {
                 continue;
             };
@@ -1372,6 +1737,7 @@ impl PetsonaApp {
                 self.refresh_tray_icon();
                 self.walk_until = None;
                 self.walk_origin_x = None;
+                self.walk_position_x = None;
                 if let Err(error) = self.config.save(&self.paths.config_file) {
                     self.status = format!("已切换，但保存配置失败：{error}");
                 } else {
@@ -1528,6 +1894,7 @@ impl PetsonaApp {
         self.pet_visible = visible;
         #[cfg(target_os = "macos")]
         self.refresh_native_tray_menu();
+        self.walk_position_x = None;
         self.last_passthrough = None;
         self.press_origin = None;
         self.pet_dragged = false;
@@ -1546,10 +1913,12 @@ impl PetsonaApp {
 
     fn update_auto_walk(&mut self, ctx: &egui::Context, frame: &eframe::Frame) {
         if self.settings_open || !self.pet_visible || !self.config.window.auto_walk.enabled {
+            self.walk_position_x = None;
             return;
         }
         // The user is holding the pet; the reminder can wait.
         if self.pet_dragged {
+            self.walk_position_x = None;
             return;
         }
         // A hook state, greeting or click animation owns the pet; the walk
@@ -1559,6 +1928,7 @@ impl PetsonaApp {
             .as_ref()
             .is_some_and(|pet| pet.engine.current() != pet.engine.base())
         {
+            self.walk_position_x = None;
             return;
         }
         let cfg = self.config.window.auto_walk.clone();
@@ -1587,6 +1957,7 @@ impl PetsonaApp {
             }
             self.walk_until = Some(now + Duration::from_secs_f32(cfg.walk_seconds.max(1.0)));
             self.walk_origin_x = Some(current_x);
+            self.walk_position_x = Some(current_x);
             self.show_bubble("坐久了，起来活动一下吧。".to_string());
         }
 
@@ -1596,12 +1967,14 @@ impl PetsonaApp {
         if now >= until {
             self.walk_until = None;
             self.walk_origin_x = None;
+            self.walk_position_x = None;
             self.next_walk_at = now + Duration::from_secs(cfg.interval_minutes.max(1) as u64 * 60);
             self.set_walk_state(PetState::Idle);
             return;
         }
 
         let origin = self.walk_origin_x.unwrap_or(current_x);
+        let current_x = self.walk_position_x.unwrap_or(current_x);
         let half_range = cfg.range_px.max(20.0) * 0.5;
         let min_x = origin - half_range;
         let max_x = origin + half_range;
@@ -1614,6 +1987,15 @@ impl PetsonaApp {
             next_x = max_x;
             self.walk_direction = -1.0;
         }
+        #[cfg(feature = "test-hooks")]
+        tracing::debug!(
+            current_x,
+            next_x,
+            physical_x = position.x,
+            scale,
+            "test auto-walk move"
+        );
+        self.walk_position_x = Some(next_x);
         ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(egui::pos2(
             next_x,
             position.y as f32 / scale,
@@ -1707,7 +2089,11 @@ impl PetsonaApp {
             }
         }
 
-        let dx = previous.map_or(0.0, |previous| current.x - previous.x);
+        let dx = if self.pet_dragged {
+            previous.map_or(0.0, |previous| current.x - previous.x)
+        } else {
+            0.0
+        };
         if dx.abs() >= 0.5 {
             let state = if dx > 0.0 {
                 PetState::RunningRight
@@ -1794,7 +2180,7 @@ impl PetsonaApp {
         }
     }
 
-    /// Rectangle of the pet sprite inside the window (unscaled window space).
+    /// Rectangle of the scaled pet sprite inside the window.
     fn pet_rect(&self, window_size: egui::Vec2) -> egui::Rect {
         let size = self.pet_size();
         egui::Rect::from_min_size(
@@ -1823,10 +2209,11 @@ impl PetsonaApp {
         if !self.config.window.click_through {
             return true;
         }
+        let scale = self.config.window.scale.clamp(0.5, 3.0);
         pet.atlas.mask.opaque_at_cell_dilated(
             pet.last_sprite,
-            local.x - rect.min.x,
-            local.y - rect.min.y,
+            (local.x - rect.min.x) / scale,
+            (local.y - rect.min.y) / scale,
             1,
         )
     }
@@ -2135,7 +2522,7 @@ impl PetsonaApp {
     /// their own. The fallback poll keeps global mouse state and the local
     /// state protocol responsive, while animation frames are scheduled at
     /// their actual durations instead of forcing a 60 FPS redraw loop.
-    fn schedule_repaint(&self, ctx: &egui::Context) {
+    fn schedule_repaint(&mut self, ctx: &egui::Context) {
         let now = Instant::now();
         let mut after = IDLE_REPAINT;
         let mut sooner = |candidate: Duration| {
@@ -2150,13 +2537,18 @@ impl PetsonaApp {
 
         if self.pet_visible {
             if let Some(pet) = &self.pet {
-                sooner(pet.next_frame_after());
+                let animation_after = pet.next_frame_after();
+                #[cfg(feature = "test-hooks")]
+                {
+                    self.test_animation_repaint_ms = animation_after.as_millis() as u64;
+                }
+                sooner(animation_after);
             }
         }
 
-        if self.pet_visible && !self.settings_open {
-            // Global pointer polling is needed for pixel-level hit testing and
-            // glance detection while the window is not receiving events.
+        if self.pet_visible && !self.settings_open && !crate::platform::event_driven_mouse() {
+            // macOS still needs a low-frequency global pointer poll. Windows
+            // uses the low-level mouse hook and wakes only on real input.
             sooner(EVENT_POLL_REPAINT);
         }
         if self.greeting_inflight {
@@ -2199,6 +2591,17 @@ impl PetsonaApp {
                 }),
         );
 
+        #[cfg(feature = "test-hooks")]
+        {
+            self.test_last_repaint_ms = after.as_millis() as u64;
+            if after < Duration::from_millis(50) {
+                self.test_repaint_fast = self.test_repaint_fast.wrapping_add(1);
+            } else if after < Duration::from_millis(150) {
+                self.test_repaint_medium = self.test_repaint_medium.wrapping_add(1);
+            } else {
+                self.test_repaint_slow = self.test_repaint_slow.wrapping_add(1);
+            }
+        }
         ctx.request_repaint_after(after);
     }
 }
@@ -2325,6 +2728,11 @@ impl PetRuntime {
 
 impl eframe::App for PetsonaApp {
     fn logic(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
+        #[cfg(feature = "test-hooks")]
+        {
+            self.test_logic_count = self.test_logic_count.wrapping_add(1);
+            self.poll_test_hooks(ctx, frame);
+        }
         self.poll_tray(ctx);
         #[cfg(target_os = "macos")]
         self.poll_native_menu(ctx);
@@ -2368,17 +2776,40 @@ impl eframe::App for PetsonaApp {
                 let chrome_due = self
                     .resize_settled_at
                     .is_some_and(|at| at.elapsed() >= Duration::from_millis(200));
-                if !self.window_chrome_ready || chrome_due {
+                if !self.window_chrome_ready {
                     window.set_undecorated_shadow(false);
                     window.set_border_color(None);
                     window.set_corner_preference(CornerPreference::DoNotRound);
-                    crate::platform::strip_frame_styles(window);
-                    crate::platform::clear_dwm_frame(window);
-                    crate::platform::enable_transparency(window);
+                    let changed = crate::platform::strip_frame_styles(window);
+                    if changed {
+                        crate::platform::clear_dwm_frame(window);
+                        crate::platform::enable_transparency(window);
+                    }
                     // Never activate: an activation repaints the frame state and
                     // would also steal focus from the user's editor.
                     crate::platform::set_no_activate(window);
+                    #[cfg(feature = "test-hooks")]
+                    if changed {
+                        self.test_style_reapply_count =
+                            self.test_style_reapply_count.wrapping_add(1);
+                    }
                     self.window_chrome_ready = true;
+                    self.resize_settled_at = None;
+                } else if chrome_due {
+                    // winit only needs a frame rebuild if Windows actually
+                    // restored the decorated style after a resize. Reapplying
+                    // DWM state unconditionally was the remaining flash risk.
+                    let changed = crate::platform::strip_frame_styles(window);
+                    if changed {
+                        crate::platform::clear_dwm_frame(window);
+                        crate::platform::enable_transparency(window);
+                        crate::platform::set_no_activate(window);
+                        #[cfg(feature = "test-hooks")]
+                        {
+                            self.test_style_reapply_count =
+                                self.test_style_reapply_count.wrapping_add(1);
+                        }
+                    }
                     self.resize_settled_at = None;
                 }
             }
@@ -2414,7 +2845,7 @@ impl eframe::App for PetsonaApp {
         }
 
         let window_size = self.pet_window_size();
-        self.apply_viewport(ui.ctx(), window_size);
+        self.apply_viewport(ui.ctx(), _frame, window_size);
         if self.pet_visible {
             self.draw_pet(ui, window_size);
         }
@@ -2425,8 +2856,20 @@ impl eframe::App for PetsonaApp {
         if self.menu_open {
             self.show_context_menu(ui.ctx());
         }
-        self.schedule_repaint(ui.ctx());
+        #[cfg(feature = "test-hooks")]
+        {
+            self.test_ui_count = self.test_ui_count.wrapping_add(1);
+            self.publish_test_status(_frame);
+        }
     }
+}
+
+fn bottom_center_anchor(position: egui::Pos2, size: egui::Vec2) -> egui::Pos2 {
+    position + egui::vec2(size.x * 0.5, size.y)
+}
+
+fn position_for_bottom_center(anchor: egui::Pos2, size: egui::Vec2) -> egui::Pos2 {
+    anchor - egui::vec2(size.x * 0.5, size.y)
 }
 
 /// Keep a popup inside the monitor it was opened on.
@@ -2583,34 +3026,56 @@ mod tests {
         PetsonaApp::new(paths, AppConfig::default()).expect("app starts")
     }
 
-    #[test]
-    fn clicks_land_on_drawn_pixels_only() {
-        let app = test_app("pointer");
-        let window = app.pet_window_size();
-        let rect = app.pet_rect(window);
-        // The sprite is centered horizontally and pinned to the window bottom.
-        assert!((rect.center().x - window.x * 0.5).abs() < 0.5);
-        assert!((rect.bottom() - window.y).abs() < 0.5);
-        // The corner of a cell is transparent, so a click there is not the pet.
-        assert!(!app.cursor_over_pet(window, rect.min + egui::vec2(2.0, 2.0)));
-
-        // ...but any drawn pixel is.
+    fn first_opaque_cell_point(app: &PetsonaApp) -> egui::Vec2 {
         let pet = app.pet.as_ref().expect("bundled pet loads");
-        let mut hit = None;
-        'search: for y in 0..rect.height() as u32 {
-            for x in 0..rect.width() as u32 {
-                if pet
-                    .atlas
-                    .mask
-                    .opaque_at_cell(pet.last_sprite, x as f32, y as f32)
-                {
-                    hit = Some(rect.min + egui::vec2(x as f32, y as f32));
-                    break 'search;
+        let mask = &pet.atlas.mask;
+        for my in 0..mask.mask_height {
+            for mx in 0..mask.mask_width {
+                let x = (mx * mask.scale + mask.scale / 2) as f32;
+                let y = (my * mask.scale + mask.scale / 2) as f32;
+                if mask.opaque_at_cell(pet.last_sprite, x, y) {
+                    return egui::vec2(x, y);
                 }
             }
         }
-        let hit = hit.expect("the bundled pet draws something");
-        assert!(app.cursor_over_pet(window, hit));
+        panic!("the bundled pet draws something");
+    }
+
+    #[test]
+    fn clicks_land_on_drawn_pixels_only_at_any_scale() {
+        let mut app = test_app("pointer");
+        let point = first_opaque_cell_point(&app);
+
+        for scale in [1.0, 1.5, 0.75] {
+            app.config.window.scale = scale;
+            let window = app.pet_window_size();
+            let rect = app.pet_rect(window);
+            // The sprite is centered horizontally and pinned to the window bottom.
+            assert!((rect.center().x - window.x * 0.5).abs() < 0.5);
+            assert!((rect.bottom() - window.y).abs() < 0.5);
+            // The corner of a cell is transparent at every scale.
+            assert!(!app.cursor_over_pet(window, rect.min + egui::vec2(2.0, 2.0) * scale));
+
+            let hit = rect.min + point * scale;
+            assert!(
+                app.cursor_over_pet(window, hit),
+                "opaque mask point missed at scale {scale}"
+            );
+        }
+    }
+
+    #[test]
+    fn resizing_keeps_the_bottom_center_anchor() {
+        let old_position = egui::pos2(100.0, 100.0);
+        let old_size = egui::vec2(220.0, 318.0);
+        let new_size = egui::vec2(268.0, 357.0);
+        let moved =
+            position_for_bottom_center(bottom_center_anchor(old_position, old_size), new_size);
+
+        let old_anchor = bottom_center_anchor(old_position, old_size);
+        let new_anchor = bottom_center_anchor(moved, new_size);
+        assert!((old_anchor.x - new_anchor.x).abs() < 0.01);
+        assert!((old_anchor.y - new_anchor.y).abs() < 0.01);
     }
 
     #[test]

@@ -1,3 +1,196 @@
+#[cfg(target_os = "windows")]
+mod no_activate_proc {
+    use std::cell::RefCell;
+    use std::collections::HashMap;
+    use windows_sys::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        CallWindowProcW, DefWindowProcW, SetWindowLongPtrW, GWLP_WNDPROC, GWL_EXSTYLE, GWL_STYLE,
+        MA_NOACTIVATE, STYLESTRUCT, WM_MOUSEACTIVATE, WM_NCDESTROY, WM_STYLECHANGING, WNDPROC,
+        WS_BORDER, WS_CAPTION, WS_DLGFRAME, WS_EX_NOACTIVATE, WS_MAXIMIZEBOX, WS_MINIMIZEBOX,
+        WS_POPUP, WS_SYSMENU,
+    };
+
+    thread_local! {
+        static PREVIOUS: RefCell<HashMap<isize, isize>> = RefCell::new(HashMap::new());
+    }
+
+    pub fn install(hwnd: HWND) {
+        let key = hwnd as isize;
+        if PREVIOUS.with(|previous| previous.borrow().contains_key(&key)) {
+            return;
+        }
+        let previous = unsafe {
+            SetWindowLongPtrW(
+                hwnd,
+                GWLP_WNDPROC,
+                no_activate_wndproc as *const () as isize,
+            )
+        };
+        if previous != 0 {
+            PREVIOUS.with(|previous_procs| {
+                previous_procs.borrow_mut().insert(key, previous);
+            });
+        }
+    }
+
+    unsafe extern "system" fn no_activate_wndproc(
+        hwnd: HWND,
+        message: u32,
+        wparam: WPARAM,
+        lparam: LPARAM,
+    ) -> LRESULT {
+        if message == WM_MOUSEACTIVATE {
+            return MA_NOACTIVATE as LRESULT;
+        }
+        if message == WM_STYLECHANGING && lparam != 0 {
+            let styles = unsafe { &mut *(lparam as *mut STYLESTRUCT) };
+            let index = wparam as i32;
+            if index == GWL_STYLE {
+                let frame = WS_CAPTION
+                    | WS_BORDER
+                    | WS_DLGFRAME
+                    | WS_SYSMENU
+                    | WS_MINIMIZEBOX
+                    | WS_MAXIMIZEBOX;
+                styles.styleNew = (styles.styleNew & !frame) | WS_POPUP;
+            } else if index == GWL_EXSTYLE {
+                styles.styleNew |= WS_EX_NOACTIVATE;
+            }
+        }
+
+        let key = hwnd as isize;
+        let previous = PREVIOUS.with(|previous_procs| {
+            previous_procs
+                .borrow()
+                .get(&key)
+                .copied()
+                .unwrap_or_default()
+        });
+        let result = if previous == 0 {
+            unsafe { DefWindowProcW(hwnd, message, wparam, lparam) }
+        } else {
+            let previous: WNDPROC = unsafe { std::mem::transmute(previous) };
+            unsafe { CallWindowProcW(previous, hwnd, message, wparam, lparam) }
+        };
+
+        if message == WM_NCDESTROY {
+            PREVIOUS.with(|previous_procs| {
+                previous_procs.borrow_mut().remove(&key);
+            });
+        }
+        result
+    }
+}
+
+#[cfg(feature = "test-hooks")]
+static CURSOR_POLL_COUNT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+#[cfg(feature = "test-hooks")]
+fn note_cursor_poll() {
+    CURSOR_POLL_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+}
+
+#[cfg(feature = "test-hooks")]
+pub fn cursor_poll_count() -> u64 {
+    CURSOR_POLL_COUNT.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+#[cfg(target_os = "windows")]
+static MOUSE_HOOK: std::sync::atomic::AtomicIsize = std::sync::atomic::AtomicIsize::new(0);
+#[cfg(target_os = "windows")]
+static MOUSE_CONTEXT: std::sync::OnceLock<egui::Context> = std::sync::OnceLock::new();
+#[cfg(target_os = "windows")]
+static MOUSE_X: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
+#[cfg(target_os = "windows")]
+static MOUSE_Y: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
+#[cfg(target_os = "windows")]
+static MOUSE_POSITION_VALID: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
+#[cfg(target_os = "windows")]
+pub fn install_mouse_waker(ctx: &egui::Context) -> bool {
+    use std::sync::atomic::Ordering;
+    use windows_sys::Win32::UI::WindowsAndMessaging::{SetWindowsHookExW, WH_MOUSE_LL};
+
+    if MOUSE_HOOK.load(Ordering::Relaxed) != 0 {
+        return true;
+    }
+    let _ = MOUSE_CONTEXT.set(ctx.clone());
+    {
+        use windows_sys::Win32::Foundation::POINT;
+        use windows_sys::Win32::UI::WindowsAndMessaging::GetCursorPos;
+
+        let mut point = POINT { x: 0, y: 0 };
+        if unsafe { GetCursorPos(&mut point) } != 0 {
+            MOUSE_X.store(point.x, Ordering::Relaxed);
+            MOUSE_Y.store(point.y, Ordering::Relaxed);
+            MOUSE_POSITION_VALID.store(true, Ordering::Relaxed);
+        }
+    }
+    let hook =
+        unsafe { SetWindowsHookExW(WH_MOUSE_LL, Some(mouse_hook_proc), std::ptr::null_mut(), 0) };
+    if hook.is_null() {
+        return false;
+    }
+    MOUSE_HOOK.store(hook as isize, Ordering::Relaxed);
+    true
+}
+
+#[cfg(target_os = "windows")]
+unsafe extern "system" fn mouse_hook_proc(
+    code: i32,
+    wparam: windows_sys::Win32::Foundation::WPARAM,
+    lparam: windows_sys::Win32::Foundation::LPARAM,
+) -> windows_sys::Win32::Foundation::LRESULT {
+    use std::sync::atomic::Ordering;
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        CallNextHookEx, MSLLHOOKSTRUCT, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEMOVE, WM_MOUSEWHEEL,
+        WM_RBUTTONDOWN, WM_RBUTTONUP,
+    };
+
+    if code >= 0 {
+        let hook_data = unsafe { &*(lparam as *const MSLLHOOKSTRUCT) };
+        MOUSE_X.store(hook_data.pt.x, Ordering::Relaxed);
+        MOUSE_Y.store(hook_data.pt.y, Ordering::Relaxed);
+        MOUSE_POSITION_VALID.store(true, Ordering::Relaxed);
+        let message = wparam as u32;
+        if matches!(
+            message,
+            WM_MOUSEMOVE
+                | WM_LBUTTONDOWN
+                | WM_LBUTTONUP
+                | WM_RBUTTONDOWN
+                | WM_RBUTTONUP
+                | WM_MOUSEWHEEL
+        ) {
+            if let Some(ctx) = MOUSE_CONTEXT.get() {
+                ctx.request_repaint();
+            }
+        }
+    }
+    unsafe { CallNextHookEx(std::ptr::null_mut(), code, wparam, lparam) }
+}
+
+#[cfg(target_os = "windows")]
+pub fn event_driven_mouse() -> bool {
+    MOUSE_HOOK.load(std::sync::atomic::Ordering::Relaxed) != 0
+}
+
+#[cfg(all(target_os = "windows", feature = "test-hooks"))]
+pub fn mouse_position_valid() -> bool {
+    MOUSE_POSITION_VALID.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+#[cfg(all(not(target_os = "windows"), feature = "test-hooks"))]
+pub fn mouse_position_valid() -> bool {
+    false
+}
+
+#[cfg(not(target_os = "windows"))]
+pub fn event_driven_mouse() -> bool {
+    false
+}
+
 #[cfg(target_os = "macos")]
 mod macos {
     use objc2::MainThreadMarker;
@@ -77,6 +270,8 @@ mod macos {
     }
 
     pub fn global_cursor_position() -> Option<(f64, f64)> {
+        #[cfg(feature = "test-hooks")]
+        super::note_cursor_poll();
         let point = NSEvent::mouseLocation();
         let main_thread = MainThreadMarker::new()?;
         let main_screen = NSScreen::mainScreen(main_thread)?;
@@ -150,7 +345,7 @@ pub fn enable_transparency(window: &winit::window::Window) {
 /// border that flashed around the pet. A pure `WS_POPUP` window has no frame
 /// to draw at all.
 #[cfg(target_os = "windows")]
-pub fn strip_frame_styles(window: &winit::window::Window) {
+pub fn strip_frame_styles(window: &winit::window::Window) -> bool {
     use raw_window_handle::{HasWindowHandle as _, RawWindowHandle};
     use windows_sys::Win32::UI::WindowsAndMessaging::{
         GetWindowLongPtrW, SetWindowLongPtrW, SetWindowPos, GWL_STYLE, SWP_FRAMECHANGED,
@@ -159,28 +354,35 @@ pub fn strip_frame_styles(window: &winit::window::Window) {
     };
 
     let Ok(handle) = window.window_handle() else {
-        return;
+        return false;
     };
     let RawWindowHandle::Win32(handle) = handle.as_raw() else {
-        return;
+        return false;
     };
     let hwnd = handle.hwnd.get() as *mut core::ffi::c_void;
     let frame = WS_CAPTION | WS_BORDER | WS_DLGFRAME | WS_SYSMENU | WS_MINIMIZEBOX | WS_MAXIMIZEBOX;
     unsafe {
         let style = GetWindowLongPtrW(hwnd, GWL_STYLE) as u32;
         let wanted = (style & !frame) | WS_POPUP;
-        if style != wanted {
-            SetWindowLongPtrW(hwnd, GWL_STYLE, wanted as isize);
-            SetWindowPos(
-                hwnd,
-                std::ptr::null_mut(),
-                0,
-                0,
-                0,
-                0,
-                SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED,
-            );
+        if style == wanted {
+            return false;
         }
+        tracing::info!(
+            style = format_args!("0x{style:08X}"),
+            wanted = format_args!("0x{wanted:08X}"),
+            "restoring frameless window style"
+        );
+        SetWindowLongPtrW(hwnd, GWL_STYLE, wanted as isize);
+        SetWindowPos(
+            hwnd,
+            std::ptr::null_mut(),
+            0,
+            0,
+            0,
+            0,
+            SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED,
+        );
+        true
     }
 }
 
@@ -207,6 +409,7 @@ pub fn set_no_activate(window: &winit::window::Window) {
         if style & WS_EX_NOACTIVATE == 0 {
             SetWindowLongPtrW(hwnd, GWL_EXSTYLE, (style | WS_EX_NOACTIVATE) as isize);
         }
+        no_activate_proc::install(hwnd);
     }
 }
 
@@ -226,10 +429,10 @@ pub fn set_no_activate_for_title(title: &str) -> usize {
     };
     use windows_sys::Win32::Graphics::Gdi::{CreateRectRgn, DeleteObject};
     use windows_sys::Win32::UI::WindowsAndMessaging::{
-        EnumWindows, GetWindowLongPtrW, GetWindowTextW, SetWindowLongPtrW, SetWindowPos,
-        GWL_EXSTYLE, GWL_STYLE, SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE,
-        SWP_NOZORDER, WS_BORDER, WS_CAPTION, WS_DLGFRAME, WS_EX_NOACTIVATE, WS_MAXIMIZEBOX,
-        WS_MINIMIZEBOX, WS_POPUP, WS_SYSMENU,
+        EnumWindows, GetWindowLongPtrW, GetWindowTextW, GetWindowThreadProcessId,
+        SetWindowLongPtrW, SetWindowPos, GWL_EXSTYLE, GWL_STYLE, SWP_FRAMECHANGED, SWP_NOACTIVATE,
+        SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, WS_BORDER, WS_CAPTION, WS_DLGFRAME, WS_EX_NOACTIVATE,
+        WS_MAXIMIZEBOX, WS_MINIMIZEBOX, WS_POPUP, WS_SYSMENU,
     };
 
     struct Lookup<'a> {
@@ -246,6 +449,13 @@ pub fn set_no_activate_for_title(title: &str) -> usize {
         }
         let text = String::from_utf16_lossy(&buffer[..len as usize]);
         if text != lookup.title {
+            return TRUE;
+        }
+        let mut owner = 0u32;
+        unsafe {
+            GetWindowThreadProcessId(hwnd, &mut owner);
+        }
+        if owner != std::process::id() {
             return TRUE;
         }
         unsafe {
@@ -281,6 +491,7 @@ pub fn set_no_activate_for_title(title: &str) -> usize {
                 DwmEnableBlurBehindWindow(hwnd, &blur);
                 DeleteObject(region);
             }
+            no_activate_proc::install(hwnd);
         }
         lookup.hits += 1;
         TRUE
@@ -381,6 +592,53 @@ pub fn open_in_file_manager(path: &std::path::Path) -> bool {
         .is_ok()
 }
 
+/// Set position and size in one operation so the pet anchor cannot jump.
+#[cfg(target_os = "windows")]
+pub fn set_window_geometry(
+    window: &winit::window::Window,
+    x: f64,
+    y: f64,
+    width: f64,
+    height: f64,
+) {
+    use raw_window_handle::{HasWindowHandle as _, RawWindowHandle};
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        SetWindowPos, SWP_NOACTIVATE, SWP_NOOWNERZORDER, SWP_NOZORDER,
+    };
+
+    let Ok(handle) = window.window_handle() else {
+        return;
+    };
+    let RawWindowHandle::Win32(handle) = handle.as_raw() else {
+        return;
+    };
+    let scale = window.scale_factor().max(0.1);
+    let hwnd = handle.hwnd.get() as *mut core::ffi::c_void;
+    unsafe {
+        SetWindowPos(
+            hwnd,
+            std::ptr::null_mut(),
+            (x * scale).round() as i32,
+            (y * scale).round() as i32,
+            (width * scale).round() as i32,
+            (height * scale).round() as i32,
+            SWP_NOZORDER | SWP_NOOWNERZORDER | SWP_NOACTIVATE,
+        );
+    }
+}
+
+#[cfg(not(target_os = "windows"))]
+pub fn set_window_geometry(
+    window: &winit::window::Window,
+    x: f64,
+    y: f64,
+    width: f64,
+    height: f64,
+) {
+    window.set_outer_position(winit::dpi::LogicalPosition::new(x, y));
+    let _ = window.request_inner_size(winit::dpi::LogicalSize::new(width, height));
+}
+
 /// Best-effort global cursor position.
 ///
 /// Windows is the important case for pixel-level click-through: once the
@@ -389,6 +647,14 @@ pub fn open_in_file_manager(path: &std::path::Path) -> bool {
 /// back over an opaque pixel.
 #[cfg(target_os = "windows")]
 pub fn global_cursor_position() -> Option<(f64, f64)> {
+    if event_driven_mouse() && MOUSE_POSITION_VALID.load(std::sync::atomic::Ordering::Relaxed) {
+        return Some((
+            MOUSE_X.load(std::sync::atomic::Ordering::Relaxed) as f64,
+            MOUSE_Y.load(std::sync::atomic::Ordering::Relaxed) as f64,
+        ));
+    }
+    #[cfg(feature = "test-hooks")]
+    note_cursor_poll();
     use windows_sys::Win32::Foundation::POINT;
     use windows_sys::Win32::UI::WindowsAndMessaging::GetCursorPos;
 
@@ -399,6 +665,8 @@ pub fn global_cursor_position() -> Option<(f64, f64)> {
 
 #[cfg(all(not(target_os = "windows"), not(target_os = "macos")))]
 pub fn global_cursor_position() -> Option<(f64, f64)> {
+    #[cfg(feature = "test-hooks")]
+    note_cursor_poll();
     None
 }
 
