@@ -237,43 +237,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8f1fe948ff07f4bd06c30984e69f5b4899c516a3ef74f34df92a2df2ab535495"
 
 [[package]]
-name = "bytepet-app"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "bytepet-core",
- "eframe",
- "egui",
- "objc2 0.6.4",
- "objc2-app-kit 0.3.2",
- "raw-window-handle",
- "time",
- "tracing",
- "tracing-subscriber",
- "tray-icon",
- "windows-sys 0.61.2",
- "winit",
-]
-
-[[package]]
-name = "bytepet-core"
-version = "0.1.0"
-dependencies = [
- "dirs",
- "image",
- "keyring",
- "parking_lot",
- "serde",
- "serde_json",
- "tempfile",
- "thiserror 2.0.20",
- "tracing",
- "ureq",
- "uuid",
- "zip",
-]
-
-[[package]]
 name = "bytes"
 version = "1.12.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2351,6 +2314,43 @@ name = "percent-encoding"
 version = "2.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9b4f627cb1b25917193a259e49bdad08f671f8d9708acfd5fe0a8c1455d87220"
+
+[[package]]
+name = "petsona-app"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "eframe",
+ "egui",
+ "objc2 0.6.4",
+ "objc2-app-kit 0.3.2",
+ "petsona-core",
+ "raw-window-handle",
+ "time",
+ "tracing",
+ "tracing-subscriber",
+ "tray-icon",
+ "windows-sys 0.61.2",
+ "winit",
+]
+
+[[package]]
+name = "petsona-core"
+version = "0.1.0"
+dependencies = [
+ "dirs",
+ "image",
+ "keyring",
+ "parking_lot",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.20",
+ "tracing",
+ "ureq",
+ "uuid",
+ "zip",
+]
 
 [[package]]
 name = "pin-project"

@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# Run the Rust-only BytePet verification gates on a local macOS machine.
+# Run the Rust-only Petsona verification gates on a local macOS machine.
 set -euo pipefail
 
-BYTEPET_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-cd "$BYTEPET_ROOT"
+PETSONA_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$PETSONA_ROOT"
 
 step() {
   printf '\n=== %s ===\n' "$1"

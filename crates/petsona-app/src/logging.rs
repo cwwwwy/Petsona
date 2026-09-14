@@ -4,7 +4,7 @@ use std::path::Path;
 use tracing_subscriber::fmt::writer::MakeWriterExt as _;
 use tracing_subscriber::EnvFilter;
 
-const LOG_FILE_NAME: &str = "bytepet.log";
+const LOG_FILE_NAME: &str = "petsona.log";
 
 /// Install a file-backed subscriber while preserving terminal output for
 /// `cargo run`. Release launches from Finder still retain a useful log file.
@@ -25,7 +25,7 @@ pub fn init(logs_dir: &Path) {
         }
         Err(error) => {
             eprintln!(
-                "cannot open BytePet log file {}: {error}",
+                "cannot open Petsona log file {}: {error}",
                 log_path.display()
             );
             tracing_subscriber::fmt()

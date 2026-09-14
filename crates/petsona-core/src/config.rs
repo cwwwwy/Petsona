@@ -226,15 +226,15 @@ pub struct AppPaths {
 }
 
 impl AppPaths {
-    /// `BYTEPET_HOME` overrides the platform config directory, which keeps
+    /// `PETSONA_HOME` overrides the platform config directory, which keeps
     /// portable installs and smoke tests out of the user's real data.
     pub fn default_dir() -> PathBuf {
-        if let Some(dir) = std::env::var_os("BYTEPET_HOME") {
+        if let Some(dir) = std::env::var_os("PETSONA_HOME") {
             return PathBuf::from(dir);
         }
         dirs::config_dir()
             .unwrap_or_else(|| PathBuf::from("."))
-            .join("BytePet")
+            .join("Petsona")
     }
 
     pub fn resolve(config_dir: PathBuf) -> Self {

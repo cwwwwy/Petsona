@@ -5,14 +5,14 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
-use bytepet_core::config::{AppConfig, AppPaths};
-use bytepet_core::deepseek::{save_api_key, DeepSeekClient};
-use bytepet_core::memory::{EventKind, PetMemory};
-use bytepet_core::persona::{Persona, PersonaStore};
-use bytepet_core::pet::state::{PetEngine, PetState};
-use bytepet_core::pet::{PetAtlas, PetEntry, PetLibrary};
-use bytepet_core::state_server::{Health, StateEvent, StateServer};
 use eframe::egui;
+use petsona_core::config::{AppConfig, AppPaths};
+use petsona_core::deepseek::{save_api_key, DeepSeekClient};
+use petsona_core::memory::{EventKind, PetMemory};
+use petsona_core::persona::{Persona, PersonaStore};
+use petsona_core::pet::state::{PetEngine, PetState};
+use petsona_core::pet::{PetAtlas, PetEntry, PetLibrary};
+use petsona_core::state_server::{Health, StateEvent, StateServer};
 
 #[cfg(target_os = "macos")]
 use raw_window_handle::{HasWindowHandle as _, RawWindowHandle};
@@ -21,7 +21,7 @@ use crate::greeting;
 
 const PET_WINDOW_MIN_WIDTH: f32 = 220.0;
 const BUBBLE_AREA_HEIGHT: f32 = 110.0;
-const MENU_TITLE: &str = "BytePet 菜单";
+const MENU_TITLE: &str = "Petsona 菜单";
 const MENU_WIDTH: f32 = 176.0;
 const MENU_ROW: f32 = 30.0;
 const MENU_PAD: f32 = 6.0;
@@ -31,19 +31,19 @@ const ACTIVE_REPAINT: Duration = Duration::from_millis(16);
 const EVENT_POLL_REPAINT: Duration = Duration::from_millis(100);
 const IDLE_REPAINT: Duration = Duration::from_secs(1);
 #[cfg(target_os = "macos")]
-const NATIVE_MENU_OPEN_SETTINGS_ID: &str = "bytepet.open-settings";
+const NATIVE_MENU_OPEN_SETTINGS_ID: &str = "petsona.open-settings";
 #[cfg(target_os = "macos")]
-const NATIVE_MENU_CHANGE_PET_ID: &str = "bytepet.change-pet";
+const NATIVE_MENU_CHANGE_PET_ID: &str = "petsona.change-pet";
 #[cfg(target_os = "macos")]
-const NATIVE_MENU_TOGGLE_PET_ID: &str = "bytepet.toggle-pet";
+const NATIVE_MENU_TOGGLE_PET_ID: &str = "petsona.toggle-pet";
 #[cfg(target_os = "macos")]
-const NATIVE_MENU_QUIT_ID: &str = "bytepet.quit";
+const NATIVE_MENU_QUIT_ID: &str = "petsona.quit";
 /// How far the cursor may travel before a press becomes a drag.
 const CLICK_MOVE_TOLERANCE: f32 = 4.0;
 /// How long a press may last and still count as a click.
 const CLICK_MAX_HOLD: Duration = Duration::from_millis(700);
 
-pub struct BytePetApp {
+pub struct PetsonaApp {
     paths: AppPaths,
     config: AppConfig,
     personas: PersonaStore,
@@ -160,7 +160,7 @@ enum MenuAction {
     Quit,
 }
 
-impl BytePetApp {
+impl PetsonaApp {
     pub fn new(paths: AppPaths, mut config: AppConfig) -> Result<Self> {
         paths.ensure()?;
 
@@ -185,7 +185,7 @@ impl BytePetApp {
         // The bundled pet lives in the local library next to the user's own
         // pets. Deleting it in the settings opts out for good.
         if let Some(installed) =
-            bytepet_core::pet::default_pet::ensure_installed(&library, config.bundled_pet_removed)?
+            petsona_core::pet::default_pet::ensure_installed(&library, config.bundled_pet_removed)?
         {
             tracing::info!(pet = %installed.id, "installed the bundled pet");
             if config.active_pet.is_none() {
@@ -211,7 +211,7 @@ impl BytePetApp {
             memory.record_event(
                 &persona.id,
                 EventKind::AppStart,
-                Some(format!("BytePet 启动：{}", pet.entry.display_name)),
+                Some(format!("Petsona 启动：{}", pet.entry.display_name)),
             )?;
         }
         config.save(&paths.config_file)?;
@@ -443,7 +443,7 @@ impl BytePetApp {
 
         let mut action: Option<MenuAction> = None;
         ctx.show_viewport_immediate(
-            egui::ViewportId::from_hash_of("bytepet-menu"),
+            egui::ViewportId::from_hash_of("petsona-menu"),
             builder,
             |ui, _class| {
                 if first_frame {
@@ -559,7 +559,7 @@ impl BytePetApp {
     }
 
     fn show_settings_viewport(&mut self, ctx: &egui::Context) {
-        let viewport_id = egui::ViewportId::from_hash_of("bytepet-settings");
+        let viewport_id = egui::ViewportId::from_hash_of("petsona-settings");
         let size = egui::vec2(640.0, 720.0);
         // Place the settings window next to the pet, clamped to the monitor,
         // the first time it opens. After that the user owns the position.
@@ -572,7 +572,7 @@ impl BytePetApp {
             }
         };
         let builder = egui::ViewportBuilder::default()
-            .with_title("BytePet 设置")
+            .with_title("Petsona 设置")
             .with_inner_size([size.x, size.y])
             .with_min_inner_size([420.0, 480.0])
             .with_decorations(true)
@@ -640,14 +640,14 @@ impl BytePetApp {
                 .pets
                 .iter()
                 .map(|pet| {
-                    let local = pet.root == bytepet_core::pet::RootKind::AppData;
+                    let local = pet.root == petsona_core::pet::RootKind::AppData;
                     let mut label = format!(
                         "{}  ·  {}  ({})",
                         pet.display_name,
                         pet.id,
                         pet.root.label()
                     );
-                    if local && pet.id == bytepet_core::pet::DEFAULT_PET_ID {
+                    if local && pet.id == petsona_core::pet::DEFAULT_PET_ID {
                         label.push_str("  ·  内置");
                     }
                     (pet.id.clone(), label, local)
@@ -745,7 +745,7 @@ impl BytePetApp {
                     .pets
                     .iter()
                     .find(|pet| pet.id == selected)
-                    .is_some_and(|pet| pet.root == bytepet_core::pet::RootKind::AppData);
+                    .is_some_and(|pet| pet.root == petsona_core::pet::RootKind::AppData);
                 let is_active = selected == self.active_pet_id();
                 let confirm_delete = self.pending_delete.as_deref() == Some(selected.as_str());
                 if let Some(texture_id) = texture_id {
@@ -1286,7 +1286,7 @@ impl BytePetApp {
         match self.library.remove_local(id) {
             Ok(()) => {
                 self.pending_delete = None;
-                if id == bytepet_core::pet::DEFAULT_PET_ID {
+                if id == petsona_core::pet::DEFAULT_PET_ID {
                     // Do not resurrect a pet the user deleted on purpose.
                     self.config.bundled_pet_removed = true;
                     let _ = self.config.save(&self.paths.config_file);
@@ -1397,7 +1397,7 @@ impl BytePetApp {
         let mut builder = tray_icon::TrayIconBuilder::new()
             .with_menu_on_left_click(false)
             .with_menu_on_right_click(false)
-            .with_tooltip("BytePet");
+            .with_tooltip("Petsona");
         #[cfg(target_os = "macos")]
         if let Some(native_menu) = native_tray_menu.as_ref() {
             builder = builder
@@ -2323,7 +2323,7 @@ impl PetRuntime {
     }
 }
 
-impl eframe::App for BytePetApp {
+impl eframe::App for PetsonaApp {
     fn logic(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
         self.poll_tray(ctx);
         #[cfg(target_os = "macos")]
@@ -2577,10 +2577,10 @@ mod tests {
         assert_eq!(position, egui::Pos2::ZERO);
     }
 
-    fn test_app(name: &str) -> BytePetApp {
-        let paths = AppPaths::resolve(std::env::temp_dir().join(format!("bytepet-test-{name}")));
+    fn test_app(name: &str) -> PetsonaApp {
+        let paths = AppPaths::resolve(std::env::temp_dir().join(format!("petsona-test-{name}")));
         let _ = std::fs::remove_dir_all(&paths.config_dir);
-        BytePetApp::new(paths, AppConfig::default()).expect("app starts")
+        PetsonaApp::new(paths, AppConfig::default()).expect("app starts")
     }
 
     #[test]

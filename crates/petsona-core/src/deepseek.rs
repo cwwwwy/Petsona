@@ -108,7 +108,7 @@ pub fn resolve_api_key(config: &DeepSeekConfig) -> Result<String> {
         }
     }
 
-    let keyring = KeyringStore::new("com.bytepet.desktop");
+    let keyring = KeyringStore::new("com.petsona.desktop");
     match keyring.get("deepseek")? {
         Some(key) if !key.trim().is_empty() => Ok(key),
         _ => Err(Error::ProviderNotConfigured(format!(
@@ -119,7 +119,7 @@ pub fn resolve_api_key(config: &DeepSeekConfig) -> Result<String> {
 }
 
 pub fn save_api_key(key: &str) -> Result<()> {
-    KeyringStore::new("com.bytepet.desktop").set("deepseek", key.trim())
+    KeyringStore::new("com.petsona.desktop").set("deepseek", key.trim())
 }
 
 fn build_prompt(

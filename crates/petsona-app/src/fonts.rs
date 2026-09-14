@@ -28,7 +28,7 @@ pub fn install_cjk_font(ctx: &egui::Context) {
 }
 
 fn load_cjk_font() -> Option<(Vec<u8>, u32)> {
-    if let Some(path) = std::env::var_os("BYTEPET_FONT") {
+    if let Some(path) = std::env::var_os("PETSONA_FONT") {
         if let Some(font) = read_font(std::path::PathBuf::from(path)) {
             return Some((font, 0));
         }

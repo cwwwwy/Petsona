@@ -1,4 +1,4 @@
-use bytepet_core::persona::Persona;
+use petsona_core::persona::Persona;
 use time::{OffsetDateTime, UtcOffset};
 
 pub fn local_now_text() -> String {

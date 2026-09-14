@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/bytepet-core", "crates/bytepet-app"]
+members = ["crates/petsona-core", "crates/petsona-app"]
 
 [workspace.package]
 version = "0.1.0"

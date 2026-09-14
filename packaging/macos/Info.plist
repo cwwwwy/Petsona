@@ -3,17 +3,17 @@
 <plist version="1.0">
 <dict>
 	<key>CFBundleDisplayName</key>
-	<string>BytePet</string>
+	<string>Petsona</string>
 	<key>CFBundleExecutable</key>
-	<string>BytePet</string>
+	<string>Petsona</string>
 	<key>CFBundleIconFile</key>
-	<string>BytePet</string>
+	<string>Petsona</string>
 	<key>CFBundleIdentifier</key>
-	<string>com.bytepet.BytePet</string>
+	<string>com.petsona.desktop</string>
 	<key>CFBundleInfoDictionaryVersion</key>
 	<string>6.0</string>
 	<key>CFBundleName</key>
-	<string>BytePet</string>
+	<string>Petsona</string>
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>

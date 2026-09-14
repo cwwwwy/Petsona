@@ -1,8 +1,8 @@
-# BytePet 项目须知（给 AI 协作者）
+# Petsona 项目须知（给 AI 协作者）
 
 ## 这是什么
 
-BytePet 是一个 Windows / macOS 桌宠：**Rust-only**（eframe/egui + winit + tray-icon + ureq），
+Petsona 是一个 Windows / macOS 桌宠：**Rust-only**（eframe/egui + winit + tray-icon + ureq），
 没有 Node、WebView 或 Tauri 运行时。它读取 Codex 宠物包（`pet.json` + 8×9 / 8×11 图集），
 按官方动画表播放，支持人格、轻量 JSON 记忆、DeepSeek 短问候，以及一个本地状态协议。
 
@@ -14,8 +14,8 @@ macOS 可用的证据。
 
 | 路径 | 内容 |
 |---|---|
-| `crates/bytepet-core/` | 宠物格式与动画引擎、人格、记忆、DeepSeek 客户端、本地状态协议 |
-| `crates/bytepet-app/` | egui 应用；窗口/托盘/菜单/输入都在 `src/app.rs`，Win32 调用在 `src/platform.rs` |
+| `crates/petsona-core/` | 宠物格式与动画引擎、人格、记忆、DeepSeek 客户端、本地状态协议 |
+| `crates/petsona-app/` | egui 应用；窗口/托盘/菜单/输入都在 `src/app.rs`，Win32 调用在 `src/platform.rs` |
 | `legacy/` | 重构前的 Tauri 应用与前端，**仅作参考**，不参与构建 |
 | `docs/PET_NATIVE.md` | Codex 原生宠物复刻的实测记录（帧表、行语义、验收步骤） |
 | `docs/MACOS_VERIFICATION.md` | macOS 实机验收清单（基础回归 / 交互修复验收 / 多屏 / 打包） |
@@ -23,7 +23,7 @@ macOS 可用的证据。
 ## 常用命令
 
 ```powershell
-cargo run -p bytepet-app
+cargo run -p petsona-app
 cargo test --workspace
 cargo clippy --workspace --all-targets -- -D warnings
 cargo fmt --check
@@ -78,7 +78,7 @@ cargo +stable-x86_64-pc-windows-gnu test --workspace
 
 ### 1. macOS 交互后端（核心交互已通过；当前剩余是多屏与功耗实测）
 
-`crates/bytepet-app/src/platform.rs` 已接入 macOS 原生后端：
+`crates/petsona-app/src/platform.rs` 已接入 macOS 原生后端：
 
 - `NSEvent::mouseLocation`：全局光标位置，并转换为 winit 的屏幕坐标；
 - `NSEvent::pressedMouseButtons`：主/次按键状态；
@@ -103,9 +103,9 @@ cargo +stable-x86_64-pc-windows-gnu test --workspace
 
 基础发布能力已经补齐，仍需目标机器做最终验收：
 
-- **单实例**：`crates/bytepet-app/src/instance_lock.rs` 使用数据目录锁文件；同一
-  `BYTEPET_HOME` 下第二个实例会退出，锁随进程结束自动释放。
-- **日志**：`logs/bytepet.log` 与终端双写；release 已隐藏 Windows 控制台，Finder/LaunchAgent
+- **单实例**：`crates/petsona-app/src/instance_lock.rs` 使用数据目录锁文件；同一
+  `PETSONA_HOME` 下第二个实例会退出，锁随进程结束自动释放。
+- **日志**：`logs/petsona.log` 与终端双写；release 已隐藏 Windows 控制台，Finder/LaunchAgent
   启动失败时仍可查看文件日志。
 - **macOS 打包**：`scripts/package-macos.sh` 生成 `.app` 与架构包 zip，含 Info.plist、bundle id、
   图标和 `LSUIElement`。
@@ -118,7 +118,7 @@ cargo +stable-x86_64-pc-windows-gnu test --workspace
 
 ### 3. 重绘预算（省电）
 
-- `BytePetApp::schedule_repaint` 按动画帧时长、气泡、点击判定、拖拽/自动行走和交互轮询安排
+- `PetsonaApp::schedule_repaint` 按动画帧时长、气泡、点击判定、拖拽/自动行走和交互轮询安排
   下一次重绘；idle 不再无条件按 60 FPS 重绘。
 - 状态协议和后台问候完成时会主动 wake event loop；全局鼠标在需要像素穿透/转头时保留低频兜底轮询。
 - 仍需在 Activity Monitor 实测 B11，确认目标机器空闲 CPU 接近 0–1%。
@@ -153,20 +153,20 @@ cargo +stable-x86_64-pc-windows-gnu test --workspace
 
 ## 关键事实速查
 
-- 数据目录：`%APPDATA%\BytePet`（mac：`~/Library/Application Support/BytePet`），可用环境变量
-  `BYTEPET_HOME` 覆盖（测试 / 便携用）。本地宠物库在 `...\BytePet\pets`，另有只读引用
+- 数据目录：`%APPDATA%\Petsona`（mac：`~/Library/Application Support/Petsona`），可用环境变量
+  `PETSONA_HOME` 覆盖（测试 / 便携用）。本地宠物库在 `...\Petsona\pets`，另有只读引用
   `~/.codex/pets`、`~/.unipet/pets`；同 id 时本地库优先。
 - 状态协议：`127.0.0.1:17872`，`POST /state`（`{source,state,message,ttlMs}`）、`GET /health`、
   `GET /pets`；`ttlMs: 0` 表示不过期。状态名见 `docs/PET_NATIVE.md`。
 - 发行版宠物实测：V2 = 8×11；**idle 画了 7 帧**（官方时长表写 6），引擎按“真正画了内容的格子”取帧数；
   第 9 / 10 行是“转过去再转回来”的一次性动作，实测**第 9 行 = 转向右，第 10 行 = 转向左**
   （用头部深色像素重心相对头部中心测得，先拿 row1 / row2 校准过）。详见 `docs/PET_NATIVE.md`。
-- 窗口样式自查（**Windows only**，比截图可靠）：用 `EnumWindows` 找本进程里标题为 `BytePet` /
-  `BytePet 气泡` / `BytePet 菜单` 的窗口，再用 `GetWindowLongPtrW(hwnd, GWL_STYLE / GWL_EXSTYLE)`
+- 窗口样式自查（**Windows only**，比截图可靠）：用 `EnumWindows` 找本进程里标题为 `Petsona` /
+  `Petsona 气泡` / `Petsona 菜单` 的窗口，再用 `GetWindowLongPtrW(hwnd, GWL_STYLE / GWL_EXSTYLE)`
   看 `POPUP` / `CAPTION` / `TRANSPARENT` / `NOACTIVATE` 位。macOS 没有等价脚本，靠
   `docs/MACOS_VERIFICATION.md` 人工验收。
 - release profile：`lto = "thin"`、`codegen-units = 1`、`strip = true`、`panic = "abort"`；日志写入
-  数据目录的 `logs/bytepet.log`，崩溃前的 tracing 通常会留下线索。
+  数据目录的 `logs/petsona.log`，崩溃前的 tracing 通常会留下线索。
 
 ## Git 工作流
 

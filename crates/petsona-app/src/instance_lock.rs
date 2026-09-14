@@ -2,7 +2,7 @@ use std::fs::{File, OpenOptions};
 use std::io;
 use std::path::Path;
 
-/// A process-scoped lock for one BytePet data directory.
+/// A process-scoped lock for one Petsona data directory.
 ///
 /// The lock is advisory at the OS level and is released automatically when
 /// the file handle is dropped, including when the process exits unexpectedly.
@@ -26,7 +26,7 @@ impl InstanceLock {
             Ok(()) => Ok(Self { _file: file }),
             Err(std::fs::TryLockError::WouldBlock) => Err(io::Error::new(
                 io::ErrorKind::AlreadyExists,
-                "another BytePet instance is already running",
+                "another Petsona instance is already running",
             )),
             Err(std::fs::TryLockError::Error(error)) => Err(error),
         }
@@ -45,7 +45,7 @@ mod tests {
             .expect("system clock is after the Unix epoch")
             .as_nanos();
         let path = std::env::temp_dir().join(format!(
-            "bytepet-instance-lock-{}-{nonce}.lock",
+            "petsona-instance-lock-{}-{nonce}.lock",
             std::process::id()
         ));
 

@@ -1,16 +1,16 @@
 [package]
-name = "bytepet-app"
-description = "BytePet desktop pet application"
+name = "petsona-app"
+description = "Petsona desktop pet application"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 
 [[bin]]
-name = "bytepet"
+name = "petsona"
 path = "src/main.rs"
 
 [dependencies]
-bytepet-core = { path = "../bytepet-core" }
+petsona-core = { path = "../petsona-core" }
 anyhow = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }

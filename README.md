@@ -1,6 +1,7 @@
-# BytePet
+# Petsona
 
-BytePet is being rebuilt as a lightweight, Rust-only desktop pet.
+Petsona is a lightweight, Rust-only desktop pet that uses AI to cultivate a
+personality and keep the user company.
 
 The new application keeps the parts that made the original Codex pet useful:
 
@@ -22,15 +23,15 @@ and is no longer part of the workspace.
 ## Workspace
 
 ```text
-crates/bytepet-core/   Pet format, animation engine, persona, memory, DeepSeek client
-crates/bytepet-app/    egui/eframe desktop application
+crates/petsona-core/   Pet format, animation engine, persona, memory, DeepSeek client
+crates/petsona-app/    egui/eframe desktop application
 legacy/                Previous Tauri app and frontend, reference only
 ```
 
 ## Build
 
 ```powershell
-cargo run -p bytepet-app
+cargo run -p petsona-app
 ```
 
 The Windows MSVC target still requires the MSVC linker. Install Visual Studio
@@ -64,7 +65,7 @@ still require the manual checks in `docs/MACOS_VERIFICATION.md`.
 ## Inspecting a pet
 
 ```powershell
-cargo run -p bytepet-core --example pet_inspect -- "$env:USERPROFILE\.codex\pets\boba" .scratch\boba
+cargo run -p petsona-core --example pet_inspect -- "$env:USERPROFILE\.codex\pets\boba" .scratch\boba
 ```
 
 Prints the resolved grid, how many frames each row actually draws and the
@@ -73,7 +74,7 @@ PNG per animation row.
 
 ## State protocol
 
-BytePet listens on `127.0.0.1:17872` (settings -> 状态协议) so hooks and scripts
+Petsona listens on `127.0.0.1:17872` (settings -> 状态协议) so hooks and scripts
 can drive the pet:
 
 ```bash
@@ -88,7 +89,7 @@ lists the discovered pets.
 ## Pet library
 
 The application keeps its own writable library next to the config file
-(`<config>/BytePet/pets` on every platform) and links `~/.codex/pets` and
+(`<config>/Petsona/pets` on every platform) and links `~/.codex/pets` and
 `~/.unipet/pets` read-only, with the local library winning on id clashes.
 
 The bundled ByteBot is installed into the local library on every start, so it
@@ -111,12 +112,12 @@ Set the API key in the environment:
 
 ```powershell
 $env:DEEPSEEK_API_KEY = "sk-..."
-cargo run -p bytepet-app
+cargo run -p petsona-app
 ```
 
 The settings window can also save the key to the operating system keychain.
 Greeting requests are non-streaming and use a small token budget; if the API is
-unavailable, BytePet falls back to the persona's fixed or time-based greeting.
+unavailable, Petsona falls back to the persona's fixed or time-based greeting.
 
 ## Memory
 

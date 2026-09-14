@@ -1,7 +1,7 @@
 //! Minimal local state protocol.
 //!
 //! Any script, hook or editor plugin can drive the pet over plain HTTP on
-//! `127.0.0.1`. The wire format matches the previous BytePet / UniPet protocol
+//! `127.0.0.1`. The wire format matches the Petsona / UniPet protocol
 //! (`POST /state` with `{source, state, message, action, ttlMs}`) so existing
 //! hooks keep working, but the implementation is a few hundred bytes of
 //! `std::net` instead of an async web stack.
@@ -131,7 +131,7 @@ impl StateServer {
             let shutdown = Arc::clone(&shutdown);
             let wake = wake.clone();
             std::thread::Builder::new()
-                .name("bytepet-state".to_string())
+                .name("petsona-state".to_string())
                 .spawn(move || serve(listener, sender, health, shutdown, wake))
                 .map_err(|error| {
                     Error::config(format!("cannot spawn the state server thread: {error}"))

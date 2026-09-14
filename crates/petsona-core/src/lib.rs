@@ -1,4 +1,4 @@
-//! Lightweight BytePet core.
+//! Lightweight Petsona core.
 //!
 //! This crate intentionally contains no UI framework and no Tauri dependency.
 //! It owns the Codex pet format, the animation state machine, personas,

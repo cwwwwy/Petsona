@@ -3,7 +3,7 @@
 <plist version="1.0">
 <dict>
 	<key>Label</key>
-	<string>com.bytepet.BytePet</string>
+	<string>com.petsona.desktop</string>
 	<key>ProgramArguments</key>
 	<array>
 		<string>@EXECUTABLE@</string>

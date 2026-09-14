@@ -1,13 +1,13 @@
 # Codex 原生宠物复刻说明
 
-这份文档记录「BytePet 要和 Codex 自带宠物一致」这件事的实测依据，以及每条
+这份文档记录「Petsona 要和 Codex 自带宠物一致」这件事的实测依据，以及每条
 行为的实现位置。所有结论都来自对真实宠物包（`~/.codex/pets/boba`，Codex
 发行的 V2 宠物）逐帧测量，而不是凭印象写的。
 
 ## 1. 测量工具
 
 ```powershell
-cargo run -p bytepet-core --example pet_inspect -- <宠物目录> [输出目录]
+cargo run -p petsona-core --example pet_inspect -- <宠物目录> [输出目录]
 ```
 
 它会打印：
@@ -66,11 +66,11 @@ cargo run -p bytepet-core --example pet_inspect -- <宠物目录> [输出目录]
 
 ## 3. 复刻了哪些行为
 
-| Codex 宠物行为 | BytePet 实现 |
+| Codex 宠物行为 | Petsona 实现 |
 |---|---|
-| 全部 11 行动画与官方时长 | `crates/bytepet-core/src/pet/state.rs`（`official_durations` + 占用度校正） |
+| 全部 11 行动画与官方时长 | `crates/petsona-core/src/pet/state.rs`（`official_durations` + 占用度校正） |
 | V1(8×9) / V2(8×11) 自动识别 | `PetManifest::resolve_frame` + `PetLibrary::load_entry` 读图片头推断 |
-| 鼠标在宠物两侧时转头看 | `BytePetApp::update_glance` + `PetEngine::glance`（一次性，带 0.9s 冷却与死区） |
+| 鼠标在宠物两侧时转头看 | `PetsonaApp::update_glance` + `PetEngine::glance`（一次性，带 0.9s 冷却与死区） |
 | 左键：打招呼（挥手 + 气泡） | `on_pet_click` → `trigger_greeting("click")`，DeepSeek 不可用时回落到人格里的固定/时段问候 |
 | 双击：跳一下 | `on_double_click`（320ms 内第二次点击才判定为双击，不会误触发单击） |
 | 拖拽移动 | 窗口 `ViewportCommand::StartDrag` |
@@ -78,12 +78,12 @@ cargo run -p bytepet-core --example pet_inspect -- <宠物目录> [输出目录]
 | 像素级点击穿透 | `AlphaMask` + `opaque_at_cell_dilated`（1 格≈4px 外扩，避免抗锯齿边缘点不中） |
 | 自动行走（活动提醒） | `update_auto_walk`：默认 45 分钟一次，走 8 秒、速度 18px/s、范围 120px，可在设置里调；有事件/问候时不打断 |
 | 换宠物 | 设置 →「宠物」：扫描 `~/.codex/pets`、`~/.unipet/pets` 与本地库，带首帧预览，切换后热替换图集与动画并写回配置 |
-| 状态驱动（Codex hooks） | `crates/bytepet-core/src/state_server.rs` 本地 HTTP 协议，见下节 |
+| 状态驱动（Codex hooks） | `crates/petsona-core/src/state_server.rs` 本地 HTTP 协议，见下节 |
 
 ## 4. 本地状态协议
 
 默认监听 `127.0.0.1:17872`（设置 →「状态协议」里可改端口或关闭）。协议与旧版
-BytePet / UniPet 相同，任何脚本都能驱动：
+Petsona / UniPet 相同，任何脚本都能驱动：
 
 ```bash
 curl -XPOST http://127.0.0.1:17872/state \
@@ -102,11 +102,11 @@ curl -XPOST http://127.0.0.1:17872/state \
 `running-left`、`running-right`、`look-row-9`、`look-row-10`。
 
 `ttlMs: 0` 或省略表示不过期；带 `ttlMs` 的状态到点后自动回到基础动画
-（`PetEngine::tick`，由 `BytePetApp::update_pet_timers` 每帧驱动）。
+（`PetEngine::tick`，由 `PetsonaApp::update_pet_timers` 每帧驱动）。
 
 ## 5. 逐帧验收方式
 
-1. `cargo run -p bytepet-core --example pet_inspect -- <pet> out` 导出各行 PNG；
+1. `cargo run -p petsona-core --example pet_inspect -- <pet> out` 导出各行 PNG；
 2. 对比 `docs/PET_NATIVE.md` 第 2 节的表格，确认行内容与帧数；
 3. 在应用里逐条触发：左键（挥手+气泡）、双击（跳）、右键（菜单）、鼠标越过
    左右两侧（转头）、等自动行走、托盘显示/隐藏、设置里换宠物；

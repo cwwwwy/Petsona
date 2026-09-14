@@ -11,7 +11,7 @@ use crate::error::Result;
 use crate::pet::library::{PetEntry, PetLibrary, RootKind};
 
 /// Pet id of the bundled character.
-pub const DEFAULT_PET_ID: &str = "bytepet-default";
+pub const DEFAULT_PET_ID: &str = "petsona-default";
 /// Manifest of the bundled character.
 pub const DEFAULT_PET_MANIFEST: &str = include_str!("../../assets/default-pet/pet.json");
 /// Spritesheet of the bundled character (8x9 Codex atlas, 1536x1872).

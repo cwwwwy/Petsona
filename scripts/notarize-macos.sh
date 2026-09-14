@@ -1,19 +1,19 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-BYTEPET_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-ARCH="${BYTEPET_ARCH:-$(uname -m)}"
-ARCHIVE="${1:-$BYTEPET_ROOT/dist/BytePet-macos-$ARCH.zip}"
-APP_PATH="${2:-$BYTEPET_ROOT/dist/BytePet.app}"
+PETSONA_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+ARCH="${PETSONA_ARCH:-$(uname -m)}"
+ARCHIVE="${1:-$PETSONA_ROOT/dist/Petsona-macos-$ARCH.zip}"
+APP_PATH="${2:-$PETSONA_ROOT/dist/Petsona.app}"
 PROFILE="${NOTARYTOOL_PROFILE:-}"
 
 case "$ARCHIVE" in
   /*) ;;
-  *) ARCHIVE="$BYTEPET_ROOT/$ARCHIVE" ;;
+  *) ARCHIVE="$PETSONA_ROOT/$ARCHIVE" ;;
 esac
 case "$APP_PATH" in
   /*) ;;
-  *) APP_PATH="$BYTEPET_ROOT/$APP_PATH" ;;
+  *) APP_PATH="$PETSONA_ROOT/$APP_PATH" ;;
 esac
 
 if [[ -z "$PROFILE" ]]; then

@@ -7,44 +7,44 @@ mod instance_lock;
 mod logging;
 mod platform;
 
-use bytepet_core::config::{AppConfig, AppPaths};
+use petsona_core::config::{AppConfig, AppPaths};
 
 fn main() -> eframe::Result {
     let paths = AppPaths::default();
     if let Err(error) = paths.ensure() {
-        eprintln!("cannot prepare BytePet data directory: {error}");
+        eprintln!("cannot prepare Petsona data directory: {error}");
         return Ok(());
     }
     logging::init(&paths.logs_dir);
 
     let _instance_lock =
-        match instance_lock::InstanceLock::acquire(&paths.config_dir.join("bytepet.lock")) {
+        match instance_lock::InstanceLock::acquire(&paths.config_dir.join("petsona.lock")) {
             Ok(lock) => lock,
             Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
                 tracing::warn!(
                     path = %paths.config_dir.display(),
-                    "BytePet is already running",
+                    "Petsona is already running",
                 );
                 return Ok(());
             }
             Err(error) => {
-                tracing::error!(%error, "cannot acquire BytePet instance lock");
+                tracing::error!(%error, "cannot acquire Petsona instance lock");
                 return Ok(());
             }
         };
 
     let config = AppConfig::load(&paths.config_file).unwrap_or_default();
-    let app = match app::BytePetApp::new(paths, config) {
+    let app = match app::PetsonaApp::new(paths, config) {
         Ok(app) => app,
         Err(error) => {
-            eprintln!("BytePet failed to start: {error:#}");
+            eprintln!("Petsona failed to start: {error:#}");
             return Ok(());
         }
     };
 
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
-            .with_title("BytePet")
+            .with_title("Petsona")
             .with_inner_size([220.0, 280.0])
             .with_min_inner_size([140.0, 180.0])
             .with_transparent(true)
@@ -57,7 +57,7 @@ fn main() -> eframe::Result {
     };
 
     eframe::run_native(
-        "BytePet",
+        "Petsona",
         options,
         Box::new(move |creation_context| {
             let mut app = app;

@@ -1,6 +1,6 @@
 [package]
-name = "bytepet-core"
-description = "Lightweight core for the BytePet desktop pet"
+name = "petsona-core"
+description = "Lightweight core for the Petsona desktop pet"
 version.workspace = true
 edition.workspace = true
 license.workspace = true

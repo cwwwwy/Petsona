@@ -1,6 +1,6 @@
-# macOS 实机验证清单
+# Petsona macOS 实机验证清单
 
-这份清单用来在 macOS 上人工验收 BytePet。CI 的 macOS job 只跑 `fmt` / `clippy` / `test`，
+这份清单用来在 macOS 上人工验收 Petsona。CI 的 macOS job 只跑 `fmt` / `clippy` / `test`，
 只能证明“能编译”，不能证明“能用”；真正的结论以这份清单为准。
 
 当前已知状态（2026-09-13）：
@@ -21,30 +21,30 @@ xcode-select --install
 
 # 在仓库根目录
 cargo test --workspace
-cargo run -p bytepet-app
+cargo run -p petsona-app
 ```
 
 - 用独立数据目录，避免污染真实数据：
 
 ```bash
-BYTEPET_HOME="$HOME/.bytepet-mac-test" cargo run -p bytepet-app
+PETSONA_HOME="$HOME/.petsona-mac-test" cargo run -p petsona-app
 ```
 
-- 不设置 `BYTEPET_HOME` 时，数据在 `~/Library/Application Support/BytePet/`。
-- 日志同时写入 `logs/bytepet.log` 和终端；Finder/LaunchAgent 启动时也可直接查看文件日志：
+- 不设置 `PETSONA_HOME` 时，数据在 `~/Library/Application Support/Petsona/`。
+- 日志同时写入 `logs/petsona.log` 和终端；Finder/LaunchAgent 启动时也可直接查看文件日志：
 
 ```bash
-RUST_LOG=debug cargo run -p bytepet-app
+RUST_LOG=debug cargo run -p petsona-app
 ```
 
-- 单实例锁位于数据目录的 `bytepet.lock`；使用不同的 `BYTEPET_HOME` 才会启动隔离实例。
+- 单实例锁位于数据目录的 `petsona.lock`；使用不同的 `PETSONA_HOME` 才会启动隔离实例。
 
 ## A. 基础回归（现在应该能通过）
 
 | # | 操作 | 预期结果 | 状态 |
 |---|---|---|---|
 | A1 | 启动 | 宠物窗口出现、无边框、透明背景（不是黑底/白底）、置顶 | 待实测 |
-| A2 | 看菜单栏 | 出现 BytePet 托盘图标 | 待实测 |
+| A2 | 看菜单栏 | 出现 Petsona 托盘图标 | 待实测 |
 | A3 | 点击托盘图标 | 弹出 macOS 原生菜单：打开设置 / 显示隐藏宠物 / 退出 | ✅ 已验证 |
 | A4 | 打开设置 | 能打开、滚动；缩放、穿透、状态协议端口、自动行走等控件可操作 | 待实测 |
 | A5 | 切换宠物 | 本地库 + `~/.codex/pets` + `~/.unipet/pets` 都能列出；切换后动画和窗口/托盘图标更新 | 待实测 |
@@ -53,7 +53,7 @@ RUST_LOG=debug cargo run -p bytepet-app
 | A8 | 状态协议 GET | `GET /health` 返回当前 pet/persona/state；`GET /pets` 返回 id 列表 | 待实测 |
 | A9 | 重启持久化 | 当前宠物、人格、缩放等写入 `config.json`，重启后保持 | 待实测 |
 | A10 | 托盘隐藏/显示/退出 | 隐藏后窗口消失，托盘可恢复；退出后进程真的结束 | 待实测 |
-| A11 | DeepSeek keychain | 设置里保存 API key 后，Keychain 出现 BytePet 条目；重启后仍能读取（无 key 时回落固定问候） | 待实测 |
+| A11 | DeepSeek keychain | 设置里保存 API key 后，Keychain 出现 Petsona 条目；重启后仍能读取（无 key 时回落固定问候） | 待实测 |
 
 状态协议命令：
 
@@ -79,7 +79,7 @@ curl -XPOST http://127.0.0.1:17872/state \
 | B8 | 点击 / 右键 / 打开设置 | 宠物周围不出现任何边框闪烁 | 待实测（macOS 理论上无 Windows 那个问题） |
 | B9 | 用状态协议发带 message 的 state | 气泡完整不被裁切；显示/消失时宠物不移动、窗口不闪烁 | 待实测 |
 | B10 | 在副屏右键 | 菜单出现在光标所在显示器，且被夹在工作区内 | 待实测（当前无副屏条件） |
-| B11 | 空闲时看 Activity Monitor | BytePet 空闲 CPU 接近 0–1%（允许偶发波动） | 待实测（已改为按需重绘） |
+| B11 | 空闲时看 Activity Monitor | Petsona 空闲 CPU 接近 0–1%（允许偶发波动） | 待实测（已改为按需重绘） |
 | B12 | 启动第二个实例 | 不出现第二只宠物；要么退出，要么唤起已有实例 | 待实测（已实现锁） |
 | B13 | 注销再登录 / 重启 | 宠物自动出现 | 待实测（已提供 LaunchAgent 脚本） |
 
@@ -110,7 +110,7 @@ curl -XPOST http://127.0.0.1:17872/state \
 
 ```bash
 ./scripts/package-macos.sh
-./scripts/install-macos-launch-agent.sh install dist/BytePet.app
+./scripts/install-macos-launch-agent.sh install dist/Petsona.app
 ./scripts/install-macos-launch-agent.sh uninstall
 ```
 
@@ -118,11 +118,11 @@ curl -XPOST http://127.0.0.1:17872/state \
 
 ```bash
 CODESIGN_IDENTITY="Developer ID Application: ..." ./scripts/sign-macos.sh
-NOTARYTOOL_PROFILE="bytepet-notary" ./scripts/notarize-macos.sh
+NOTARYTOOL_PROFILE="petsona-notary" ./scripts/notarize-macos.sh
 ```
 
 ## E. 记录模板
 
 | 日期 | macOS 版本 | 芯片 | 构建方式 | 结论 | 备注 / 日志 |
 |---|---|---|---|---|---|
-|  |  |  | `cargo run -p bytepet-app` |  |  |
+|  |  |  | `cargo run -p petsona-app` |  |  |

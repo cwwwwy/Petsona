@@ -6,13 +6,13 @@
 //! compared against the documented Codex row semantics.
 //!
 //! ```text
-//! cargo run -p bytepet-core --example pet_inspect -- <pet-dir> [out-dir]
+//! cargo run -p petsona-core --example pet_inspect -- <pet-dir> [out-dir]
 //! ```
 
 use std::path::{Path, PathBuf};
 
-use bytepet_core::pet::state::{PetEngine, PetState};
-use bytepet_core::pet::{PetAtlas, PetManifest};
+use petsona_core::pet::state::{PetEngine, PetState};
+use petsona_core::pet::{PetAtlas, PetManifest};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut args = std::env::args().skip(1);

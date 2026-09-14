@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-/// Unified error type for the lightweight BytePet core.
+/// Unified error type for the lightweight Petsona core.
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
     #[error("io error: {0}")]
