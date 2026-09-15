@@ -42,9 +42,9 @@ cargo run -p petsona-core --example pet_inspect -- <宠物目录> [输出目录]
    7 帧。引擎现在以图集里“真正有像素的格子”为准（`PetAtlas::occupancy`），
    再把官方时长模式拉伸/裁剪到该帧数：多出来的帧沿用中间帧时长，最后一帧
    仍然保留那个更长的停顿。`adapt_durations` 有对应单元测试。
-2. **第 9、10 行不是静态的左看/右看**，而是一整段“转过去再转回来”的循环。
-   所以它们被实现成**一次性动作（glance）**：鼠标越过宠物一侧时播一遍，
-   播完回到 base，而不是一直定格在侧面。
+2. **第 9、10 行不是静态的左看/右看**，而是一整段“转过去再转回来”的动作。
+   持续注视把它拆成“转向 → 保持最强侧脸帧 → 返回”三个阶段：鼠标停留在
+   宠物一侧时保持注视，离开触发区后才播放返回段。
 
 ### 行 9 / 行 10 到底朝哪边
 
@@ -70,11 +70,11 @@ cargo run -p petsona-core --example pet_inspect -- <宠物目录> [输出目录]
 |---|---|
 | 全部 11 行动画与官方时长 | `crates/petsona-core/src/pet/state.rs`（`official_durations` + 占用度校正） |
 | V1(8×9) / V2(8×11) 自动识别 | `PetManifest::resolve_frame` + `PetLibrary::load_entry` 读图片头推断 |
-| 鼠标在宠物两侧时转头看 | `PetsonaApp::update_glance` + `PetEngine::glance`（一次性，带 0.9s 冷却与死区） |
+| 鼠标在宠物两侧时转头看 | `PetsonaApp::update_glance` + `PetEngine::glance/release_gaze`（持续保持，带 0.9s 冷却与死区） |
 | 左键：打招呼（挥手 + 气泡） | `on_pet_click` → `trigger_greeting("click")`，DeepSeek 不可用时回落到人格里的固定/时段问候 |
 | 双击：跳一下 | `on_double_click`（320ms 内第二次点击才判定为双击，不会误触发单击） |
 | 拖拽移动 | 窗口 `ViewportCommand::StartDrag` |
-| 右键菜单 | 窗口内 `egui::Area` 菜单（打开设置 / 关闭宠物），位置按窗口边界收拢 |
+| 右键菜单 | macOS 使用 AppKit 原生菜单；Windows 使用专用 Win32 菜单线程；egui 菜单仅作回退 |
 | 像素级点击穿透 | `AlphaMask` + `opaque_at_cell_dilated`（1 格≈4px 外扩，避免抗锯齿边缘点不中） |
 | 自动行走（活动提醒） | `update_auto_walk`：默认 45 分钟一次，走 8 秒、速度 18px/s、范围 120px，可在设置里调；有事件/问候时不打断 |
 | 换宠物 | 设置 →「宠物」：扫描 `~/.codex/pets`、`~/.unipet/pets` 与本地库，带首帧预览，切换后热替换图集与动画并写回配置 |

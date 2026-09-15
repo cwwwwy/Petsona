@@ -8,6 +8,8 @@ mod logging;
 mod platform;
 #[cfg(feature = "test-hooks")]
 mod test_hooks;
+#[cfg(target_os = "windows")]
+mod windows_menu;
 
 use petsona_core::config::{AppConfig, AppPaths};
 

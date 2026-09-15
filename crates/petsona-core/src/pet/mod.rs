@@ -17,7 +17,8 @@ pub use default_pet::{DEFAULT_PET_ID, DEFAULT_PET_MANIFEST, DEFAULT_PET_SPRITESH
 pub use library::{LibraryRoot, PetEntry, PetLibrary, RootKind, ValidationReport};
 pub use manifest::{AnimationTrack, FrameRef, FrameSpec, PetManifest};
 pub use state::{
-    adapt_durations, resolve_animations_with_occupancy, Animation, PetEngine, PetState, Transition,
+    adapt_durations, resolve_animations_with_occupancy, Animation, GazePhase, PetEngine, PetState,
+    Transition,
 };
 
 /// Maximum accepted spritesheet size (bytes). Matches UniPet's safety rule.

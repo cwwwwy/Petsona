@@ -1,3 +1,10 @@
+#[derive(Debug, Clone, Copy, Default)]
+pub struct PointerSnapshot {
+    pub position: Option<(f64, f64)>,
+    pub primary_down: Option<bool>,
+    pub secondary_down: Option<bool>,
+}
+
 #[cfg(target_os = "windows")]
 mod no_activate_proc {
     use std::cell::RefCell;
@@ -193,17 +200,117 @@ pub fn event_driven_mouse() -> bool {
 
 #[cfg(target_os = "macos")]
 mod macos {
+    use std::path::{Path, PathBuf};
+
     use objc2::MainThreadMarker;
-    use objc2_app_kit::{NSApplication, NSEvent, NSScreen, NSView, NSWindowStyleMask};
+    use objc2_app_kit::{
+        NSApplication, NSEvent, NSModalResponseOK, NSOpenPanel, NSSavePanel, NSScreen, NSView,
+        NSWindowStyleMask,
+    };
+    use objc2_foundation::{NSPoint, NSRect, NSSize, NSString, NSURL};
     use raw_window_handle::{HasWindowHandle as _, RawWindowHandle};
 
     #[link(name = "CoreGraphics", kind = "framework")]
     unsafe extern "C" {
         fn CGEventSourceKeyState(state_id: i32, key: u16) -> bool;
+        fn CGMainDisplayID() -> u32;
+        fn CGDisplayBounds(display: u32) -> CoreGraphicsRect;
+    }
+
+    #[repr(C)]
+    struct CoreGraphicsPoint {
+        x: f64,
+        y: f64,
+    }
+
+    #[repr(C)]
+    struct CoreGraphicsSize {
+        width: f64,
+        height: f64,
+    }
+
+    #[repr(C)]
+    struct CoreGraphicsRect {
+        origin: CoreGraphicsPoint,
+        size: CoreGraphicsSize,
     }
 
     const HID_SYSTEM_STATE: i32 = 1;
     const ESCAPE_KEY_CODE: u16 = 53;
+
+    fn appkit_to_winit_cursor(
+        point_x: f64,
+        point_y: f64,
+        main_screen_height: f64,
+        screen_scale: f64,
+    ) -> (f64, f64) {
+        (
+            point_x * screen_scale,
+            (main_screen_height - point_y) * screen_scale,
+        )
+    }
+
+    fn appkit_frame_for_winit(
+        x: f64,
+        y: f64,
+        width: f64,
+        height: f64,
+        main_screen_height: f64,
+    ) -> NSRect {
+        NSRect::new(
+            NSPoint::new(x, main_screen_height - height - y),
+            NSSize::new(width, height),
+        )
+    }
+
+    fn path_from_url(url: Option<objc2::rc::Retained<NSURL>>) -> Option<PathBuf> {
+        url.and_then(|url| url.path())
+            .map(|path| PathBuf::from(path.to_string()))
+    }
+
+    fn file_url(path: &Path) -> objc2::rc::Retained<NSURL> {
+        NSURL::fileURLWithPath(&NSString::from_str(&path.to_string_lossy()))
+    }
+
+    pub fn choose_pet_import_path() -> Option<PathBuf> {
+        let main_thread = MainThreadMarker::new()?;
+        let panel = NSOpenPanel::openPanel(main_thread);
+        let title = NSString::from_str("导入宠物");
+        let prompt = NSString::from_str("选择");
+        panel.setTitle(Some(&title));
+        panel.setPrompt(Some(&prompt));
+        panel.setCanChooseFiles(true);
+        panel.setCanChooseDirectories(true);
+        panel.setAllowsMultipleSelection(false);
+        if panel.runModal() != NSModalResponseOK {
+            return None;
+        }
+        path_from_url(panel.URL())
+    }
+
+    pub fn choose_pet_export_path(default_dir: &Path, default_name: &str) -> Option<PathBuf> {
+        let main_thread = MainThreadMarker::new()?;
+        let panel = NSSavePanel::savePanel(main_thread);
+        let title = NSString::from_str("导出宠物");
+        let prompt = NSString::from_str("保存");
+        let name = NSString::from_str(default_name);
+        panel.setTitle(Some(&title));
+        panel.setPrompt(Some(&prompt));
+        panel.setNameFieldStringValue(&name);
+        panel.setCanCreateDirectories(true);
+        panel.setAllowsOtherFileTypes(true);
+        let directory = file_url(default_dir);
+        panel.setDirectoryURL(Some(&directory));
+        if panel.runModal() != NSModalResponseOK {
+            return None;
+        }
+        let path = path_from_url(panel.URL())?;
+        if path.extension().is_some() {
+            Some(path)
+        } else {
+            Some(path.with_extension("zip"))
+        }
+    }
 
     fn appkit_window(
         window: &winit::window::Window,
@@ -253,20 +360,93 @@ mod macos {
         hits
     }
 
+    /// Activate a regular child window after it is opened from the
+    /// non-activating pet/menu. The pet deliberately uses
+    /// `NSWindowStyleMask::NonactivatingPanel`, but that mask must never be
+    /// applied to the settings window because it prevents text fields from
+    /// becoming the key window.
+    pub fn focus_window_for_title(title: &str) -> usize {
+        let Some(main_thread) = MainThreadMarker::new() else {
+            return 0;
+        };
+        let app = NSApplication::sharedApplication(main_thread);
+        let windows = app.windows();
+        let matching_windows = windows
+            .iter()
+            .filter(|window| window.title().to_string() == title)
+            .count();
+        if matching_windows == 0 {
+            return 0;
+        }
+        app.activate();
+        let mut hits = 0;
+        for window in windows.iter() {
+            if window.title().to_string() != title {
+                continue;
+            }
+            window.makeKeyAndOrderFront(None);
+            hits += 1;
+        }
+        hits
+    }
+
+    #[cfg(feature = "test-hooks")]
+    pub fn is_window_key_for_title(title: &str) -> bool {
+        let Some(main_thread) = MainThreadMarker::new() else {
+            return false;
+        };
+        let app = NSApplication::sharedApplication(main_thread);
+        app.windows()
+            .iter()
+            .any(|window| window.title().to_string() == title && window.isKeyWindow())
+    }
+
     pub fn escape_pressed() -> bool {
         // Menus deliberately do not become key windows, so AppKit will not
         // reliably deliver Escape to egui. Poll the HID event source instead.
         unsafe { CGEventSourceKeyState(HID_SYSTEM_STATE, ESCAPE_KEY_CODE) }
     }
 
+    #[allow(dead_code)]
     pub fn primary_button_down() -> Option<bool> {
         let buttons = NSEvent::pressedMouseButtons();
         Some(buttons & 1 != 0)
     }
 
+    #[allow(dead_code)]
     pub fn secondary_button_down() -> Option<bool> {
         let buttons = NSEvent::pressedMouseButtons();
         Some(buttons & 2 != 0)
+    }
+
+    pub fn pointer_snapshot() -> super::PointerSnapshot {
+        let position = global_cursor_position();
+        let buttons = NSEvent::pressedMouseButtons();
+        super::PointerSnapshot {
+            position,
+            primary_down: Some(buttons & 1 != 0),
+            secondary_down: Some(buttons & 2 != 0),
+        }
+    }
+
+    /// Apply the pet's position and size as one AppKit frame change. Calling
+    /// winit's `set_outer_position` and `request_inner_size` separately lets
+    /// macOS paint an intermediate frame while the scale slider is moving.
+    pub fn set_window_geometry(
+        window: &winit::window::Window,
+        x: f64,
+        y: f64,
+        width: f64,
+        height: f64,
+    ) {
+        let Some(ns_window) = super::macos::appkit_window(window) else {
+            window.set_outer_position(winit::dpi::LogicalPosition::new(x, y));
+            let _ = window.request_inner_size(winit::dpi::LogicalSize::new(width, height));
+            return;
+        };
+        let main_screen_height = unsafe { CGDisplayBounds(CGMainDisplayID()).size.height };
+        let frame = appkit_frame_for_winit(x, y, width, height, main_screen_height);
+        ns_window.setFrame_display_animate(frame, true, false);
     }
 
     pub fn global_cursor_position() -> Option<(f64, f64)> {
@@ -275,7 +455,7 @@ mod macos {
         let point = NSEvent::mouseLocation();
         let main_thread = MainThreadMarker::new()?;
         let main_screen = NSScreen::mainScreen(main_thread)?;
-        let main_height = main_screen.frame().size.height;
+        let main_height = unsafe { CGDisplayBounds(CGMainDisplayID()).size.height };
 
         // NSEvent reports AppKit points with the origin at the bottom-left.
         // winit exposes physical screen coordinates with the origin at the
@@ -296,10 +476,42 @@ mod macos {
             })
             .unwrap_or_else(|| main_screen.backingScaleFactor());
 
-        Some((
-            point.x * screen_scale,
-            (main_height - point.y) * screen_scale,
+        Some(appkit_to_winit_cursor(
+            point.x,
+            point.y,
+            main_height,
+            screen_scale,
         ))
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::{appkit_frame_for_winit, appkit_to_winit_cursor};
+
+        #[test]
+        fn frame_geometry_flips_winit_top_left_to_appkit_bottom_left() {
+            let frame = appkit_frame_for_winit(40.0, 100.0, 220.0, 208.0, 900.0);
+            assert_eq!(frame.origin.x, 40.0);
+            assert_eq!(frame.origin.y, 592.0);
+            assert_eq!(frame.size.width, 220.0);
+            assert_eq!(frame.size.height, 208.0);
+        }
+
+        #[test]
+        fn cursor_conversion_uses_the_core_graphics_main_display_height() {
+            assert_eq!(
+                appkit_to_winit_cursor(40.0, 100.0, 900.0, 2.0),
+                (80.0, 1600.0)
+            );
+        }
+
+        #[test]
+        fn cursor_conversion_preserves_negative_secondary_display_coordinates() {
+            assert_eq!(
+                appkit_to_winit_cursor(-200.0, -120.0, 900.0, 1.0),
+                (-200.0, 1020.0)
+            );
+        }
     }
 }
 
@@ -514,6 +726,16 @@ pub fn set_no_activate_for_title(title: &str) -> usize {
     macos::set_no_activate_for_title(title)
 }
 
+#[cfg(target_os = "macos")]
+pub fn focus_window_for_title(title: &str) -> usize {
+    macos::focus_window_for_title(title)
+}
+
+#[cfg(all(target_os = "macos", feature = "test-hooks"))]
+pub fn is_window_key_for_title(title: &str) -> bool {
+    macos::is_window_key_for_title(title)
+}
+
 /// Is Escape held? Menus do not take focus, so the key has to be polled.
 #[cfg(target_os = "windows")]
 pub fn escape_pressed() -> bool {
@@ -552,6 +774,7 @@ pub fn primary_button_down() -> Option<bool> {
 }
 
 #[cfg(target_os = "macos")]
+#[allow(dead_code)]
 pub fn primary_button_down() -> Option<bool> {
     macos::primary_button_down()
 }
@@ -571,8 +794,41 @@ pub fn secondary_button_down() -> Option<bool> {
 }
 
 #[cfg(target_os = "macos")]
+#[allow(dead_code)]
 pub fn secondary_button_down() -> Option<bool> {
     macos::secondary_button_down()
+}
+
+#[cfg(target_os = "windows")]
+pub fn pointer_snapshot() -> PointerSnapshot {
+    PointerSnapshot {
+        position: global_cursor_position(),
+        primary_down: primary_button_down(),
+        secondary_down: secondary_button_down(),
+    }
+}
+
+#[cfg(target_os = "macos")]
+pub fn pointer_snapshot() -> PointerSnapshot {
+    macos::pointer_snapshot()
+}
+
+#[cfg(all(not(target_os = "windows"), not(target_os = "macos")))]
+pub fn pointer_snapshot() -> PointerSnapshot {
+    PointerSnapshot::default()
+}
+
+#[cfg(target_os = "macos")]
+pub fn choose_pet_import_path() -> Option<std::path::PathBuf> {
+    macos::choose_pet_import_path()
+}
+
+#[cfg(target_os = "macos")]
+pub fn choose_pet_export_path(
+    default_dir: &std::path::Path,
+    default_name: &str,
+) -> Option<std::path::PathBuf> {
+    macos::choose_pet_export_path(default_dir, default_name)
 }
 
 /// Reveal a folder in the platform file manager.
@@ -627,7 +883,18 @@ pub fn set_window_geometry(
     }
 }
 
-#[cfg(not(target_os = "windows"))]
+#[cfg(target_os = "macos")]
+pub fn set_window_geometry(
+    window: &winit::window::Window,
+    x: f64,
+    y: f64,
+    width: f64,
+    height: f64,
+) {
+    macos::set_window_geometry(window, x, y, width, height);
+}
+
+#[cfg(all(not(target_os = "windows"), not(target_os = "macos")))]
 pub fn set_window_geometry(
     window: &winit::window::Window,
     x: f64,
@@ -671,6 +938,7 @@ pub fn global_cursor_position() -> Option<(f64, f64)> {
 }
 
 #[cfg(target_os = "macos")]
+#[allow(dead_code)]
 pub fn global_cursor_position() -> Option<(f64, f64)> {
     macos::global_cursor_position()
 }

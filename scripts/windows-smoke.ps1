@@ -535,6 +535,10 @@ try {
             $status = Wait-ForTestStatus -Predicate { param($candidate) $candidate.ok -and $candidate.hooksPort -eq $script:TestHookPort } -Description "hooks port $script:TestHookPort" -TimeoutSeconds 8
             Assert-True ($status.processId -eq $first.Process.Id) "hook status reports the wrong process id."
         }
+
+        Invoke-SmokeCheck -Id "T2" -Name "Win32 native menu thread" {
+            [void] (Wait-ForTestStatus -Predicate { param($candidate) $candidate.nativeMenuReady } -Description "native menu thread" -TimeoutSeconds 8)
+        }
     }
 
     Invoke-SmokeCheck -Id "A1" -Name "window exists and is visible" {
@@ -629,10 +633,12 @@ try {
             $before = Get-PetsonaWindow -ProcessId $first.Process.Id -Title "Petsona" -TimeoutSeconds 5
             Invoke-TestAction -Action "show-bubble" -Text "windows smoke bubble" -TtlMs 3000
             [void] (Wait-ForTestStatus -Predicate { param($candidate) $candidate.bubbleText -eq "windows smoke bubble" } -Description "bubble text" -TimeoutSeconds 3)
+            [void] (Wait-ForTestStatus -Predicate { param($candidate) $candidate.bubbleWindowCreated } -Description "bubble overlay window" -TimeoutSeconds 3)
             $during = Get-PetsonaWindow -ProcessId $first.Process.Id -Title "Petsona" -TimeoutSeconds 5
             Assert-True ($before.Left -eq $during.Left -and $before.Top -eq $during.Top -and $before.Width -eq $during.Width -and $before.Height -eq $during.Height) "bubble changed the pet window geometry."
             Invoke-TestAction -Action "clear-bubble"
             [void] (Wait-ForTestStatus -Predicate { param($candidate) $null -eq $candidate.bubbleText } -Description "bubble cleared" -TimeoutSeconds 3)
+            [void] (Wait-ForTestStatus -Predicate { param($candidate) -not $candidate.bubbleWindowCreated } -Description "bubble overlay hidden" -TimeoutSeconds 3)
         }
 
         Invoke-SmokeCheck -Id "B11" -Name "idle uses event-driven mouse wakeups" {

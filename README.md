@@ -46,6 +46,15 @@ macOS:  bash scripts/verify-macos.sh
 Windows: powershell -ExecutionPolicy Bypass -File scripts\verify-windows.ps1
 ```
 
+On macOS, the optional application smoke test starts the real release app with
+an isolated data directory and verifies the loopback protocol, TTL, settings,
+persistence, bubbles, visibility and (when a V2 pet is available) continuous
+gaze:
+
+```bash
+bash scripts/macos-smoke.sh
+```
+
 For a double-click entry point, use `scripts/verify-macos.command` in Finder or
 `scripts\verify-windows.cmd` in Windows Explorer. Native window interactions
 still require the manual checks in `docs/MACOS_VERIFICATION.md`.
@@ -58,7 +67,7 @@ still require the manual checks in `docs/MACOS_VERIFICATION.md`.
 | Double click | jump |
 | Drag | move the pet |
 | Right click | menu: open settings / close pet |
-| Cursor at either side | the V2 look row plays once (the pet glances that way) |
+| Cursor at either side | the V2 look row turns and holds its gaze while the cursor stays there |
 | Tray icon | open settings / show-hide pet / quit |
 | Every 45 min | activity reminder: the pet walks a short distance and asks you to stand up |
 

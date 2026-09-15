@@ -1,4 +1,4 @@
-//! Feature-gated local control channel used only by the Windows smoke test.
+//! Feature-gated local control channel used by platform smoke tests.
 //!
 //! The server is compiled only with the `test-hooks` feature and refuses to
 //! start unless `PETSONA_TEST_HOOKS=1` is set. It binds to loopback and
@@ -21,7 +21,7 @@ const PORT_ENV: &str = "PETSONA_TEST_HOOKS_PORT";
 const TOKEN_ENV: &str = "PETSONA_TEST_HOOKS_TOKEN";
 const MAX_BODY_BYTES: usize = 8 * 1024;
 
-/// Snapshot consumed by `windows-smoke.ps1`.
+/// Snapshot consumed by platform smoke scripts.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct TestStatus {
@@ -30,6 +30,7 @@ pub struct TestStatus {
     pub process_id: u32,
     pub pet_visible: bool,
     pub settings_open: bool,
+    pub settings_key_window: bool,
     pub menu_open: bool,
     pub click_through: bool,
     pub passthrough: bool,
@@ -40,7 +41,10 @@ pub struct TestStatus {
     pub base_state: String,
     pub sprite_index: u32,
     pub bubble_text: Option<String>,
+    pub bubble_window_created: bool,
+    pub native_menu_ready: bool,
     pub gaze_side: i8,
+    pub gaze_phase: Option<String>,
     pub pet_dragged: bool,
     pub window_x: Option<i32>,
     pub window_y: Option<i32>,
@@ -72,6 +76,7 @@ impl Default for TestStatus {
             process_id: std::process::id(),
             pet_visible: true,
             settings_open: false,
+            settings_key_window: false,
             menu_open: false,
             click_through: true,
             passthrough: false,
@@ -82,7 +87,10 @@ impl Default for TestStatus {
             base_state: "idle".to_string(),
             sprite_index: 0,
             bubble_text: None,
+            bubble_window_created: false,
+            native_menu_ready: false,
             gaze_side: 0,
+            gaze_phase: None,
             pet_dragged: false,
             window_x: None,
             window_y: None,

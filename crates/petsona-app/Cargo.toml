@@ -32,9 +32,20 @@ serde_json = { workspace = true, optional = true }
 objc2 = { version = "0.6", features = ["std"] }
 objc2-app-kit = { version = "0.3", default-features = false, features = [
     "std",
+    "NSApplication",
     "NSEvent",
+    "NSOpenPanel",
+    "NSPanel",
     "NSScreen",
+    "NSSavePanel",
     "NSResponder",
     "NSView",
     "NSWindow",
+] }
+objc2-foundation = { version = "0.3", default-features = false, features = [
+    "std",
+    "NSArray",
+    "NSGeometry",
+    "NSString",
+    "NSURL",
 ] }
