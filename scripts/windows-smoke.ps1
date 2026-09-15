@@ -659,11 +659,16 @@ try {
             $medium = [int64] $after.repaintMedium - [int64] $before.repaintMedium
             $slow = [int64] $after.repaintSlow - [int64] $before.repaintSlow
             Write-Host ("       state={0}; UI/logic in 4s: {1}/{2}; animation/final delay: {3}/{4}ms; cursor polls: {5}; CPU: {6:N2}% of one core" -f $after.state, $uiDelta, $logicDelta, $after.animationRepaintMs, $after.lastRepaintMs, $polls, $oneCorePercent) -ForegroundColor DarkGray
+            $uniqueCauses = @($after.repaintCauses | Where-Object { $_ } | Sort-Object -Unique)
+            if ($uiDelta -gt 50 -or $oneCorePercent -ge 3.0) {
+                Write-Host ("       repaint causes: {0}" -f ($uniqueCauses -join '; ')) -ForegroundColor DarkGray
+            }
             if (-not $before.mousePositionValid) {
                 Write-Host "       [SKIP] interactive desktop is unavailable; CPU gate needs a real session." -ForegroundColor Yellow
                 return
             }
             Assert-True ($polls -le 20) "idle global cursor polling is still too frequent."
+            Assert-True ($uiDelta -le 50) "idle UI repaints are still too frequent ($uiDelta in 4s)."
             Assert-True ($oneCorePercent -lt 3.0) "idle CPU is still above 3% of one core."
         }
         Invoke-SmokeCheck -Id "B8" -Name "Win32 chrome stays undecorated (visual flash manual)" {
@@ -759,7 +764,10 @@ try {
             $clickY = [int] $clickStatus.petClickY
             $savedCursor = [PetsonaSmoke.Native]::CursorPosition()
             try {
-                [PetsonaSmoke.Native]::SetCursorPosition($clickX, $clickY)
+                if (-not [PetsonaSmoke.Native]::MoveCursorWithInput($clickX, $clickY)) {
+                    Write-Host "       [SKIP] this session does not accept SendInput; WM_MOUSEACTIVATE guard passed." -ForegroundColor Yellow
+                    return
+                }
                 Start-Sleep -Milliseconds 400
                 $foregroundAfterMove = [PetsonaSmoke.Native]::ForegroundWindow()
                 Assert-True ($foregroundAfterMove -eq $foregroundBefore) "moving the cursor over the pet changed the foreground window."
@@ -789,7 +797,9 @@ try {
                 Assert-True ($foregroundAfter -eq $foregroundBefore) "clicking the pet changed the foreground window."
             }
             finally {
-                [PetsonaSmoke.Native]::SetCursorPosition($savedCursor[0], $savedCursor[1])
+                if (-not [PetsonaSmoke.Native]::MoveCursorWithInput($savedCursor[0], $savedCursor[1])) {
+                    [PetsonaSmoke.Native]::SetCursorPosition($savedCursor[0], $savedCursor[1])
+                }
             }
         }
         Invoke-SmokeCheck -Id "A13" -Name "accelerated auto-walk (partial)" {

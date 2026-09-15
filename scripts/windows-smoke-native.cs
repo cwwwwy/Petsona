@@ -132,6 +132,9 @@ namespace PetsonaSmoke
         private static extern bool GetCursorPos(out POINT point);
 
         [DllImport("user32.dll")]
+        private static extern int GetSystemMetrics(int index);
+
+        [DllImport("user32.dll")]
         private static extern void mouse_event(
             uint flags,
             uint dx,
@@ -225,6 +228,26 @@ namespace PetsonaSmoke
             POINT point;
             GetCursorPos(out point);
             return new int[] { point.X, point.Y };
+        }
+
+        // SetCursorPos bypasses WH_MOUSE_LL; send real input so the app updates
+        // its cached pointer position the same way as a physical mouse.
+        public static bool MoveCursorWithInput(int x, int y)
+        {
+            int virtualX = GetSystemMetrics(76);
+            int virtualY = GetSystemMetrics(77);
+            int virtualWidth = Math.Max(1, GetSystemMetrics(78) - 1);
+            int virtualHeight = Math.Max(1, GetSystemMetrics(79) - 1);
+            int normalizedX = (int)Math.Round((x - virtualX) * 65535.0 / virtualWidth);
+            int normalizedY = (int)Math.Round((y - virtualY) * 65535.0 / virtualHeight);
+
+            INPUT input = new INPUT();
+            input.Type = 0;
+            input.Data.Mouse.Flags = 0x0001u | 0x8000u | 0x4000u;
+            input.Data.Mouse.Dx = normalizedX;
+            input.Data.Mouse.Dy = normalizedY;
+            INPUT[] inputs = new INPUT[] { input };
+            return SendInput(1, inputs, Marshal.SizeOf(typeof(INPUT))) == 1;
         }
 
         private static void SendMouseInput(uint flags)

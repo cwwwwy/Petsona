@@ -65,6 +65,7 @@ pub struct TestStatus {
     pub repaint_fast: u64,
     pub repaint_medium: u64,
     pub repaint_slow: u64,
+    pub repaint_causes: Vec<String>,
     pub hooks_port: u16,
 }
 
@@ -111,6 +112,7 @@ impl Default for TestStatus {
             repaint_fast: 0,
             repaint_medium: 0,
             repaint_slow: 0,
+            repaint_causes: Vec::new(),
             hooks_port: 0,
         }
     }

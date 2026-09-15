@@ -421,6 +421,8 @@ impl PetsonaApp {
         self.install_tray(creation_context.egui_ctx.clone());
     }
 
+    // macOS uses ctx for edge-triggered pointer sampling; other platforms poll directly.
+    #[cfg_attr(not(target_os = "macos"), allow(unused_variables))]
     fn refresh_pointer(&mut self, ctx: &egui::Context) {
         #[cfg(target_os = "macos")]
         {
@@ -1565,7 +1567,7 @@ impl PetsonaApp {
     }
 
     #[cfg(feature = "test-hooks")]
-    fn publish_test_status(&mut self, frame: &eframe::Frame) {
+    fn publish_test_status(&mut self, ctx: &egui::Context, frame: &eframe::Frame) {
         let (state, base_state, sprite_index) = match &self.pet {
             Some(pet) => (
                 pet.engine.current().name().to_string(),
@@ -1647,6 +1649,11 @@ impl PetsonaApp {
             status.repaint_fast = self.test_repaint_fast;
             status.repaint_medium = self.test_repaint_medium;
             status.repaint_slow = self.test_repaint_slow;
+            status.repaint_causes = ctx
+                .repaint_causes()
+                .into_iter()
+                .map(|cause| cause.to_string())
+                .collect();
             status.hooks_port = hooks_port;
         }
     }
@@ -2923,6 +2930,16 @@ impl PetsonaApp {
         });
     }
 
+    fn expire_bubble(&mut self) {
+        if self
+            .bubble
+            .as_ref()
+            .is_some_and(|bubble| Instant::now() >= bubble.until)
+        {
+            self.bubble = None;
+        }
+    }
+
     /// Schedule only the next state change that can make this viewport stale.
     ///
     /// Input events and background callbacks request an immediate repaint on
@@ -3009,7 +3026,12 @@ impl PetsonaApp {
                 self.test_repaint_slow = self.test_repaint_slow.wrapping_add(1);
             }
         }
-        ctx.request_repaint_after(after);
+        // egui subtracts the predicted frame time before scheduling the
+        // callback. Add it back so a frame boundary close to the current
+        // frame does not collapse into a burst of immediate repaints.
+        let predicted_dt = ctx.input(|input| input.predicted_dt.max(0.0));
+        let predicted_dt = Duration::try_from_secs_f32(predicted_dt).unwrap_or(Duration::ZERO);
+        ctx.request_repaint_after(after.saturating_add(predicted_dt));
     }
 }
 
@@ -3168,6 +3190,7 @@ impl eframe::App for PetsonaApp {
         self.poll_menu(ctx);
         self.poll_state_events(ctx);
         self.poll_greeting();
+        self.expire_bubble();
         self.update_pet_timers();
         self.update_auto_walk(ctx, frame);
         self.drag_pet(ctx, frame);
@@ -3289,7 +3312,7 @@ impl eframe::App for PetsonaApp {
         #[cfg(feature = "test-hooks")]
         {
             self.test_ui_count = self.test_ui_count.wrapping_add(1);
-            self.publish_test_status(_frame);
+            self.publish_test_status(ui.ctx(), _frame);
         }
     }
 }
@@ -3340,15 +3363,6 @@ fn draw_bubble(painter: &egui::Painter, window: egui::Rect, pet: egui::Rect, tex
     let rect = egui::Rect::from_min_size(egui::pos2(x, y), size);
     let fill = egui::Color32::from_rgba_unmultiplied(24, 24, 28, 235);
     painter.rect_filled(rect, egui::CornerRadius::same(10), fill);
-    painter.rect_stroke(
-        rect,
-        egui::CornerRadius::same(10),
-        egui::Stroke::new(
-            1.0,
-            egui::Color32::from_rgba_unmultiplied(255, 255, 255, 26),
-        ),
-        egui::StrokeKind::Inside,
-    );
     let tip_x = pet
         .center()
         .x
@@ -3382,15 +3396,8 @@ fn draw_bubble_window(painter: &egui::Painter, window: egui::Rect, text: &str) {
     let rect = egui::Rect::from_min_size(egui::pos2(x, y), size);
     let fill = egui::Color32::from_rgba_unmultiplied(24, 24, 28, 235);
     painter.rect_filled(rect, egui::CornerRadius::same(10), fill);
-    painter.rect_stroke(
-        rect,
-        egui::CornerRadius::same(10),
-        egui::Stroke::new(
-            1.0,
-            egui::Color32::from_rgba_unmultiplied(255, 255, 255, 26),
-        ),
-        egui::StrokeKind::Inside,
-    );
+    // Keep the bubble free of a bright outline. On Windows the old
+    // semi-transparent white stroke read as a visible line along the top edge.
     let tip_x = window
         .center()
         .x
