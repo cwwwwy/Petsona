@@ -24,6 +24,8 @@ use std::time::Duration;
 use anyhow::{anyhow, Context, Result};
 use egui::Context as EguiContext;
 use petsona_app::platform::{MenuCommand, PlatformMenu};
+
+use crate::platform::clamp_point_to_work_area;
 use windows_sys::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
 use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows_sys::Win32::System::Threading::GetCurrentThreadId;
@@ -271,6 +273,11 @@ fn run_menu_thread(
             let Some((x, y, pet_visible)) = newest else {
                 break;
             };
+            // `TPM_WORKAREA` keeps the menu rectangle on screen, but the
+            // *anchor* is where the user clicked; clamp it into the nearest
+            // monitor's work area so a pet parked against a screen edge still
+            // opens the menu on the monitor it is on.
+            let (x, y) = clamp_point_to_work_area(x, y, 8);
 
             let toggle = if pet_visible {
                 "隐藏宠物"

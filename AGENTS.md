@@ -105,12 +105,17 @@ cargo +stable-x86_64-pc-windows-gnu test --workspace
   对话流程、CPU 采样）；bundle/zip/Info.plist/LaunchAgent 静态检查已内联在 `scripts/verify-macos-all.sh`。
 - 平台验收：macOS A3、B1–B4、B6–B7 曾实测通过；触控板右键、设置聚焦已修复；固定缩放档位、位置记忆、对话输入/发送、记忆事件和输入框光标驱动注视已实现并由 smoke 覆盖。当前宠物图集的 row9/row10 是 16 个转向目标帧，不是独立的 16 个静态方向；真实注视方向视觉、气泡回复按钮、对话窗口观感和输入时注视仍需实机复验。CPU 仍需 Activity Monitor 复测；多屏/Retina 暂缓；B9、B12/B13、A1/A2/A4–A11、真实签名/公证仍待实测。
 - 菜单决策（2026-09-14）：不引入 WinUI3/Windows App Runtime；macOS 托盘/宠物右键继续使用 AppKit 原生菜单，Windows 改用同进程专用 Win32 原生菜单线程，优先保证性能、主题一致性和零额外运行时。
-- Windows 自动门禁：`scripts\verify-windows.ps1 -Full` 已于 2026-09-16 在全平台后端搬移后重新全绿
-  （fmt / clippy / workspace test / release 链接 / test-hooks clippy+test / release 构建 / smoke 16 项）。
+- Windows 自动门禁：`scripts\verify-windows.ps1 -Full` 已接入 20 项 smoke（2026-09-16 阶段 7 后：
+  fmt / clippy / workspace test / release 链接 / test-hooks clippy+test / release 构建 / smoke）。
+  smoke 覆盖 T1–T4（含开机自启注册表）、A1/A4/A8/A9/A11/A13、B7–B9/B11–B14
+  （含屏幕外位置回落）、C3/C6/C7（位置记忆物理像素、Win32 样式、重力落地）。
+  受限会话无法写 HKCU 时 T4 会明确跳过。
 - Windows 实机状态（用户 2026-09-14 更新，详见 `docs/WINDOWS_VERIFICATION.md`）：
   A1–A7、A10–A12 通过，A8/A9 的协议层已由 smoke 自动通过，A13 属长测；B1–B6、B9、B10、B12–B14 通过，
   B5 的持续注视共享状态机已实现，Windows 实机仍需验证；B7 已加入 `WM_MOUSEACTIVATE -> MA_NOACTIVATE` 守卫，B8 已加入 `WM_STYLECHANGING` 守卫，并修复缩放底部中心锚点与命中掩码缩放；B11 已改为低层鼠标事件唤醒并缓存坐标，真实桌面 CPU/GPU 仍需实机确认；B7/B8 的肉眼/真实输入仍需实机确认；
-  C1 通过，C2/C3 待 Phase 2，C4–C5 待实测，C6 的宠物窗口与菜单样式已自动化通过。
+  C1 通过，C2/C3 已实现并接入 smoke（T3/C3/B14 自动通过），C4–C5 待实测，
+  C6 的宠物窗口与菜单样式已自动化通过；D5 开机自启已实现并由 T4 自动验证（真实登录后行为待实测）；
+  Phase 3 重力开关已实现并由 C7 自动验证（手感待实测）。
 - 分支策略（2026-09-16 更新）：`codex/cross` 已快进合并进 `main`，本地和远程分支都已删除；
   现在**直接在 `main` 上开发**（见文末「Git 工作流」）。需要试验性改动时开短期分支，
   合并后立即删除，不长期保留平台分支。
@@ -147,17 +152,19 @@ macOS 的 `macos-smoke.sh` / `package-macos.sh` 已改用 `petsona-macos`。
 - Windows：tag `windows-v<version>` → `.github/workflows/release-windows.yml`（快速门禁 + `scripts\package-windows.ps1` + artifact）。
 - macOS：tag `macos-v<version>`（旧的裸 `v<version>` 仍支持）→ `.github/workflows/release-macos.yml`。
 - 手动触发两个 workflow 也可以；`ci.yml` 在 `v*` / `windows-v*` / `macos-v*` tag 上跑双平台 fmt/clippy/test。
-- 剩余：macOS 实机验证本次搬移、HKCU 自启开关、真实签名/公证。
+- 剩余：macOS 实机验证本次搬移、真实签名/公证；Windows 侧剩下人工确认包和首次发布。
 
 搬移后的平台接口一览（都在 `petsona_app::platform`）：
 
 - `PlatformHost`：`present_window` / `notify_window_resize` / `set_window_geometry` /
-  `set_no_activate_for_title` / `confirm_settings_focus` / `show_context_menu_for_window` /
-  `install_event_waker` / `event_driven_mouse` / `throttle_pointer_sampling` / `pointer_snapshot` /
-  `escape_pressed` / `create_menu` / `uses_native_tray_menu` / `supports_native_file_dialogs` /
-  `choose_pet_import_path` / `choose_pet_export_path` / `open_in_file_manager` +
-  `test-hooks` 探针（`cursor_poll_count` / `mouse_event_count` / `mouse_position_valid` /
-  `is_window_key_for_title`）。
+  `set_window_geometry_physical` / `monitor_work_area`（物理像素工作区）/ `autostart_supported` /
+  `autostart_enabled` / `set_autostart` / `set_no_activate_for_title` / `confirm_settings_focus` /
+  `show_context_menu_for_window` / `install_event_waker` / `event_driven_mouse` /
+  `throttle_pointer_sampling` / `pointer_snapshot` / `escape_pressed` / `create_menu` /
+  `uses_native_tray_menu` / `supports_native_file_dialogs` / `choose_pet_import_path` /
+  `choose_pet_export_path` / `open_in_file_manager` + `test-hooks` 探针（`cursor_poll_count` /
+  `mouse_event_count` / `mouse_position_valid` / `is_window_key_for_title`）。
+- `PhysicalRect`：物理像素矩形（窗口/工作区/重力地面），跨混合 DPI 的唯一几何单位。
 - `PlatformMenu`：`show` / `poll`，返回 `MenuCommand`（OpenSettings / ChangePet / TogglePet / Quit）。
 - `PortableHost`：全默认实现，供 `petsona-app` 自己的单元测试使用。
 
@@ -283,24 +290,41 @@ Runtime、常驻 XAML dispatcher、DesktopWindowXamlSource 和同进程 C++/WinR
 Fast + Full 验证全绿；手工清单只剩视觉/真实桌面/多屏/DPI/登录自启/Defender；菜单工作区夹取
 和位置回退写成纯函数并加单测；Windows 不重写现有 Win32 后端，只做增量。
 
-## 阶段 7 计划（2026-09-16 拟定，待执行）
+## 阶段 7 计划（2026-09-16，1/2/3 已完成）
 
 平台拆分（阶段 5）和 Windows 发布形态（Phase 4）已基本收口，剩下的都是「功能补齐」或
 「必须人工确认」的项。按优先级：
 
-1. **D5 开机自启开关（Windows，小）**：设置里加「开机自启动」开关（默认关），写/删
-   `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`；启动时以注册表真实状态为准回填 UI。
-   用 windows-sys 的 `Win32_System_Registry`（只加 feature，不加 crate）。smoke 走 test-hooks
-   开关并检查注册表项出现/消失。
-2. **Phase 2 多屏 + 位置记忆（C2/C3，Windows 优先）**：拖动结束保存**物理像素**坐标
-   （现在存的是逻辑坐标，混合 DPI 多屏下会跑偏）；启动还原时若目标显示器已不存在则回落到
-   最近可见工作区；菜单落位改用 `MonitorFromPoint` + `GetMonitorInfoW(rcWork)` 夹取。
-   夹取/回落写成纯函数 + 单测；smoke 自动检查窗口坐标在可见工作区内。
-3. **Phase 3 重力开关**：设置 → 宠物行为，默认关；约 2600 px/s²、上限约 1800 px/s，
-   落到当前显示器工作区底部并播放一次 `jumping`；拖动或自动行走时不生效。
+0-a. ✅ **内置宠物换成 Superintendent（2026-09-16 完成）**：`crates/petsona-core/assets/default-pet/`
+   现在是 Renner Campos 的 V2 包（id `Superintendent_Petdex`，1536×2288），`default_pet.rs` 的
+   `DEFAULT_PET_ID` 同步；实测全新 `PETSONA_HOME` 启动后 `/health` 返回 `pet=superintendent`。
+   旧 ByteBot 资源已删除（用户本地残留副本不动）。
+0-b. ✅ **宠物来源改为显式导入（2026-09-16 完成）**：`PetLibrary::discover()` 只返回本地可写根；
+   新增 `codex_pets_dir()` + `PetLibrary::scan_dir()`（只读列目录）与 core 单测
+   `discover_only_scans_the_app_library` / `scan_dir_lists_pets_without_copying_them`；
+   设置 →「宠物」新增「从 Codex 导入」面板（逐只「导入」/「全部导入」/「重新扫描」）。
+   macos-smoke 的 V2 夹具改为先复制进临时 `PETSONA_HOME`。
+
+1. ✅ **D5 开机自启开关（2026-09-16 完成）**：设置 →「启动」新增「开机自启动」复选框，启动时
+   从注册表真实状态回填；Windows 外壳用 `RegCreateKeyW` / `RegSetValueExW` / `RegDeleteValueW`
+   写删 `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`（`windows-sys` 只加
+   `Win32_System_Registry` feature）。smoke 的 T4 用 `PETSONA_AUTOSTART_VALUE_NAME` 覆盖成一次性
+   值名，验证写入、路径、删除，并在 finally 里清理，绝不碰用户真实的 `Petsona` 启动项。
+   受限会话（CI/沙箱）无法写 HKCU 时 T4 会明确 `[SKIP]` 而不是误报。
+2. ✅ **Phase 2 多屏 + 位置记忆（2026-09-16 完成）**：`WindowPosition` 改为保存**物理像素**；
+   还原时用 winit 的 monitor 列表 + shell 的 `monitor_work_area`（Windows =
+   `MonitorFromPoint` + `GetMonitorInfoW(rcWork)`），按保存点选显示器并夹进工作区，显示器不存在
+   则回落到最近的可见工作区；菜单锚点也在菜单线程里用同一份 `rcWork` 夹取。
+   纯函数 `clamp_rect_to_work_area` / `monitor_for_point` + 单测；smoke 的 C3 校验
+   config.json 里存的是窗口物理原点，B14 校验屏幕外坐标重启后回落到工作区，T3 校验菜单不越界。
+3. ✅ **Phase 3 重力开关（2026-09-16 完成）**：设置 → 宠物行为「重力（松手后掉到工作区底部）」，
+   默认关；物理像素物理：2600 px/s²、上限 1800 px/s、单步最多 50ms；落到当前显示器工作区
+   底部时播放一次 `jumping`（1.2s）；拖动期间和活动提醒行走期间挂起，落地前不开始新的行走。
+   smoke 的 C7 自动验证下落、落点、落地动画和 `gravityLandings` 计数。
 4. **人工确认包（一次真实桌面会话，10 分钟）**：B5 持续注视、B7 真实点击不抢前台、
    B8 无边框闪（肉眼）、B10 菜单打开时宠物不冻结且退出立即生效、C4 DPI、
-   C5 全屏/虚拟桌面、D1 release 无控制台、D6 干净用户环境。
+   C5 全屏/虚拟桌面、D1 release 无控制台、D6 干净用户环境；阶段 7 新增的 H1–H5
+   （`docs/WINDOWS_VERIFICATION.md` H 节：登录自启、副屏位置、副屏菜单、拔屏回落、重力手感）。
 5. **首次发布**：定版本号（当前 0.1.0）→ 打 `windows-v*` tag 跑
    `release-windows.yml`（D4 首次执行）；macOS 拿到 Developer ID 后走 `sign-macos.sh` /
    `notarize-macos.sh`。
@@ -391,10 +415,38 @@ macOS 侧（需要用户在 mac 上）：`bash scripts/verify-macos-all.sh` 验�
 - **菜单连点会排队叠加**：菜单模态循环期间新请求只能排队，逐个弹。修法：`show()` 里若菜单已打开
   先 `PostMessageW(WM_CANCELMODE)` 取消当前菜单；菜单线程每次关闭后继续消费队列、只取最新位置。
   自动化守卫：smoke `T3`（弹出 → 再弹仍只有 1 个 → 关闭）。
-- **气泡是自己画的 egui 独立窗口，不是 Win32 动画**：进场用 140ms ease-out 淡入
-  （`app.rs` 的 `BUBBLE_FADE` + `bubble_shown_at`）。要更顺的话下一步是让气泡窗口常驻（像菜单那样
-  先建后用），避免文字出现那一帧才建窗口。
+- **气泡/输入框"从侧面滑进来"是 DWM 的显示过渡（2026-09-16 更正，之前判断错了）**：
+  窗口本身逐帧几何完全不动（实测 30 帧坐标不变），侧面滑动/淡入来自 Windows 在 `ShowWindow`
+  时给窗口做的 DWM 过渡；开启"淡入或滑动菜单"辅助选项时更明显，带 `WS_EX_TOOLWINDOW`
+  的弹窗尤其明显。两条修法缺一不可：
+  ① 设置 `DwmSetWindowAttribute(hwnd, DWMWA_TRANSITIONS_FORCEDISABLED = 3, TRUE)`
+  （`petsona-shell-windows/src/platform.rs` 的 `disable_window_transitions`）；
+  ② **必须在窗口第一次显示之前设置**——所以气泡和对话窗口都改成"先隐藏创建（warm-up）→
+  外壳设属性 → 下一帧才显示"（`bubble_window_warmed` / `conversation_window_warmed`）。
+  该属性**读不回来**（`DwmGetWindowAttribute` 返回 `E_INVALIDARG`），自动化靠
+  `PlatformHost::popup_transitions_disabled()` 探针 + smoke B9 断言。
+- **进场动画是我们自己画的、只动内容不动窗口**（`app.rs`）：
+  气泡 `BUBBLE_ENTRY` 160ms，内容从下方 8px 升到位（`BUBBLE_ENTRY_RISE`）；
+  对话窗口 `CONVERSATION_ENTRY` 180ms，内容从上方 8px 落到位（`CONVERSATION_ENTRY_DROP`）。
+  气泡窗口因此把底部内边距加了 8px（`BUBBLE_BOTTOM_PADDING`），窗口位置相应上移
+  （`BUBBLE_WINDOW_GAP = BUBBLE_GAP - BUBBLE_ENTRY_RISE`），保证静止位置与旧版一致。
 
+- **V2 注视会压过 `running-left` / `running-right`（2026-09-16 踩坑）**：引擎里 look-row-9/10
+  优先级 20、locomotion 只有 10，而且注视是"光标不离开就不放"的保持状态；所以鼠标停在宠物上时，
+  协议发的 `running-left` 会被注视盖住（引擎单测
+  `gaze_does_not_override_higher_priority_events_or_get_replaced_by_motion` 固定了这个设计）。
+  smoke 的 A8 因此**先把光标移到对面角落**再跑协议状态。
+- **转向姿态会让"命中像素"变成穿透（2026-09-16 修复）**：光标移到宠物上 → 宠物转头 → 当前帧的
+  不透明像素变了，原来的射线点变透明，窗口立刻切成穿透，于是"看向你的时候点不到它"。
+  修法：`cursor_over_pet` 先测当前帧，再回退到 idle 动画所有帧的并集掩码（身体位置始终可点）。
+  回归测试 `a_look_pose_still_keeps_the_resting_body_clickable`。
+- **位置记忆必须用物理像素（2026-09-16 修复）**：`WindowPosition` 现在存**物理像素窗口原点**
+  （Win32 `GetWindowRect` 坐标系），逻辑点只在 winit 边界换算；旧版本存的逻辑坐标会被还原路径
+  夹回工作区，不会跑到屏幕外。工作区来自 `PlatformHost::monitor_work_area`
+  （Windows = `MonitorFromPoint` + `GetMonitorInfoW(rcWork)`）。
+- **开机自启写的是 HKCU Run，受限会话会 ACCESS_DENIED**：注册表值名默认 `Petsona`，
+  可用 `PETSONA_AUTOSTART_VALUE_NAME` 覆盖（smoke 用一次性名字，绝不碰用户真实启动项）。
+  在沙箱/CI 里 `RegCreateKeyW` 可能返回错误码 5，此时 smoke T4 会明确跳过而不是误报失败。
 - **PowerShell 5.1 的 `Compress-Archive` 会写反斜杠条目名**（zip 规范要求 `/`）。打包改用
   `[System.IO.Compression.ZipFile]::CreateFromDirectory(...)`；校验条目时把 `\` 归一化成 `/`。
 - **`#![windows_subsystem]` / exe 图标**：图标靠 `rc.exe`（MSVC）或 `windres.exe`（GNU）编译
@@ -423,8 +475,18 @@ macOS 侧（需要用户在 mac 上）：`bash scripts/verify-macos-all.sh` 验�
 ## 关键事实速查
 
 - 数据目录：`%APPDATA%\Petsona`（mac：`~/Library/Application Support/Petsona`），可用环境变量
-  `PETSONA_HOME` 覆盖（测试 / 便携用）。本地宠物库在 `...\Petsona\pets`，另有只读引用
-  `~/.codex/pets`、`~/.unipet/pets`；同 id 时本地库优先。
+  `PETSONA_HOME` 覆盖（测试 / 便携用）。宠物只有**本地库** `...\Petsona\pets` 会被加载：
+  2026-09-16 起不再自动扫描 `~/.codex/pets` / `~/.unipet/pets`，而是在设置 →「宠物」→
+  「从 Codex 导入」里列出 `~/.codex/pets` 的内容，用户点「导入」后才复制进本地库
+  （`PetLibrary::discover` 只返回本地根；`codex_pets_dir()` + `PetLibrary::scan_dir()`
+  只读列目录）。
+- 内置宠物（2026-09-16 更换）：**Superintendent** by Renner Campos，V2 8×11 包
+  （id `Superintendent_Petdex`，图集 1536×2288，内嵌在 `crates/petsona-core/assets/default-pet/`）。
+  旧的 `petsona-default`（ByteBot）不再随包发布；老用户本地残留的副本不会被删除。
+- 位置记忆：`config.json` 的 `window.startPosition` 是**物理像素**；`window.gravityEnabled`
+  默认 `false`（重力 2600 px/s²、上限 1800 px/s，落到工作区底部播放一次 `jumping`）。
+- 开机自启：`HKCU\Software\Microsoft\Windows\CurrentVersion\Run` 下 `Petsona = "<exe 路径>"`；
+  测试可用 `PETSONA_AUTOSTART_VALUE_NAME` 换一个值名。设置 →「启动」里的开关读的是注册表真实状态。
 - 状态协议：`127.0.0.1:17872`，`POST /state`（`{source,state,message,ttlMs}`）、`GET /health`、
   `GET /pets`；`ttlMs: 0` 表示不过期。状态名见 `docs/PET_NATIVE.md`。
   发行版宠物实测：V2 = 8×11；**idle 画了 7 帧**（官方时长表写 6），引擎按“真正画了内容的格子”取帧数；

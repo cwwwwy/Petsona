@@ -1,9 +1,13 @@
 //! The pet that ships with the app.
 //!
 //! A fresh install must show something even when the user has never installed a
-//! Codex pet, so a self-authored atlas is embedded in the binary and written to
-//! the writable library. It stays available next to the user's own pets; only an
-//! explicit delete opts out (see `AppConfig::bundled_pet_removed`).
+//! Codex pet, so the default character is embedded in the binary and written to
+//! the writable library on start. It stays available next to the user's own
+//! pets; only an explicit delete opts out (see `AppConfig::bundled_pet_removed`).
+//!
+//! The bundled character is **Superintendent** by Renner Campos (a V2 8x11
+//! Codex pack: `Superintendent_Petdex`). It replaced the earlier self-authored
+//! ByteBot atlas, which is no longer shipped.
 
 use std::path::Path;
 
@@ -11,10 +15,10 @@ use crate::error::Result;
 use crate::pet::library::{PetEntry, PetLibrary, RootKind};
 
 /// Pet id of the bundled character.
-pub const DEFAULT_PET_ID: &str = "petsona-default";
+pub const DEFAULT_PET_ID: &str = "Superintendent_Petdex";
 /// Manifest of the bundled character.
 pub const DEFAULT_PET_MANIFEST: &str = include_str!("../../assets/default-pet/pet.json");
-/// Spritesheet of the bundled character (8x9 Codex atlas, 1536x1872).
+/// Spritesheet of the bundled character (V2 8x11 Codex atlas, 1536x2288).
 pub const DEFAULT_PET_SPRITESHEET: &[u8] =
     include_bytes!("../../assets/default-pet/spritesheet.png");
 
@@ -79,7 +83,8 @@ mod tests {
             spritesheet_name()
         );
 
-        // The embedded atlas must decode to the exact Codex V1 geometry.
+        // The embedded atlas must decode to the exact geometry its manifest asks
+        // for (V2: 8 columns x 11 rows, 1536x2288).
         let image = image::load_from_memory(DEFAULT_PET_SPRITESHEET)
             .expect("bundled spritesheet decodes")
             .to_rgba8();
@@ -87,8 +92,8 @@ mod tests {
             .resolve_frame(image.width(), image.height())
             .expect("geometry resolves");
         assert!(warnings.is_empty(), "no geometry warnings: {warnings:?}");
-        assert_eq!((frame.columns, frame.rows), (8, 9));
-        assert_eq!((image.width(), image.height()), (1536, 1872));
+        assert_eq!((frame.columns, frame.rows), (8, 11));
+        assert_eq!((image.width(), image.height()), (1536, 2288));
 
         let atlas = crate::pet::PetAtlas::from_image(image, frame, DEFAULT_PET_ID.into())
             .expect("atlas builds");

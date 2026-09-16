@@ -189,16 +189,21 @@ if command -v lsof >/dev/null 2>&1; then
   done
 fi
 
+# The app only loads its own library now, so anything the smoke wants to switch
+# to must be imported into the temporary home first (this mirrors what the
+# settings window does for a Codex pet).
+mkdir -p "$PETSONA_SMOKE_HOME/pets"
+
 if PETSONA_V2_PET_DIR="$(find_v2_pet)"; then
   PETSONA_V2_ID="$(json_value "$(<"$PETSONA_V2_PET_DIR/pet.json")" id)"
   printf 'V2 gaze fixture: %s (%s)\n' "$PETSONA_V2_ID" "$PETSONA_V2_PET_DIR"
+  cp -R "$PETSONA_V2_PET_DIR" "$PETSONA_SMOKE_HOME/pets/$PETSONA_V2_ID"
   PETSONA_ACTIVE_PET_JSON="\"$PETSONA_V2_ID\""
 else
   printf 'No V2 pet found; gaze app smoke will be skipped (set PETSONA_SMOKE_V2_PET_DIR to enable it).\n'
   PETSONA_ACTIVE_PET_JSON='null'
 fi
 
-mkdir -p "$PETSONA_SMOKE_HOME"
 printf '{"activePet":%s,"greeting":{"enabled":false},"window":{"autoWalk":{"enabled":false}},"stateServer":{"enabled":true,"port":%s}}\n' "$PETSONA_ACTIVE_PET_JSON" "$PETSONA_STATE_PORT" > "$PETSONA_SMOKE_HOME/config.json"
 
 PETSONA_HOME="$PETSONA_SMOKE_HOME" PETSONA_TEST_HOOKS=1 PETSONA_TEST_HOOKS_PORT="$PETSONA_HOOK_PORT" PETSONA_TEST_HOOKS_TOKEN="$PETSONA_HOOK_TOKEN" RUST_LOG=info "$PETSONA_BINARY" >"$PETSONA_SMOKE_HOME/stdout.log" 2>"$PETSONA_SMOKE_HOME/stderr.log" &
@@ -292,23 +297,32 @@ pass '缩放序列窗口几何稳定且保持底部中心锚点'
 
 hook_action '{"action":"set-window-position","x":200,"y":180}'
 sleep 0.3
+# 2026-09-16 起 startPosition 保存物理像素（混合 DPI 下逻辑点会漂移）。
+# 状态快照里的 windowX/windowY 就是物理窗口原点，用它作为基准。
+placed_geometry="$(hook_status)"
+placed_x="$(json_value "$placed_geometry" windowX)"
+placed_y="$(json_value "$placed_geometry" windowY)"
+[[ -n "$placed_x" && -n "$placed_y" ]] || fail "状态快照缺少物理窗口原点：${placed_geometry:-<empty>}"
 hook_action '{"action":"save-window-position"}'
 saved_position_x=""
 saved_position_y=""
+position_matches() {
+  [[ "$1" =~ ^-?[0-9]+([.][0-9]+)?$ && "$2" =~ ^-?[0-9]+([.][0-9]+)?$ ]] \
+    && awk -v x="$1" -v y="$2" -v ex="$placed_x" -v ey="$placed_y" \
+      'BEGIN { dx = x - ex; dy = y - ey; if (dx < 0) dx = -dx; if (dy < 0) dy = -dy; exit !(dx <= 2 && dy <= 2) }'
+}
 for _ in {1..50}; do
   saved_position_x="$(json_value "$(<"$PETSONA_SMOKE_HOME/config.json")" window.startPosition.x)"
   saved_position_y="$(json_value "$(<"$PETSONA_SMOKE_HOME/config.json")" window.startPosition.y)"
-  if [[ "$saved_position_x" =~ ^[0-9]+([.][0-9]+)?$ && "$saved_position_y" =~ ^[0-9]+([.][0-9]+)?$ ]] \
-    && awk -v x="$saved_position_x" -v y="$saved_position_y" 'BEGIN { exit !(x == 200 && y == 180) }'; then
+  if position_matches "$saved_position_x" "$saved_position_y"; then
     break
   fi
   sleep 0.05
 done
-if [[ "$saved_position_x" =~ ^[0-9]+([.][0-9]+)?$ && "$saved_position_y" =~ ^[0-9]+([.][0-9]+)?$ ]] \
-  && awk -v x="$saved_position_x" -v y="$saved_position_y" 'BEGIN { exit !(x == 200 && y == 180) }'; then
-  pass '拖动位置可以保存到配置'
+if position_matches "$saved_position_x" "$saved_position_y"; then
+  pass '拖动位置可以保存到配置（物理像素）'
 else
-  fail "窗口位置没有保存（实际：${saved_position_x:-<empty>},${saved_position_y:-<empty>}）"
+  fail "窗口位置没有保存（实际：${saved_position_x:-<empty>},${saved_position_y:-<empty>}，窗口物理原点：${placed_x:-<empty>},${placed_y:-<empty>}）"
 fi
 
 if command -v ps >/dev/null 2>&1; then

@@ -5,11 +5,12 @@ personality and keep the user company.
 
 The new application keeps the parts that made the original Codex pet useful:
 
-- reads Codex-compatible pet packages from `~/.codex/pets`
+- ships with a bundled Codex pet (**Superintendent** by Renner Campos) and keeps
+  a local pet library the user owns
 - renders the 8x9 / 8x11 spritesheet animation state machine
 - supports a transparent, always-on-top pet window
 - supports click, double-click, drag, right-click menu, gaze and a speech bubble
-- can switch pets at runtime from `~/.codex/pets`, `~/.unipet/pets` or the local library
+- imports pets explicitly from Codex (`~/.codex/pets`) or from a folder / `.zip`
 - exposes the local state protocol so Codex hooks can drive the animation
 - stores a simplified persona and lightweight pet memory
 - uses one DeepSeek API transport for short, intelligent greetings
@@ -110,10 +111,11 @@ lists the discovered pets.
 ## Pet library
 
 The application keeps its own writable library next to the config file
-(`<config>/Petsona/pets` on every platform) and links `~/.codex/pets` and
-`~/.unipet/pets` read-only, with the local library winning on id clashes.
+(`<config>/Petsona/pets` on every platform). Nothing outside that folder is
+loaded automatically any more: the settings window lists what `~/.codex/pets`
+contains and imports the pets you pick.
 
-The bundled ByteBot is installed into the local library on every start, so it
+The bundled Superintendent is installed into the local library on every start, so it
 is always available to switch back to; deleting it in the settings opts out for
 good. Settings -> 宠物 imports a pet folder or `.zip` (also by dropping it onto
 the window), exports the Codex upload format, and deletes local copies with a

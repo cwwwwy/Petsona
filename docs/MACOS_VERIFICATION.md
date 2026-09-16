@@ -16,6 +16,13 @@
 - ✅ 单实例保护、文件日志、按需重绘、独立气泡窗口和 `.app`/LaunchAgent/签名/公证脚本已实现；签名和公证仍需
   用户自己的 Developer ID 证书与 `notarytool` 凭据。
 
+- ℹ️ 2026-09-16 阶段 7：`window.startPosition` 现在两端统一存**物理像素**；Windows 有真实的
+  `rcWork` 工作区，macOS 暂时回落到 winit 的整块显示器边界（Dock/菜单栏未排除），
+  多屏/Retina 复验时要重点看还原位置。重力开关是共享功能，macOS 同样可用，但落点同样受这个
+  边界影响，等 macOS 外壳提供 `NSScreen.visibleFrame` 后再精确到可见区。
+- ℹ️ 开机自启在 Windows 走设置里的注册表开关；macOS 设置里会显示"当前平台不支持"，
+  仍使用仓库里的 `scripts/install-macos-launch-agent.sh`（LaunchAgent），这是有意保留的平台差异。
+
 最小可用判定：**B1（左键）、B3（拖拽）、B5（转头）、B6（穿透）、B11（空闲 CPU）全部通过**，
 macOS 才算真正可用。
 
@@ -53,7 +60,7 @@ RUST_LOG=debug cargo run -p petsona-shell-macos
 | A2 | 看菜单栏 | 出现 Petsona 托盘图标 | 待实测 |
 | A3 | 点击托盘图标 | 弹出 macOS 原生菜单：打开设置 / 选择宠物（V2 有标记）/ 显示隐藏宠物 / 退出 | 代码已完成；实机待重新确认 |
 | A4 | 打开设置 | 能打开、滚动；缩放、穿透、状态协议端口、自动行走等控件可操作 | 待实测 |
-| A5 | 切换宠物 | 本地库 + `~/.codex/pets` + `~/.unipet/pets` 都能列出；切换后动画和窗口/托盘图标更新 | 待实测 |
+| A5 | 切换宠物 | 本地库能列出（含内置 Superintendent）；「从 Codex 导入」能列出并导入 `~/.codex/pets`；切换后动画和窗口/托盘图标更新 | 导入面板为 2026-09-16 新增，待实测 |
 | A6 | 导入/导出 | 原生文件面板或拖放可导入文件夹/`.zip`；原生保存面板导出 Codex 格式；删除本地副本需确认 | 待实测 |
 | A7 | 状态协议 POST | `waiting` / `failed` / `review` / `running` 能切换动画；带 `message` 时显示气泡；`ttlMs` 到期回 base | 待实测 |
 | A8 | 状态协议 GET | `GET /health` 返回当前 pet/persona/state；`GET /pets` 返回 id 列表 | 待实测 |
@@ -173,7 +180,7 @@ bash scripts/verify-macos-all.sh
 设置窗口成为 Key Window、宠物与菜单不抢焦点、缩放几何与底部中心锚点、Escape 关闭菜单、
 导入/导出文件面板、打开宠物库目录。
 
-默认从 `~/.codex/pets`、`~/.unipet/pets` 搜索 V2 宠物；也可以显式指定：
+默认从 `~/.codex/pets`、`~/.unipet/pets` 搜索 V2 宠物作为**测试夹具**（找到后会复制进临时 `PETSONA_HOME`，因为应用只加载本地库）；也可以显式指定：
 
 ```bash
 PETSONA_SMOKE_V2_PET_DIR="$HOME/.codex/pets/<pet>" bash scripts/macos-smoke.sh

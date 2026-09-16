@@ -83,6 +83,9 @@ pub struct PetWindowConfig {
     pub opacity: f32,
     pub always_on_top: bool,
     pub click_through: bool,
+    /// Physics: the pet falls to the bottom of the current monitor's work
+    /// area when it is dropped in mid-air. Off by default.
+    pub gravity_enabled: bool,
     pub auto_walk: AutoWalkConfig,
     pub start_position: Option<WindowPosition>,
 }
@@ -94,6 +97,7 @@ impl Default for PetWindowConfig {
             opacity: 1.0,
             always_on_top: true,
             click_through: true,
+            gravity_enabled: false,
             auto_walk: AutoWalkConfig::default(),
             start_position: None,
         }
@@ -128,6 +132,12 @@ impl Default for AutoWalkConfig {
     }
 }
 
+/// Saved pet-window origin in **physical pixels**.
+///
+/// Win32 window coordinates are physical, and mixing them with a logical
+/// `scale_factor` drifts on mixed-DPI desktops: a 100% monitor next to a 150%
+/// one would restore the pet tens of pixels away from where the user left it.
+/// The UI converts to logical points only at the winit boundary.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct WindowPosition {

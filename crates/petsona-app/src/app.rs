@@ -14,7 +14,7 @@ use petsona_core::pet::{PetAtlas, PetEntry};
 use petsona_runtime::pet::{PetSession, IDLE_REPAINT};
 use petsona_runtime::session::{Bubble, ConversationTurn, PetsonaRuntime};
 
-use crate::platform::{MenuCommand, PlatformHost, PlatformMenu, PointerSnapshot};
+use crate::platform::{MenuCommand, PhysicalRect, PlatformHost, PlatformMenu, PointerSnapshot};
 
 #[cfg(feature = "test-hooks")]
 use crate::test_hooks::{TestActionRequest, TestHookServer, TestStatus};
@@ -25,14 +25,23 @@ const BUBBLE_TITLE: &str = "Petsona 气泡";
 const BUBBLE_WINDOW_SIZE: egui::Vec2 = egui::vec2(360.0, 220.0);
 const BUBBLE_GAP: f32 = 8.0;
 const BUBBLE_TAIL: f32 = 7.0;
-const BUBBLE_BOTTOM_PADDING: f32 = 2.0;
-/// Fade-in for a newly shown bubble. The bubble lives in its own window, so
-/// this is what turns "the text appeared" into a smooth appearance instead of a
-/// hard pop.
-const BUBBLE_FADE: Duration = Duration::from_millis(140);
+/// Entry animation of a newly shown bubble: the content rises into place while
+/// fading in ("from below"), which reads as the bubble growing out of the pet.
+const BUBBLE_ENTRY: Duration = Duration::from_millis(160);
+const BUBBLE_ENTRY_RISE: f32 = 8.0;
+/// Resting padding of the bubble inside its overlay window, plus the room the
+/// entry animation needs below the resting place so nothing is clipped.
+const BUBBLE_BOTTOM_PADDING: f32 = 2.0 + BUBBLE_ENTRY_RISE;
+/// The overlay window is placed this much higher than [`BUBBLE_GAP`] would ask
+/// for, so the extra bottom padding above keeps the resting position identical.
+const BUBBLE_WINDOW_GAP: f32 = BUBBLE_GAP - BUBBLE_ENTRY_RISE;
 const CONVERSATION_TITLE: &str = "Petsona 对话";
 const CONVERSATION_WINDOW_SIZE: egui::Vec2 = egui::vec2(440.0, 220.0);
 const CONVERSATION_GAP: f32 = 10.0;
+/// Entry animation of the conversation window (the input box): it drops in from
+/// above while fading in.
+const CONVERSATION_ENTRY: Duration = Duration::from_millis(180);
+const CONVERSATION_ENTRY_DROP: f32 = 8.0;
 const MENU_TITLE: &str = "Petsona 菜单";
 const MENU_WIDTH: f32 = 176.0;
 const MENU_ROW: f32 = 30.0;
@@ -75,17 +84,36 @@ const CLICK_MOVE_TOLERANCE: f32 = 4.0;
 /// How long a press may last and still count as a click.
 const CLICK_MAX_HOLD: Duration = Duration::from_millis(700);
 
+/// Gravity accelerates the pet in physical pixels per second squared; the
+/// terminal velocity keeps a long fall from looking like a teleport.
+const GRAVITY_PX_S2: f64 = 2600.0;
+const GRAVITY_MAX_SPEED_PX_S: f64 = 1800.0;
+/// How long the landing animation plays (raised once per touchdown).
+const GRAVITY_LANDING_TTL: Duration = Duration::from_millis(1200);
+/// A single physics step never covers more than this much time, so a stalled
+/// event loop cannot fling the pet through the floor.
+const GRAVITY_MAX_STEP_S: f64 = 0.05;
+
 pub struct PetsonaApp {
     /// Native backend supplied by the shell.
     platform: Arc<dyn PlatformHost>,
     runtime: PetsonaRuntime,
     pet_textures: PetTextures,
     bubble_window_created: bool,
-    /// When the current bubble text first appeared; drives the fade-in.
+    /// The bubble's OS window already exists (created hidden). Windows gets a
+    /// show transition when a window is first shown, so the window is created
+    /// hidden once and the shell disables that transition before it is ever
+    /// visible.
+    bubble_window_warmed: bool,
+    /// When the current bubble text first appeared; drives the entry animation.
     bubble_shown_at: Option<Instant>,
     bubble_styled: bool,
     conversation_open: bool,
     conversation_window_created: bool,
+    /// Same warm-up as the bubble, for the conversation ("input box") window.
+    conversation_window_warmed: bool,
+    /// When the conversation window became visible; drives its entry animation.
+    conversation_shown_at: Option<Instant>,
     conversation_focus_pending: bool,
     conversation_draft: String,
     conversation_cursor: Option<egui::Pos2>,
@@ -108,8 +136,12 @@ pub struct PetsonaApp {
     menu_styled: bool,
     menu_button_was_down: bool,
     menu_right_button_was_down: bool,
-    /// Pet library (Codex / UniPet / local roots) and its current contents.
+    /// Pet library (the app-local writable folder) and its current contents.
     pet_preview: Option<(String, egui::TextureHandle)>,
+    /// Pets found in `~/.codex/pets`, listed by the explicit import panel.
+    /// Nothing there is loaded until the user imports it.
+    codex_pets: Vec<PetEntry>,
+    codex_pets_scanned: bool,
     /// Which side the cursor was on when the pet last glanced (-1/0/1).
     /// The pet is being moved by the user right now.
     pet_dragged: bool,
@@ -172,6 +204,19 @@ pub struct PetsonaApp {
     /// Icon built from the active pet, cached by pet id.
     pet_icon: Option<(String, std::sync::Arc<egui::IconData>)>,
     applied_window_icon: Option<String>,
+    /// Login-item state for the settings checkbox. Read from the OS (the
+    /// registry on Windows) at startup so an external change is never masked
+    /// by a stale config copy.
+    autostart_enabled: bool,
+    /// Gravity physics, in physical pixels: current downward velocity, whether
+    /// the pet is in free fall, whether it is resting on the floor, and the
+    /// last physics tick.
+    gravity_velocity: f64,
+    gravity_falling: bool,
+    gravity_grounded: bool,
+    last_gravity_tick: Instant,
+    #[cfg(feature = "test-hooks")]
+    gravity_landings: u64,
 }
 
 impl std::ops::Deref for PetsonaApp {
@@ -293,15 +338,22 @@ impl PetsonaApp {
             until: Instant::now() + Duration::from_secs(8),
         });
 
+        // The login item lives in the OS, not in the config file, so read it
+        // once here and re-read it whenever the settings toggle changes it.
+        let autostart_enabled = platform.autostart_enabled();
+
         let mut app = Self {
             platform,
             runtime,
             pet_textures: PetTextures::default(),
             bubble_window_created: false,
+            bubble_window_warmed: false,
             bubble_shown_at: None,
             bubble_styled: false,
             conversation_open: false,
             conversation_window_created: false,
+            conversation_window_warmed: false,
+            conversation_shown_at: None,
             conversation_focus_pending: false,
             conversation_draft: String::new(),
             conversation_cursor: None,
@@ -319,6 +371,8 @@ impl PetsonaApp {
             menu_button_was_down: false,
             menu_right_button_was_down: false,
             pet_preview: None,
+            codex_pets: Vec::new(),
+            codex_pets_scanned: false,
             pet_dragged: false,
             pointer_left_down: false,
             pointer_right_down: false,
@@ -370,6 +424,13 @@ impl PetsonaApp {
             applied_always_on_top: None,
             pet_icon: None,
             applied_window_icon: None,
+            autostart_enabled,
+            gravity_velocity: 0.0,
+            gravity_falling: false,
+            gravity_grounded: false,
+            last_gravity_tick: Instant::now(),
+            #[cfg(feature = "test-hooks")]
+            gravity_landings: 0,
         };
         let _ = app.trigger_greeting("startup", true);
         app.sync_state_server();
@@ -484,42 +545,74 @@ impl PetsonaApp {
         let target = egui::vec2(window_size.x.round(), window_size.y.round());
         let previous = self.applied_window_size;
         if previous != Some(target) {
+            // Physical pixels, as written by `remember_window_position`.
             let restore_position = if !self.start_position_applied {
                 self.start_position_applied = true;
                 self.config
                     .window
                     .start_position
                     .filter(|position| position.x.is_finite() && position.y.is_finite())
-                    .map(|position| egui::pos2(position.x, position.y))
             } else {
                 None
             };
             let mut positioned = false;
             if let Some(window) = frame.winit_window() {
-                if let Ok(position) = window.outer_position() {
-                    let scale = window.scale_factor().max(0.1) as f32;
-                    let current = egui::pos2(position.x as f32 / scale, position.y as f32 / scale);
-                    let actual_size = window.outer_size();
-                    let actual_size = egui::vec2(
-                        actual_size.width as f32 / scale,
-                        actual_size.height as f32 / scale,
-                    );
-                    let anchor = bottom_center_anchor(current, actual_size);
-                    let next = restore_position
-                        .unwrap_or_else(|| position_for_bottom_center(anchor, target));
-                    self.platform.set_window_geometry(
-                        window,
-                        next.x as f64,
-                        next.y as f64,
-                        target.x as f64,
-                        target.y as f64,
-                    );
-                    positioned = true;
+                if let Some(saved) = restore_position {
+                    // Restore in physical pixels and clamp into the work area
+                    // of the monitor the saved origin falls on. If that
+                    // monitor is gone (undocked laptop, new resolution), the
+                    // nearest visible work area wins instead of reopening
+                    // off-screen.
+                    if let Some(monitor) = self.saved_monitor(window, saved) {
+                        let width = (target.x as f64 * monitor.scale_factor).round() as i32;
+                        let height = (target.y as f64 * monitor.scale_factor).round() as i32;
+                        let wanted = PhysicalRect::new(
+                            saved.x.round() as i32,
+                            saved.y.round() as i32,
+                            width.max(1),
+                            height.max(1),
+                        );
+                        let rect = clamp_rect_to_work_area(wanted, monitor.work_area);
+                        self.platform.set_window_geometry_physical(window, rect);
+                        positioned = true;
+                    }
+                }
+                if !positioned {
+                    if let Ok(position) = window.outer_position() {
+                        let scale = window.scale_factor().max(0.1) as f32;
+                        let current =
+                            egui::pos2(position.x as f32 / scale, position.y as f32 / scale);
+                        let actual_size = window.outer_size();
+                        let actual_size = egui::vec2(
+                            actual_size.width as f32 / scale,
+                            actual_size.height as f32 / scale,
+                        );
+                        let anchor = bottom_center_anchor(current, actual_size);
+                        let next = position_for_bottom_center(anchor, target);
+                        self.platform.set_window_geometry(
+                            window,
+                            next.x as f64,
+                            next.y as f64,
+                            target.x as f64,
+                            target.y as f64,
+                        );
+                        positioned = true;
+                    }
                 }
             }
             if !positioned {
                 if let Some(position) = restore_position {
-                    ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(position));
+                    // Portable fallback: winit only takes logical points, so
+                    // convert with the current window scale. The Windows shell
+                    // uses `set_window_geometry_physical` above instead.
+                    let scale = frame
+                        .winit_window()
+                        .map(|window| window.scale_factor().max(0.1) as f32)
+                        .unwrap_or(1.0);
+                    ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(egui::pos2(
+                        position.x / scale,
+                        position.y / scale,
+                    )));
                 }
                 ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(target));
             }
@@ -599,18 +692,39 @@ impl PetsonaApp {
         let pet_top = parent_position.y + pet_rect.top();
         let bubble_position = egui::pos2(
             pet_center.x - BUBBLE_WINDOW_SIZE.x * 0.5,
-            pet_top - BUBBLE_WINDOW_SIZE.y - BUBBLE_GAP,
+            pet_top - BUBBLE_WINDOW_SIZE.y - BUBBLE_WINDOW_GAP,
         );
         let bubble_rect_global = egui::Rect::from_min_size(bubble_position, BUBBLE_WINDOW_SIZE);
         let bubble_hovered = self.pointer.position.is_some_and(|(x, y)| {
             bubble_rect_global
                 .contains(egui::pos2(x as f32 / scale as f32, y as f32 / scale as f32))
         });
+        // First appearance: create the overlay window hidden and let the shell
+        // disable the system's show/hide transition for it. Showing it later is
+        // then instant and only our own entry animation is visible.
+        if !self.bubble_window_warmed {
+            let builder = egui::ViewportBuilder::default()
+                .with_title(BUBBLE_TITLE)
+                .with_inner_size([BUBBLE_WINDOW_SIZE.x, BUBBLE_WINDOW_SIZE.y])
+                .with_position([bubble_position.x, bubble_position.y])
+                .with_transparent(true)
+                .with_decorations(false)
+                .with_always_on_top()
+                .with_taskbar(false)
+                .with_resizable(false)
+                .with_active(false)
+                .with_visible(false);
+            ctx.show_viewport_immediate(bubble_id, builder, |_ui, _class| {});
+            self.bubble_window_warmed = true;
+            self.bubble_styled = self.platform.set_no_activate_for_title(BUBBLE_TITLE) > 0;
+            return;
+        }
+
         let shown_at = *self.bubble_shown_at.get_or_insert_with(Instant::now);
-        let progress =
-            (shown_at.elapsed().as_secs_f32() / BUBBLE_FADE.as_secs_f32()).clamp(0.0, 1.0);
-        // Ease-out cubic: fast start, soft landing.
-        let opacity = 1.0 - (1.0 - progress).powi(3);
+        let eased = ease_out(entry_progress(Some(shown_at), BUBBLE_ENTRY));
+        let opacity = eased;
+        // "From below": the content starts one rise lower and climbs into place.
+        let rise = (1.0 - eased) * BUBBLE_ENTRY_RISE;
         let builder = egui::ViewportBuilder::default()
             .with_title(BUBBLE_TITLE)
             .with_inner_size([BUBBLE_WINDOW_SIZE.x, BUBBLE_WINDOW_SIZE.y])
@@ -629,7 +743,8 @@ impl PetsonaApp {
                 .frame(egui::Frame::NONE.fill(egui::Color32::TRANSPARENT))
                 .show(ui, |ui| {
                     let window = ui.max_rect();
-                    let bubble_rect = draw_bubble_window(ui.painter(), window, &text, opacity);
+                    let bubble_rect =
+                        draw_bubble_window(ui.painter(), window, &text, opacity, rise);
                     if bubble_hovered {
                         let reply_rect = egui::Rect::from_min_size(
                             egui::pos2(bubble_rect.right() - 66.0, bubble_rect.top() + 8.0),
@@ -865,6 +980,18 @@ impl PetsonaApp {
         self.settings_open = true;
         self.settings_pos = None;
         self.settings_focus_pending = true;
+        // The Codex import list is scanned on demand, not polled.
+        self.codex_pets_scanned = false;
+    }
+
+    /// List what is available in `~/.codex/pets` for the explicit import panel.
+    fn scan_codex_pets(&mut self) {
+        self.codex_pets = petsona_core::pet::codex_pets_dir()
+            .map(|dir| {
+                petsona_core::pet::PetLibrary::scan_dir(&dir, petsona_core::pet::RootKind::Codex)
+            })
+            .unwrap_or_default();
+        self.codex_pets_scanned = true;
     }
 
     /// Bottom-right of the pet when there is room, otherwise the closest spot
@@ -911,36 +1038,36 @@ impl PetsonaApp {
     fn draw_settings_body(&mut self, ui: &mut egui::Ui) {
         let mut switch_to: Option<String> = None;
         let mut import_request: Option<(PathBuf, bool)> = None;
+        let mut codex_imports: Vec<PathBuf> = Vec::new();
         let mut export_id: Option<String> = None;
         let mut delete_id: Option<String> = None;
         ui.collapsing("宠物", |ui| {
-            let pets: Vec<(String, String, bool)> = self
+            let pets: Vec<(String, String)> = self
                 .pets
                 .iter()
                 .map(|pet| {
-                    let local = pet.root == petsona_core::pet::RootKind::AppData;
+                    // Every listed pet lives in the app-local library; Codex
+                    // pets are imported explicitly (see the panel below).
                     let mut label = format!(
                         "{}  ·  {}  ({})",
                         pet.display_name,
                         pet.id,
                         pet.root.label()
                     );
-                    if local && pet.id == petsona_core::pet::DEFAULT_PET_ID {
+                    if pet.id == petsona_core::pet::DEFAULT_PET_ID {
                         label.push_str("  ·  内置");
                     }
                     if pet.sprite_version_number == Some(2) || pet.frame.rows >= 11 {
                         label.push_str("  ·  V2（支持持续注视）");
                     }
-                    (pet.id.clone(), label, local)
+                    (pet.id.clone(), label)
                 })
                 .collect();
             ui.horizontal(|ui| {
                 ui.label(format!("当前：{}", self.active_pet_name()));
-                ui.label(format!(
-                    "共 {} 个（本地库 {} 个，其余来自 ~/.codex/pets、~/.unipet/pets）",
-                    pets.len(),
-                    pets.iter().filter(|(_, _, local)| *local).count()
-                ));
+                // Only the app-local library is listed now; Codex pets are
+                // imported explicitly below.
+                ui.label(format!("共 {} 个（都在本地库）", pets.len()));
             });
             ui.horizontal(|ui| {
                 ui.label("导入");
@@ -977,6 +1104,61 @@ impl PetsonaApp {
                     self.status = format!("发现 {} 个宠物", self.pets.len());
                 }
             });
+            ui.collapsing("从 Codex 导入", |ui| {
+                ui.label(
+                    "Petsona 不会自动加载 ~/.codex/pets。这里列出的宠物只有在你点「导入」后\
+                     才会复制进本地库。",
+                );
+                if !self.codex_pets_scanned {
+                    self.scan_codex_pets();
+                }
+                let local_ids: Vec<String> = self.pets.iter().map(|pet| pet.id.clone()).collect();
+                let candidates: Vec<(String, String, PathBuf, bool)> = self
+                    .codex_pets
+                    .iter()
+                    .map(|pet| {
+                        (
+                            pet.display_name.clone(),
+                            pet.id.clone(),
+                            pet.dir.clone(),
+                            local_ids.contains(&pet.id),
+                        )
+                    })
+                    .collect();
+
+                if candidates.is_empty() {
+                    ui.label("在 ~/.codex/pets 里没有发现宠物包。");
+                } else {
+                    ui.label(format!("发现 {} 个：", candidates.len()));
+                    for (display_name, id, dir, already_local) in &candidates {
+                        ui.horizontal(|ui| {
+                            let suffix = if *already_local {
+                                "（已在本地库）"
+                            } else {
+                                ""
+                            };
+                            ui.label(format!("{display_name}  ·  {id}{suffix}"));
+                            if ui.button("导入").clicked() {
+                                codex_imports.push(dir.clone());
+                            }
+                        });
+                    }
+                    if ui
+                        .button("全部导入")
+                        .on_hover_text("导入所有还不在本地库里的宠物")
+                        .clicked()
+                    {
+                        for (_, _, dir, already_local) in &candidates {
+                            if !*already_local {
+                                codex_imports.push(dir.clone());
+                            }
+                        }
+                    }
+                }
+                if ui.button("重新扫描").clicked() {
+                    self.codex_pets_scanned = false;
+                }
+            });
             if let Some(path) = self.pending_overwrite.clone() {
                 ui.horizontal(|ui| {
                     ui.label(format!("{} 与本地库里的宠物同 id。", path.display()));
@@ -995,7 +1177,7 @@ impl PetsonaApp {
                 .max_height(150.0)
                 .id_salt("pet-list")
                 .show(ui, |ui| {
-                    for (id, label, _local) in &pets {
+                    for (id, label) in &pets {
                         let selected = self.selected_pet.as_deref() == Some(id.as_str());
                         if ui.radio(selected, label).clicked() {
                             self.selected_pet = Some(id.clone());
@@ -1028,11 +1210,6 @@ impl PetsonaApp {
                     .iter()
                     .find(|pet| pet.id == selected)
                     .map(|pet| pet.frame);
-                let local = self
-                    .pets
-                    .iter()
-                    .find(|pet| pet.id == selected)
-                    .is_some_and(|pet| pet.root == petsona_core::pet::RootKind::AppData);
                 let is_active = selected == self.active_pet_id();
                 let confirm_delete = self.pending_delete.as_deref() == Some(selected.as_str());
                 if let Some(texture_id) = texture_id {
@@ -1057,9 +1234,7 @@ impl PetsonaApp {
                                 if ui.button("导出为 zip").clicked() {
                                     export_id = Some(selected.clone());
                                 }
-                                if !local {
-                                    ui.label("（来自 Codex/UniPet，只读引用）");
-                                } else if confirm_delete {
+                                if confirm_delete {
                                     if ui.button("确认删除").clicked() {
                                         delete_id = Some(selected.clone());
                                     }
@@ -1083,6 +1258,9 @@ impl PetsonaApp {
         }
         if let Some((path, overwrite)) = import_request {
             self.import_path(&path, overwrite);
+        }
+        for path in codex_imports {
+            self.import_path(&path, false);
         }
         if let Some(id) = export_id {
             self.export_pet_zip(&id);
@@ -1136,6 +1314,14 @@ impl PetsonaApp {
                 }
             });
             ui.checkbox(&mut self.config.window.auto_walk.enabled, "启用活动提醒");
+            ui.checkbox(
+                &mut self.config.window.gravity_enabled,
+                "重力（松手后掉到工作区底部）",
+            )
+            .on_hover_text(
+                "开启后可以把宠物拖到半空松手，它会落到当前显示器工作区底部并播放一次跳跃。\
+                 拖动期间和活动提醒行走期间不生效。",
+            );
             egui::Grid::new("auto-walk-grid")
                 .num_columns(2)
                 .spacing([12.0, 8.0])
@@ -1176,6 +1362,36 @@ impl PetsonaApp {
                     ui.end_row();
                 });
             ui.checkbox(&mut self.config.window.click_through, "像素级点击穿透");
+        });
+
+        ui.collapsing("启动", |ui| {
+            if self.platform.autostart_supported() {
+                let mut enabled = self.autostart_enabled;
+                if ui
+                    .checkbox(&mut enabled, "开机自启动")
+                    .on_hover_text("登录后在后台启动 Petsona（Windows 注册表 Run 项）")
+                    .changed()
+                {
+                    match self.platform.set_autostart(enabled) {
+                        Ok(()) => {
+                            self.autostart_enabled = enabled;
+                            self.status = if enabled {
+                                "已开启开机自启动".to_string()
+                            } else {
+                                "已关闭开机自启动".to_string()
+                            };
+                        }
+                        Err(error) => {
+                            // Re-read the real OS state so the checkbox can
+                            // never show something that is not registered.
+                            self.autostart_enabled = self.platform.autostart_enabled();
+                            self.status = format!("设置开机自启动失败：{error}");
+                        }
+                    }
+                }
+            } else {
+                ui.label("当前平台不支持在设置里配置开机自启动（macOS 使用 LaunchAgent 脚本）。");
+            }
         });
 
         ui.collapsing("状态协议", |ui| {
@@ -1401,6 +1617,22 @@ impl PetsonaApp {
                     )));
                 }
             }
+            "set-window-position-physical" => {
+                if let (Some(x), Some(y)) = (action.x, action.y) {
+                    if let Some(window) = frame.winit_window() {
+                        let size = window.outer_size();
+                        self.platform.set_window_geometry_physical(
+                            window,
+                            PhysicalRect::new(
+                                x.round() as i32,
+                                y.round() as i32,
+                                size.width.max(1) as i32,
+                                size.height.max(1) as i32,
+                            ),
+                        );
+                    }
+                }
+            }
             "save-window-position" => {
                 if let Some(window) = frame.winit_window() {
                     self.remember_window_position(window);
@@ -1421,6 +1653,26 @@ impl PetsonaApp {
             "set-auto-walk-enabled" => {
                 if let Some(enabled) = action.enabled {
                     self.config.window.auto_walk.enabled = enabled;
+                }
+            }
+            "set-gravity" => {
+                if let Some(enabled) = action.enabled {
+                    self.config.window.gravity_enabled = enabled;
+                    self.gravity_velocity = 0.0;
+                    self.gravity_falling = false;
+                    self.gravity_grounded = false;
+                    self.last_gravity_tick = Instant::now();
+                }
+            }
+            "set-autostart" => {
+                if let Some(enabled) = action.enabled {
+                    match self.platform.set_autostart(enabled) {
+                        Ok(()) => self.autostart_enabled = enabled,
+                        Err(error) => {
+                            self.autostart_enabled = self.platform.autostart_enabled();
+                            tracing::warn!(%error, "test hook could not change autostart");
+                        }
+                    }
                 }
             }
             "show-bubble" => {
@@ -1658,6 +1910,7 @@ impl PetsonaApp {
             status.mouse_events = self.platform.event_driven_mouse();
             status.mouse_event_count = self.platform.mouse_event_count();
             status.mouse_position_valid = self.platform.mouse_position_valid();
+            status.bubble_transitions_disabled = self.platform.popup_transitions_disabled();
             status.style_reapply_count = self.test_style_reapply_count;
             status.last_repaint_ms = self.test_last_repaint_ms;
             status.animation_repaint_ms = self.test_animation_repaint_ms;
@@ -1669,6 +1922,38 @@ impl PetsonaApp {
                 .into_iter()
                 .map(|cause| cause.to_string())
                 .collect();
+            status.autostart_supported = self.platform.autostart_supported();
+            status.autostart_enabled = self.autostart_enabled;
+            status.gravity_enabled = self.config.window.gravity_enabled;
+            status.gravity_falling = self.gravity_falling;
+            status.gravity_grounded = self.gravity_grounded;
+            status.gravity_velocity = self.gravity_velocity;
+            status.gravity_landings = self.gravity_landings;
+            let monitors = window
+                .map(|window| self.physical_monitors(window))
+                .unwrap_or_default();
+            status.monitor_count = monitors.len() as u32;
+            // A window is "on screen" when it fits inside the work area of the
+            // monitor nearest to its centre; that is exactly what the restore
+            // path guarantees after a monitor disappears.
+            status.window_within_work_area = if monitors.is_empty() {
+                true
+            } else {
+                position
+                    .zip(size)
+                    .map(|(position, size)| {
+                        let rect = PhysicalRect::new(
+                            position.x,
+                            position.y,
+                            size.width as i32,
+                            size.height as i32,
+                        );
+                        monitor_for_rect(&monitors, rect)
+                            .map(|monitor| rect_within_work_area(rect, monitor.work_area))
+                            .unwrap_or(false)
+                    })
+                    .unwrap_or(false)
+            };
             status.hooks_port = hooks_port;
         }
     }
@@ -1695,7 +1980,8 @@ impl PetsonaApp {
             .unwrap_or_default()
     }
 
-    /// Re-scan the local library and the linked Codex / UniPet roots.
+    /// Re-scan the app-local library. Codex pets are only read when the user
+    /// imports them from the settings window.
     fn refresh_pets(&mut self) {
         self.pets = self.library.list();
         self.pet_preview = None;
@@ -1844,8 +2130,8 @@ impl PetsonaApp {
         }
     }
 
-    /// Delete a pet from the app-local library (linked Codex pets are never
-    /// touched). Requires the confirmation stored in `pending_delete`.
+    /// Delete a pet from the app-local library. Requires the confirmation
+    /// stored in `pending_delete`.
     fn remove_local_pet(&mut self, id: &str) {
         match self.library.remove_local(id) {
             Ok(()) => {
@@ -2256,6 +2542,12 @@ impl PetsonaApp {
             self.walk_position_x = None;
             return;
         }
+        // Do not start a reminder walk while the pet is still falling: the
+        // landing animation owns the state and the physics owns the position.
+        if self.config.window.gravity_enabled && !self.gravity_grounded {
+            self.walk_position_x = None;
+            return;
+        }
         // A hook state, greeting or click animation owns the pet; the walk
         // reminder waits until the pet is back to its base animation.
         if self
@@ -2442,17 +2734,68 @@ impl PetsonaApp {
         }
     }
 
-    /// Persist the logical outer position after a user drag. The saved value
-    /// is intentionally independent of the current Retina scale so winit can
-    /// restore it as a logical viewport position on the next launch.
+    /// Monitors as physical rectangles, carrying the shell's real work area
+    /// (taskbar excluded on Windows) and winit's scale factor.
+    fn physical_monitors(&self, window: &winit::window::Window) -> Vec<PhysicalMonitor> {
+        window
+            .available_monitors()
+            .map(|monitor| {
+                let position = monitor.position();
+                let size = monitor.size();
+                let bounds = PhysicalRect::new(
+                    position.x,
+                    position.y,
+                    size.width as i32,
+                    size.height as i32,
+                );
+                let work_area = self
+                    .platform
+                    .monitor_work_area(bounds.x + bounds.width / 2, bounds.y + bounds.height / 2)
+                    .unwrap_or(bounds);
+                PhysicalMonitor {
+                    bounds,
+                    work_area,
+                    scale_factor: monitor.scale_factor().max(0.1),
+                }
+            })
+            .collect()
+    }
+
+    /// The monitor a saved physical origin should be restored onto.
+    fn saved_monitor(
+        &self,
+        window: &winit::window::Window,
+        saved: WindowPosition,
+    ) -> Option<PhysicalMonitor> {
+        let monitors = self.physical_monitors(window);
+        monitor_for_point(&monitors, saved.x.round() as i32, saved.y.round() as i32)
+    }
+
+    /// Persist the physical outer position after a user drag.
+    ///
+    /// Physical pixels are what Windows uses for `GetWindowRect`; storing
+    /// logical points would drift on mixed-DPI desktops. The saved origin is
+    /// clamped into the work area of the monitor it is on, so a pet dragged
+    /// mostly off-screen cannot be remembered off-screen. The restore path
+    /// clamps again when that monitor no longer exists.
     fn remember_window_position(&mut self, window: &winit::window::Window) {
         let Ok(position) = window.outer_position() else {
             return;
         };
-        let scale = window.scale_factor().max(0.1);
+        let size = window.outer_size();
+        let rect = PhysicalRect::new(
+            position.x,
+            position.y,
+            size.width.max(1) as i32,
+            size.height.max(1) as i32,
+        );
+        let monitors = self.physical_monitors(window);
+        let rect = monitor_for_rect(&monitors, rect)
+            .map(|monitor| clamp_rect_to_work_area(rect, monitor.work_area))
+            .unwrap_or(rect);
         let saved = WindowPosition {
-            x: position.x as f32 / scale as f32,
-            y: position.y as f32 / scale as f32,
+            x: rect.x as f32,
+            y: rect.y as f32,
         };
         if self.config.window.start_position == Some(saved) {
             return;
@@ -2460,6 +2803,99 @@ impl PetsonaApp {
         self.config.window.start_position = Some(saved);
         if let Err(error) = self.config.save(&self.paths.config_file) {
             tracing::warn!(%error, "cannot save pet window position");
+        }
+    }
+
+    /// Drop the pet to the bottom of the current monitor's work area.
+    ///
+    /// Only a real fall plays the landing animation; a pet that is already at
+    /// the floor stays put. Dragging and the auto-walk reminder suspend the
+    /// physics, so the user always owns the pet while holding it.
+    fn update_gravity(&mut self, ctx: &egui::Context, frame: &eframe::Frame) {
+        self.gravity_falling = false;
+        if !self.config.window.gravity_enabled || !self.pet_visible {
+            self.gravity_velocity = 0.0;
+            self.gravity_grounded = false;
+            self.last_gravity_tick = Instant::now();
+            return;
+        }
+        if self.pet_dragged || self.walk_until.is_some() {
+            // Hold position while the user carries the pet or the reminder
+            // walks it sideways; gravity resumes from wherever it was left.
+            self.gravity_velocity = 0.0;
+            self.last_gravity_tick = Instant::now();
+            return;
+        }
+        let Some(window) = frame.winit_window() else {
+            return;
+        };
+        let Ok(position) = window.outer_position() else {
+            return;
+        };
+        let size = window.outer_size();
+        let rect = PhysicalRect::new(
+            position.x,
+            position.y,
+            size.width.max(1) as i32,
+            size.height.max(1) as i32,
+        );
+        let monitors = self.physical_monitors(window);
+        let Some(monitor) = monitor_for_rect(&monitors, rect) else {
+            return;
+        };
+        // Rest on the bottom edge of the work area (above the taskbar).
+        let floor = monitor.work_area.bottom() - rect.height;
+        if rect.y >= floor {
+            self.gravity_velocity = 0.0;
+            self.gravity_grounded = true;
+            self.last_gravity_tick = Instant::now();
+            return;
+        }
+
+        let now = Instant::now();
+        let dt = (now - self.last_gravity_tick)
+            .as_secs_f64()
+            .clamp(0.0, GRAVITY_MAX_STEP_S);
+        self.last_gravity_tick = now;
+        self.gravity_velocity =
+            (self.gravity_velocity + GRAVITY_PX_S2 * dt).min(GRAVITY_MAX_SPEED_PX_S);
+        let next_y = (rect.y as f64 + self.gravity_velocity * dt).round() as i32;
+        let landed = next_y >= floor;
+        let next = PhysicalRect::new(rect.x, next_y.min(floor), rect.width, rect.height);
+        self.platform.set_window_geometry_physical(window, next);
+        if landed {
+            self.gravity_velocity = 0.0;
+            self.gravity_grounded = true;
+            self.play_gravity_landing(now);
+        } else {
+            self.gravity_grounded = false;
+            self.gravity_falling = true;
+            ctx.request_repaint();
+        }
+    }
+
+    /// One `jumping` animation per touchdown.
+    fn play_gravity_landing(&mut self, now: Instant) {
+        #[cfg(feature = "test-hooks")]
+        {
+            self.gravity_landings = self.gravity_landings.wrapping_add(1);
+        }
+        let Some(pet) = &mut self.pet else {
+            return;
+        };
+        let raised = pet
+            .engine
+            .raise(
+                PetState::Jumping,
+                "gravity",
+                None,
+                Some(GRAVITY_LANDING_TTL),
+                now,
+            )
+            .is_some();
+        if raised {
+            pet.anim_started = now;
+            pet.last_state = pet.engine.current();
         }
     }
 
@@ -2671,12 +3107,30 @@ impl PetsonaApp {
             return true;
         }
         let scale = self.effective_scale();
-        pet.atlas.mask.opaque_at_cell_dilated(
-            pet.last_sprite,
-            (local.x - rect.min.x) / scale,
-            (local.y - rect.min.y) / scale,
-            1,
-        )
+        let local_x = (local.x - rect.min.x) / scale;
+        let local_y = (local.y - rect.min.y) / scale;
+        if pet
+            .atlas
+            .mask
+            .opaque_at_cell_dilated(pet.last_sprite, local_x, local_y, 1)
+        {
+            return true;
+        }
+        // Transient poses move pixels: the V2 gaze rows turn the head, a wave
+        // lifts an arm, a jump stretches the body. If the hit test only looked
+        // at the current cell, moving the cursor onto the pet would make the
+        // pet look at the cursor and then become click-through at that exact
+        // spot, so it could no longer be grabbed. Fall back to the resting
+        // (idle) body mask to keep the pet interactive under the cursor.
+        pet.engine
+            .animation(PetState::Idle)
+            .is_some_and(|animation| {
+                animation.sprites.iter().any(|sprite| {
+                    pet.atlas
+                        .mask
+                        .opaque_at_cell_dilated(*sprite, local_x, local_y, 1)
+                })
+            })
     }
 
     /// Keep the window click-through on exactly the pixels the pet does not
@@ -3148,6 +3602,7 @@ impl PetsonaApp {
     fn show_conversation_viewport(&mut self, ctx: &egui::Context, frame: &eframe::Frame) {
         let conversation_id = egui::ViewportId::from_hash_of("petsona-conversation");
         if !self.conversation_open {
+            self.conversation_shown_at = None;
             if self.conversation_window_created {
                 ctx.send_viewport_cmd_to(conversation_id, egui::ViewportCommand::Visible(false));
                 self.conversation_window_created = false;
@@ -3167,6 +3622,33 @@ impl PetsonaApp {
             parent.x + pet_window.x * 0.5 - CONVERSATION_WINDOW_SIZE.x * 0.5,
             parent.y + pet_window.y + CONVERSATION_GAP,
         );
+        // First appearance: create the window hidden and let the shell disable
+        // the system's show/hide transition before it is ever visible, so the
+        // only motion is our own entry animation.
+        if !self.conversation_window_warmed {
+            let builder = egui::ViewportBuilder::default()
+                .with_title(CONVERSATION_TITLE)
+                .with_inner_size([CONVERSATION_WINDOW_SIZE.x, CONVERSATION_WINDOW_SIZE.y])
+                .with_position([conversation_position.x, conversation_position.y])
+                .with_transparent(true)
+                .with_decorations(false)
+                .with_always_on_top()
+                .with_taskbar(false)
+                .with_resizable(false)
+                .with_active(true)
+                .with_visible(false);
+            ctx.show_viewport_immediate(conversation_id, builder, |_ui, _class| {});
+            self.conversation_window_warmed = true;
+            let _ = self
+                .platform
+                .disable_window_animation_for_title(CONVERSATION_TITLE);
+            return;
+        }
+
+        let shown_at = *self.conversation_shown_at.get_or_insert_with(Instant::now);
+        let eased = ease_out(entry_progress(Some(shown_at), CONVERSATION_ENTRY));
+        // "From above": the content starts one drop higher and settles down.
+        let drop = (1.0 - eased) * CONVERSATION_ENTRY_DROP;
         let builder = egui::ViewportBuilder::default()
             .with_title(CONVERSATION_TITLE)
             .with_inner_size([CONVERSATION_WINDOW_SIZE.x, CONVERSATION_WINDOW_SIZE.y])
@@ -3182,62 +3664,67 @@ impl PetsonaApp {
         let mut send = false;
         let mut close = false;
         ctx.show_viewport_immediate(conversation_id, builder, |ui, _class| {
-            egui::CentralPanel::default()
-                .frame(egui::Frame::popup(ui.style()).inner_margin(egui::Margin::same(12)))
-                .show(ui, |ui| {
-                    ui.heading("和宠物聊聊");
-                    if !self.conversation_history.is_empty() {
-                        egui::ScrollArea::vertical()
-                            .max_height(72.0)
-                            .stick_to_bottom(true)
-                            .show(ui, |ui| {
-                                for turn in self.conversation_history.iter().rev().take(4).rev() {
-                                    ui.label(if turn.user {
-                                        format!("你：{}", turn.text)
-                                    } else {
-                                        format!("宠物：{}", turn.text)
-                                    });
-                                }
-                            });
-                    }
-                    let output = egui::TextEdit::multiline(&mut self.conversation_draft)
-                        .id_salt("conversation-input")
-                        .desired_rows(3)
-                        .hint_text("输入消息…")
-                        .show(ui);
-                    if let Some(cursor_range) = output.cursor_range {
-                        let cursor = output.galley.pos_from_cursor(cursor_range.primary);
-                        self.conversation_cursor = Some(
-                            conversation_position
-                                + output.galley_pos.to_vec2()
-                                + cursor.min.to_vec2(),
-                        );
-                    } else {
-                        self.conversation_cursor = Some(
-                            conversation_position
-                                + output.response.response.rect.center().to_vec2(),
-                        );
-                    }
-                    ui.horizontal(|ui| {
-                        if ui
-                            .add_enabled(!self.conversation_inflight, egui::Button::new("发送"))
-                            .clicked()
+            let content_rect = ui.max_rect().translate(egui::vec2(0.0, drop));
+            ui.scope_builder(egui::UiBuilder::new().max_rect(content_rect), |ui| {
+                ui.set_opacity(eased);
+                egui::CentralPanel::default()
+                    .frame(egui::Frame::popup(ui.style()).inner_margin(egui::Margin::same(12)))
+                    .show(ui, |ui| {
+                        ui.heading("和宠物聊聊");
+                        if !self.conversation_history.is_empty() {
+                            egui::ScrollArea::vertical()
+                                .max_height(72.0)
+                                .stick_to_bottom(true)
+                                .show(ui, |ui| {
+                                    for turn in self.conversation_history.iter().rev().take(4).rev()
+                                    {
+                                        ui.label(if turn.user {
+                                            format!("你：{}", turn.text)
+                                        } else {
+                                            format!("宠物：{}", turn.text)
+                                        });
+                                    }
+                                });
+                        }
+                        let output = egui::TextEdit::multiline(&mut self.conversation_draft)
+                            .id_salt("conversation-input")
+                            .desired_rows(3)
+                            .hint_text("输入消息…")
+                            .show(ui);
+                        if let Some(cursor_range) = output.cursor_range {
+                            let cursor = output.galley.pos_from_cursor(cursor_range.primary);
+                            self.conversation_cursor = Some(
+                                conversation_position
+                                    + output.galley_pos.to_vec2()
+                                    + cursor.min.to_vec2(),
+                            );
+                        } else {
+                            self.conversation_cursor = Some(
+                                conversation_position
+                                    + output.response.response.rect.center().to_vec2(),
+                            );
+                        }
+                        ui.horizontal(|ui| {
+                            if ui
+                                .add_enabled(!self.conversation_inflight, egui::Button::new("发送"))
+                                .clicked()
+                            {
+                                send = true;
+                            }
+                            if ui.button("关闭").clicked() {
+                                close = true;
+                            }
+                            if self.conversation_inflight {
+                                ui.spinner();
+                            }
+                        });
+                        if output.response.response.has_focus()
+                            && ui.input(|input| input.key_pressed(egui::Key::Enter))
                         {
                             send = true;
                         }
-                        if ui.button("关闭").clicked() {
-                            close = true;
-                        }
-                        if self.conversation_inflight {
-                            ui.spinner();
-                        }
                     });
-                    if output.response.response.has_focus()
-                        && ui.input(|input| input.key_pressed(egui::Key::Enter))
-                    {
-                        send = true;
-                    }
-                });
+            });
         });
         self.conversation_window_created = true;
         if self.conversation_focus_pending {
@@ -3281,6 +3768,10 @@ impl PetsonaApp {
         {
             sooner(ACTIVE_REPAINT);
         }
+        if self.gravity_falling {
+            // Keep the fall smooth instead of stepping once per idle tick.
+            sooner(ACTIVE_REPAINT);
+        }
 
         if self.pet_visible {
             if let Some(pet) = &self.pet {
@@ -3300,6 +3791,13 @@ impl PetsonaApp {
         }
         if self.greeting_inflight {
             sooner(EVENT_POLL_REPAINT);
+        }
+
+        if self
+            .conversation_shown_at
+            .is_some_and(|shown_at| shown_at.elapsed() < CONVERSATION_ENTRY)
+        {
+            sooner(ACTIVE_REPAINT);
         }
 
         if self.pending_single_click {
@@ -3328,9 +3826,9 @@ impl PetsonaApp {
             }
             if self
                 .bubble_shown_at
-                .is_some_and(|shown_at| shown_at.elapsed() < BUBBLE_FADE)
+                .is_some_and(|shown_at| shown_at.elapsed() < BUBBLE_ENTRY)
             {
-                // Keep the fade smooth instead of jumping in one step.
+                // Keep the entry animation smooth instead of jumping in one step.
                 sooner(ACTIVE_REPAINT);
             }
         }
@@ -3383,6 +3881,7 @@ impl eframe::App for PetsonaApp {
         self.update_pet_timers();
         self.update_auto_walk(ctx, frame);
         self.drag_pet(ctx, frame);
+        self.update_gravity(ctx, frame);
         self.update_glance(frame);
         self.update_passthrough(ctx, frame);
         self.update_pointer(ctx, frame);
@@ -3481,6 +3980,68 @@ fn position_for_bottom_center(anchor: egui::Pos2, size: egui::Vec2) -> egui::Pos
     anchor - egui::vec2(size.x * 0.5, size.y)
 }
 
+/// A monitor in physical pixels: winit knows the bounds and scale factor, the
+/// shell supplies the real work area (taskbar excluded) when it can.
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct PhysicalMonitor {
+    bounds: PhysicalRect,
+    work_area: PhysicalRect,
+    scale_factor: f64,
+}
+
+/// Clamp `rect` so it stays inside `work`; a rect larger than the work area is
+/// pinned to its top-left corner instead of being pushed outside.
+fn clamp_rect_to_work_area(rect: PhysicalRect, work: PhysicalRect) -> PhysicalRect {
+    let max_x = work.right().saturating_sub(rect.width).max(work.x);
+    let max_y = work.bottom().saturating_sub(rect.height).max(work.y);
+    PhysicalRect::new(
+        rect.x.clamp(work.x, max_x),
+        rect.y.clamp(work.y, max_y),
+        rect.width,
+        rect.height,
+    )
+}
+
+/// Monitor whose bounds contain the point, else the nearest one by centre
+/// distance. An unplugged monitor therefore falls back to the closest visible
+/// one instead of leaving the pet off-screen.
+fn monitor_for_point(monitors: &[PhysicalMonitor], x: i32, y: i32) -> Option<PhysicalMonitor> {
+    if let Some(monitor) = monitors
+        .iter()
+        .find(|monitor| monitor.bounds.contains(x, y))
+    {
+        return Some(*monitor);
+    }
+    monitors
+        .iter()
+        .min_by_key(|monitor| {
+            let (center_x, center_y) = monitor.bounds.center();
+            let dx = (center_x as i64) - (x as i64);
+            let dy = (center_y as i64) - (y as i64);
+            dx * dx + dy * dy
+        })
+        .copied()
+}
+
+fn monitor_for_rect(monitors: &[PhysicalMonitor], rect: PhysicalRect) -> Option<PhysicalMonitor> {
+    let (x, y) = rect.center();
+    monitor_for_point(monitors, x, y)
+}
+
+/// Does the window rectangle fit inside the work area (with a couple of pixels
+/// of slack for DPI rounding)?
+///
+/// Only the smoke status and the unit tests need this; production clamps with
+/// `clamp_rect_to_work_area` instead.
+#[cfg(any(feature = "test-hooks", test))]
+fn rect_within_work_area(rect: PhysicalRect, work: PhysicalRect) -> bool {
+    const TOLERANCE: i32 = 2;
+    rect.x >= work.x - TOLERANCE
+        && rect.y >= work.y - TOLERANCE
+        && rect.right() <= work.right() + TOLERANCE
+        && rect.bottom() <= work.bottom() + TOLERANCE
+}
+
 /// Keep a popup inside the monitor it was opened on.
 fn clamp_to_monitor(ctx: &egui::Context, anchor: egui::Pos2, size: egui::Vec2) -> egui::Pos2 {
     let monitor = ctx
@@ -3533,6 +4094,7 @@ fn draw_bubble_window(
     window: egui::Rect,
     text: &str,
     opacity: f32,
+    dy: f32,
 ) -> egui::Rect {
     let galley = painter.layout(
         text.to_owned(),
@@ -3545,7 +4107,7 @@ fn draw_bubble_window(
     let tail = BUBBLE_TAIL;
     let max_x = (window.right() - size.x - 6.0).max(window.left() + 6.0);
     let x = (window.center().x - size.x * 0.5).clamp(window.left() + 6.0, max_x);
-    let y = bubble_overlay_y(window, size);
+    let y = bubble_overlay_y(window, size) + dy;
     let rect = egui::Rect::from_min_size(egui::pos2(x, y), size);
     let opacity = opacity.clamp(0.0, 1.0);
     let alpha = |value: u8| (value as f32 * opacity).round() as u8;
@@ -3572,6 +4134,19 @@ fn draw_bubble_window(
         egui::Color32::from_rgba_unmultiplied(255, 255, 255, alpha(255)),
     );
     rect
+}
+
+/// Progress (0..=1) of a viewport entry animation, easing not applied.
+fn entry_progress(started: Option<Instant>, duration: Duration) -> f32 {
+    let Some(started) = started else {
+        return 1.0;
+    };
+    (started.elapsed().as_secs_f32() / duration.as_secs_f32()).clamp(0.0, 1.0)
+}
+
+/// Ease-out cubic: fast start, soft landing.
+fn ease_out(progress: f32) -> f32 {
+    1.0 - (1.0 - progress).powi(3)
 }
 
 fn bubble_overlay_y(window: egui::Rect, bubble_size: egui::Vec2) -> f32 {
@@ -3730,6 +4305,64 @@ mod tests {
     }
 
     #[test]
+    fn a_look_pose_still_keeps_the_resting_body_clickable() {
+        let mut app = test_app("gaze-hit");
+        let pet = app.pet.as_ref().expect("bundled pet loads");
+        let idle = pet
+            .engine
+            .animation(PetState::Idle)
+            .expect("idle animation")
+            .sprites
+            .clone();
+        let gaze_sprite = pet
+            .engine
+            .animation(PetState::LookRow9)
+            .expect("V2 look row")
+            .sprites[0];
+        let mask = &pet.atlas.mask;
+        // The smoke harness clicks the first pixel that is opaque in every
+        // idle frame; the same rule is used here.
+        let mut found = None;
+        'outer: for my in 0..mask.mask_height {
+            for mx in 0..mask.mask_width {
+                let x = (mx * mask.scale + mask.scale / 2) as f32;
+                let y = (my * mask.scale + mask.scale / 2) as f32;
+                if idle.iter().all(|sprite| mask.opaque_at_cell(*sprite, x, y)) {
+                    found = Some(egui::vec2(x, y));
+                    break 'outer;
+                }
+            }
+        }
+        let point = found.expect("the bundled pet has a resting body pixel");
+        let look_sprites: Vec<u32> = [PetState::LookRow9, PetState::LookRow10]
+            .into_iter()
+            .flat_map(|state| {
+                pet.engine
+                    .animation(state)
+                    .map(|animation| animation.sprites.clone())
+                    .unwrap_or_default()
+            })
+            .collect();
+        assert!(
+            look_sprites
+                .iter()
+                .any(|sprite| !mask.opaque_at_cell_dilated(*sprite, point.x, point.y, 1)),
+            "expected at least one look pose to move the body pixel ({} sprites checked, start {gaze_sprite})",
+            look_sprites.len()
+        );
+
+        let window = app.pet_window_size();
+        let rect = app.pet_rect(window);
+        for sprite in look_sprites {
+            app.pet.as_mut().expect("pet").last_sprite = sprite;
+            assert!(
+                app.cursor_over_pet(window, rect.min + point * app.effective_scale()),
+                "sprite {sprite} made the resting body click-through while the pet looked at the cursor"
+            );
+        }
+    }
+
+    #[test]
     fn resizing_keeps_the_bottom_center_anchor() {
         let old_position = egui::pos2(100.0, 100.0);
         let old_size = egui::vec2(220.0, 318.0);
@@ -3783,5 +4416,58 @@ mod tests {
         app.config.window.scale = 1.1;
         assert!((app.pet_size().x - app.pet_cell_size().x * 1.0).abs() < 0.01);
         assert!(app.pet_window_size().x >= app.pet_size().x);
+    }
+
+    fn monitor(x: i32, y: i32, width: i32, height: i32, scale: f64) -> PhysicalMonitor {
+        let bounds = PhysicalRect::new(x, y, width, height);
+        PhysicalMonitor {
+            bounds,
+            work_area: PhysicalRect::new(x, y + 40, width, height - 40),
+            scale_factor: scale,
+        }
+    }
+
+    #[test]
+    fn saved_position_is_clamped_into_the_work_area() {
+        let work = PhysicalRect::new(0, 0, 1920, 1040);
+        let wanted = PhysicalRect::new(1850, 1000, 220, 208);
+        let clamped = clamp_rect_to_work_area(wanted, work);
+        assert_eq!(clamped.x, 1700);
+        assert_eq!(clamped.y, 832);
+        assert!(rect_within_work_area(clamped, work));
+        // A window that already fits is not moved.
+        let fitting = PhysicalRect::new(100, 100, 220, 208);
+        assert_eq!(clamp_rect_to_work_area(fitting, work), fitting);
+    }
+
+    #[test]
+    fn an_unplugged_monitor_falls_back_to_the_nearest_one() {
+        let monitors = [
+            monitor(0, 0, 1920, 1080, 1.0),
+            monitor(1920, 0, 2560, 1440, 1.5),
+        ];
+        // The right monitor is still attached: the point lands on it.
+        let right = monitor_for_point(&monitors, 2200, 300).expect("right monitor");
+        assert_eq!(right.bounds.x, 1920);
+        // The saved position was on a monitor that is gone; the nearest
+        // remaining monitor wins and the origin is clamped back inside it.
+        let gone = monitor_for_point(&monitors, -4000, 200).expect("nearest monitor");
+        assert_eq!(gone.bounds.x, 0);
+        let clamped =
+            clamp_rect_to_work_area(PhysicalRect::new(-4000, 200, 220, 208), gone.work_area);
+        assert!(rect_within_work_area(clamped, gone.work_area));
+    }
+
+    #[test]
+    fn gravity_floor_uses_the_physical_work_area() {
+        let monitor = monitor(0, 0, 1920, 1080, 1.25);
+        let work = monitor.work_area;
+        let rect = PhysicalRect::new(400, 100, 220, 208);
+        let floor = work.bottom() - rect.height;
+        assert_eq!(floor, 872);
+        assert!(!rect_within_work_area(
+            PhysicalRect::new(400, floor + 10, 220, 208),
+            work
+        ));
     }
 }

@@ -11,7 +11,7 @@ use std::sync::atomic::{AtomicBool, AtomicI32, AtomicIsize, Ordering};
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
-use petsona_app::platform::{PlatformHost, PlatformMenu, PointerSnapshot};
+use petsona_app::platform::{PhysicalRect, PlatformHost, PlatformMenu, PointerSnapshot};
 
 use crate::menu::WindowsMenu;
 
@@ -141,6 +141,52 @@ impl PlatformHost for WindowsHost {
         }
     }
 
+    fn set_window_geometry_physical(&self, window: &winit::window::Window, rect: PhysicalRect) {
+        use raw_window_handle::{HasWindowHandle as _, RawWindowHandle};
+        use windows_sys::Win32::UI::WindowsAndMessaging::{
+            SetWindowPos, SWP_NOACTIVATE, SWP_NOOWNERZORDER, SWP_NOZORDER,
+        };
+
+        let Ok(handle) = window.window_handle() else {
+            return;
+        };
+        let RawWindowHandle::Win32(handle) = handle.as_raw() else {
+            return;
+        };
+        let hwnd = handle.hwnd.get() as *mut core::ffi::c_void;
+        unsafe {
+            SetWindowPos(
+                hwnd,
+                std::ptr::null_mut(),
+                rect.x,
+                rect.y,
+                rect.width.max(1),
+                rect.height.max(1),
+                SWP_NOZORDER | SWP_NOOWNERZORDER | SWP_NOACTIVATE,
+            );
+        }
+    }
+
+    fn monitor_work_area(&self, x: i32, y: i32) -> Option<PhysicalRect> {
+        monitor_work_area_physical(x, y)
+    }
+
+    fn autostart_supported(&self) -> bool {
+        true
+    }
+
+    fn autostart_enabled(&self) -> bool {
+        autostart::is_enabled()
+    }
+
+    fn set_autostart(&self, enabled: bool) -> Result<(), String> {
+        if enabled {
+            autostart::enable()
+        } else {
+            autostart::disable()
+        }
+    }
+
     fn set_no_activate_for_title(&self, title: &str) -> usize {
         style_popup_window(title)
     }
@@ -201,6 +247,15 @@ impl PlatformHost for WindowsHost {
     #[cfg(feature = "test-hooks")]
     fn mouse_position_valid(&self) -> bool {
         MOUSE_POSITION_VALID.load(Ordering::Relaxed)
+    }
+
+    fn disable_window_animation_for_title(&self, title: &str) -> usize {
+        disable_window_animation_by_title(title)
+    }
+
+    #[cfg(feature = "test-hooks")]
+    fn popup_transitions_disabled(&self) -> bool {
+        POPUP_TRANSITIONS_DISABLED.load(Ordering::Relaxed)
     }
 }
 
@@ -294,6 +349,10 @@ mod no_activate_proc {
 
 #[cfg(feature = "test-hooks")]
 static CURSOR_POLL_COUNT: AtomicU64 = AtomicU64::new(0);
+/// Set once a popup window (bubble / menu) had its DWM show transition
+/// disabled; the smoke test uses it as a regression guard for the bubble entry.
+#[cfg(feature = "test-hooks")]
+static POPUP_TRANSITIONS_DISABLED: AtomicBool = AtomicBool::new(false);
 
 #[cfg(feature = "test-hooks")]
 fn note_cursor_poll() {
@@ -408,6 +467,37 @@ fn global_cursor_position() -> Option<(f64, f64)> {
     (ok != 0).then_some((point.x as f64, point.y as f64))
 }
 
+/// Turn off the DWM's own show/hide transition for a window.
+///
+/// Windows fades a window in when it is shown, and with the accessibility
+/// option "fade or slide menus into view" it slides a tool window in from a
+/// screen edge as well. For the bubble that reads as "the bubble slides in
+/// sideways", which fights the bubble's own fade-in, so the window itself is
+/// told to appear instantly at the position we computed.
+fn disable_window_transitions(hwnd: *mut core::ffi::c_void) -> bool {
+    use windows_sys::Win32::Graphics::Dwm::{
+        DwmSetWindowAttribute, DWMWA_TRANSITIONS_FORCEDISABLED,
+    };
+
+    let disabled: i32 = 1;
+    let result = unsafe {
+        DwmSetWindowAttribute(
+            hwnd,
+            DWMWA_TRANSITIONS_FORCEDISABLED as u32,
+            &disabled as *const _ as *const core::ffi::c_void,
+            std::mem::size_of_val(&disabled) as u32,
+        )
+    };
+    // The attribute cannot be read back (`DwmGetWindowAttribute` answers
+    // E_INVALIDARG for it), so callers remember whether the call was accepted.
+    if result >= 0 {
+        true
+    } else {
+        tracing::debug!(result, "cannot disable DWM window transitions");
+        false
+    }
+}
+
 /// Re-establish per-pixel transparency.
 ///
 /// winit creates transparent windows by giving DWM an empty blur region, and
@@ -512,38 +602,34 @@ fn set_no_activate(window: &winit::window::Window) {
             SetWindowLongPtrW(hwnd, GWL_EXSTYLE, (style | WS_EX_NOACTIVATE) as isize);
         }
         no_activate_proc::install(hwnd);
+        let _ = disable_window_transitions(hwnd);
     }
 }
 
 /// Same as [`set_no_activate`] for a window identified by its title, used for
 /// the bubble and menu windows that egui creates on demand. Returns how many
 /// windows were changed.
-fn style_popup_window(title: &str) -> usize {
+/// Handles of our own top-level windows on **this thread** that carry `title`.
+///
+/// Only this thread's windows are considered: the subclass bookkeeping below is
+/// thread-local, and even reading the title of a window whose thread is not
+/// pumping messages would block this one (`GetWindowTextW` is a synchronous
+/// send).
+fn windows_with_title(title: &str) -> Vec<windows_sys::Win32::Foundation::HWND> {
     use windows_sys::core::BOOL;
     use windows_sys::Win32::Foundation::{HWND, LPARAM, TRUE};
-    use windows_sys::Win32::Graphics::Dwm::{
-        DwmEnableBlurBehindWindow, DWM_BB_BLURREGION, DWM_BB_ENABLE, DWM_BLURBEHIND,
-    };
-    use windows_sys::Win32::Graphics::Gdi::{CreateRectRgn, DeleteObject};
     use windows_sys::Win32::System::Threading::GetCurrentThreadId;
     use windows_sys::Win32::UI::WindowsAndMessaging::{
-        EnumWindows, GetWindowLongPtrW, GetWindowTextW, GetWindowThreadProcessId,
-        SetWindowLongPtrW, SetWindowPos, GWL_EXSTYLE, GWL_STYLE, SWP_FRAMECHANGED, SWP_NOACTIVATE,
-        SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, WS_BORDER, WS_CAPTION, WS_DLGFRAME, WS_EX_NOACTIVATE,
-        WS_MAXIMIZEBOX, WS_MINIMIZEBOX, WS_POPUP, WS_SYSMENU,
+        EnumWindows, GetWindowTextW, GetWindowThreadProcessId,
     };
 
     struct Lookup<'a> {
         title: &'a str,
-        hits: usize,
+        windows: Vec<HWND>,
     }
 
     unsafe extern "system" fn visit(hwnd: HWND, lparam: LPARAM) -> BOOL {
         let lookup = unsafe { &mut *(lparam as *mut Lookup<'_>) };
-        // Only windows of this very thread are ours to restyle: the subclass
-        // bookkeeping below is thread-local, and even reading the title of a
-        // window whose thread is not pumping messages would block this one
-        // (`GetWindowTextW` is a synchronous send).
         let mut owner = 0u32;
         let thread = unsafe { GetWindowThreadProcessId(hwnd, &mut owner) };
         if owner != std::process::id() || thread != unsafe { GetCurrentThreadId() } {
@@ -555,9 +641,40 @@ fn style_popup_window(title: &str) -> usize {
             return TRUE;
         }
         let text = String::from_utf16_lossy(&buffer[..len as usize]);
-        if text != lookup.title {
-            return TRUE;
+        if text == lookup.title {
+            lookup.windows.push(hwnd);
         }
+        TRUE
+    }
+
+    let mut lookup = Lookup {
+        title,
+        windows: Vec::new(),
+    };
+    unsafe {
+        EnumWindows(Some(visit), &mut lookup as *mut _ as LPARAM);
+    }
+    lookup.windows
+}
+
+/// Strip the frame and force the non-activating style onto our popup windows
+/// (bubble, egui context menu). Returns how many windows were touched.
+fn style_popup_window(title: &str) -> usize {
+    use windows_sys::Win32::Foundation::HWND;
+    use windows_sys::Win32::Graphics::Dwm::{
+        DwmEnableBlurBehindWindow, DWM_BB_BLURREGION, DWM_BB_ENABLE, DWM_BLURBEHIND,
+    };
+    use windows_sys::Win32::Graphics::Gdi::{CreateRectRgn, DeleteObject};
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        GetWindowLongPtrW, SetWindowLongPtrW, SetWindowPos, GWL_EXSTYLE, GWL_STYLE,
+        SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, WS_BORDER,
+        WS_CAPTION, WS_DLGFRAME, WS_EX_NOACTIVATE, WS_MAXIMIZEBOX, WS_MINIMIZEBOX, WS_POPUP,
+        WS_SYSMENU,
+    };
+
+    let windows = windows_with_title(title);
+    for hwnd in &windows {
+        let hwnd: HWND = *hwnd;
         unsafe {
             let style = GetWindowLongPtrW(hwnd, GWL_EXSTYLE) as u32;
             if style & WS_EX_NOACTIVATE == 0 {
@@ -592,16 +709,188 @@ fn style_popup_window(title: &str) -> usize {
                 DeleteObject(region);
             }
             no_activate_proc::install(hwnd);
+            if disable_window_transitions(hwnd) {
+                #[cfg(feature = "test-hooks")]
+                POPUP_TRANSITIONS_DISABLED.store(true, Ordering::Relaxed);
+            }
         }
-        lookup.hits += 1;
-        TRUE
+    }
+    windows.len()
+}
+
+/// Disable the OS show/hide transition for our own windows that keep their
+/// normal activation behaviour (the conversation window, which has to accept
+/// keyboard focus). Returns how many windows were touched.
+fn disable_window_animation_by_title(title: &str) -> usize {
+    let windows = windows_with_title(title);
+    let mut disabled = 0;
+    for hwnd in &windows {
+        if disable_window_transitions(*hwnd) {
+            disabled += 1;
+            #[cfg(feature = "test-hooks")]
+            POPUP_TRANSITIONS_DISABLED.store(true, Ordering::Relaxed);
+        }
+    }
+    disabled
+}
+/// Work area (physical pixels) of the monitor nearest to a physical point.
+fn monitor_work_area_physical(x: i32, y: i32) -> Option<PhysicalRect> {
+    use windows_sys::Win32::Foundation::POINT;
+    use windows_sys::Win32::Graphics::Gdi::{
+        GetMonitorInfoW, MonitorFromPoint, MONITORINFO, MONITOR_DEFAULTTONEAREST,
+    };
+
+    let mut info = MONITORINFO {
+        cbSize: std::mem::size_of::<MONITORINFO>() as u32,
+        ..Default::default()
+    };
+    unsafe {
+        let monitor = MonitorFromPoint(POINT { x, y }, MONITOR_DEFAULTTONEAREST);
+        if monitor.is_null() || GetMonitorInfoW(monitor, &mut info) == 0 {
+            return None;
+        }
+        let work = info.rcWork;
+        Some(PhysicalRect::new(
+            work.left,
+            work.top,
+            work.right - work.left,
+            work.bottom - work.top,
+        ))
+    }
+}
+
+/// Clamp a point into the work area of the monitor it is nearest to.
+///
+/// Used for the native popup menu so it opens on the monitor the user clicked
+/// even when the pet sits right against a screen edge.
+pub(crate) fn clamp_point_to_work_area(x: i32, y: i32, inset: i32) -> (i32, i32) {
+    let Some(work) = monitor_work_area_physical(x, y) else {
+        return (x, y);
+    };
+    clamp_point_to_rect(x, y, work, inset)
+}
+
+fn clamp_point_to_rect(x: i32, y: i32, work: PhysicalRect, inset: i32) -> (i32, i32) {
+    let inset = inset.max(0);
+    let min_x = work.x.saturating_add(inset);
+    let max_x = work.right().saturating_sub(inset).max(min_x);
+    let min_y = work.y.saturating_add(inset);
+    let max_y = work.bottom().saturating_sub(inset).max(min_y);
+    (x.clamp(min_x, max_x), y.clamp(min_y, max_y))
+}
+
+/// Login item (`HKCU\...\Run`) used by the settings toggle.
+///
+/// The value name can be overridden with `PETSONA_AUTOSTART_VALUE_NAME`; the
+/// smoke harness uses that to test the toggle without touching the user's real
+/// `Petsona` entry.
+mod autostart {
+    use windows_sys::Win32::Foundation::{ERROR_FILE_NOT_FOUND, ERROR_SUCCESS};
+    use windows_sys::Win32::System::Registry::{
+        RegCloseKey, RegCreateKeyW, RegDeleteValueW, RegOpenKeyExW, RegQueryValueExW,
+        RegSetValueExW, HKEY, HKEY_CURRENT_USER, KEY_READ, KEY_SET_VALUE, REG_SZ,
+    };
+
+    const RUN_KEY: &str = r"Software\Microsoft\Windows\CurrentVersion\Run";
+    const VALUE_NAME_ENV: &str = "PETSONA_AUTOSTART_VALUE_NAME";
+
+    fn value_name() -> String {
+        std::env::var(VALUE_NAME_ENV)
+            .ok()
+            .map(|name| name.trim().to_string())
+            .filter(|name| !name.is_empty())
+            .unwrap_or_else(|| "Petsona".to_string())
     }
 
-    let mut lookup = Lookup { title, hits: 0 };
-    unsafe {
-        EnumWindows(Some(visit), &mut lookup as *mut _ as LPARAM);
+    fn wide(text: &str) -> Vec<u16> {
+        text.encode_utf16().chain(std::iter::once(0)).collect()
     }
-    lookup.hits
+
+    /// Read the login item straight from the registry: the settings checkbox
+    /// shows the real OS state, not a cached config copy.
+    pub fn is_enabled() -> bool {
+        let subkey = wide(RUN_KEY);
+        let name = wide(&value_name());
+        unsafe {
+            let mut key: HKEY = std::ptr::null_mut();
+            if RegOpenKeyExW(HKEY_CURRENT_USER, subkey.as_ptr(), 0, KEY_READ, &mut key)
+                != ERROR_SUCCESS
+            {
+                return false;
+            }
+            let mut kind = 0u32;
+            let mut size = 0u32;
+            let status = RegQueryValueExW(
+                key,
+                name.as_ptr(),
+                std::ptr::null(),
+                &mut kind,
+                std::ptr::null_mut(),
+                &mut size,
+            );
+            RegCloseKey(key);
+            status == ERROR_SUCCESS
+        }
+    }
+
+    pub fn enable() -> Result<(), String> {
+        let command = command_line()?;
+        let subkey = wide(RUN_KEY);
+        let name = wide(&value_name());
+        let data: Vec<u16> = command.encode_utf16().chain(std::iter::once(0)).collect();
+        unsafe {
+            let mut key: HKEY = std::ptr::null_mut();
+            let status = RegCreateKeyW(HKEY_CURRENT_USER, subkey.as_ptr(), &mut key);
+            if status != ERROR_SUCCESS {
+                return Err(format!("无法创建开机自启注册表项（错误码 {status}）"));
+            }
+            let status = RegSetValueExW(
+                key,
+                name.as_ptr(),
+                0,
+                REG_SZ,
+                data.as_ptr() as *const u8,
+                (data.len() * std::mem::size_of::<u16>()) as u32,
+            );
+            RegCloseKey(key);
+            if status != ERROR_SUCCESS {
+                return Err(format!("无法写入开机自启注册表项（错误码 {status}）"));
+            }
+        }
+        Ok(())
+    }
+
+    pub fn disable() -> Result<(), String> {
+        let subkey = wide(RUN_KEY);
+        let name = wide(&value_name());
+        unsafe {
+            let mut key: HKEY = std::ptr::null_mut();
+            if RegOpenKeyExW(
+                HKEY_CURRENT_USER,
+                subkey.as_ptr(),
+                0,
+                KEY_SET_VALUE,
+                &mut key,
+            ) != ERROR_SUCCESS
+            {
+                // No Run key means there is nothing to remove.
+                return Ok(());
+            }
+            let status = RegDeleteValueW(key, name.as_ptr());
+            RegCloseKey(key);
+            if status == ERROR_SUCCESS || status == ERROR_FILE_NOT_FOUND {
+                Ok(())
+            } else {
+                Err(format!("无法删除开机自启注册表项（错误码 {status}）"))
+            }
+        }
+    }
+
+    fn command_line() -> Result<String, String> {
+        let exe = std::env::current_exe()
+            .map_err(|error| format!("无法读取当前可执行文件路径：{error}"))?;
+        Ok(format!("\"{}\"", exe.display()))
+    }
 }
 
 fn clear_dwm_frame(window: &winit::window::Window) {
@@ -625,5 +914,24 @@ fn clear_dwm_frame(window: &winit::window::Window) {
             &policy as *const _ as *const _,
             std::mem::size_of_val(&policy) as u32,
         );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn clamps_points_into_the_work_area() {
+        let work = PhysicalRect::new(0, 0, 1920, 1040);
+        assert_eq!(clamp_point_to_rect(500, 500, work, 8), (500, 500));
+        assert_eq!(clamp_point_to_rect(4000, -50, work, 8), (1912, 8));
+    }
+
+    #[test]
+    fn second_monitor_keeps_negative_coordinates() {
+        let work = PhysicalRect::new(-1920, 0, 1920, 1040);
+        assert_eq!(clamp_point_to_rect(-2000, 200, work, 8), (-1912, 200));
+        assert_eq!(clamp_point_to_rect(-100, 2000, work, 8), (-100, 1032));
     }
 }

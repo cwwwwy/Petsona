@@ -22,6 +22,8 @@ $script:TestHookToken = $null
 $script:NotepadProcess = $null
 $script:NotepadWindowPid = $null
 $script:NotepadFile = $null
+$script:AutoStartValueName = $null
+$script:A8SavedCursor = $null
 
 function Write-Section {
     param([string] $Text)
@@ -169,11 +171,15 @@ function Start-PetsonaProcess {
     $oldHooksEnabled = [Environment]::GetEnvironmentVariable("PETSONA_TEST_HOOKS", "Process")
     $oldHooksPort = [Environment]::GetEnvironmentVariable("PETSONA_TEST_HOOKS_PORT", "Process")
     $oldHooksToken = [Environment]::GetEnvironmentVariable("PETSONA_TEST_HOOKS_TOKEN", "Process")
+    $oldAutoStartValue = [Environment]::GetEnvironmentVariable("PETSONA_AUTOSTART_VALUE_NAME", "Process")
     $hadKey = Test-Path Env:\DEEPSEEK_API_KEY
     $oldKey = if ($hadKey) { $env:DEEPSEEK_API_KEY } else { $null }
 
     [Environment]::SetEnvironmentVariable("PETSONA_HOME", $DataHome, "Process")
     [Environment]::SetEnvironmentVariable("RUST_LOG", "info", "Process")
+    # The smoke harness must never touch the user's real `Petsona` login item,
+    # so the app is told to use a throwaway value name for this run.
+    [Environment]::SetEnvironmentVariable("PETSONA_AUTOSTART_VALUE_NAME", $script:AutoStartValueName, "Process")
     if ($UseTestHooks) {
         [Environment]::SetEnvironmentVariable("PETSONA_TEST_HOOKS", "1", "Process")
         [Environment]::SetEnvironmentVariable("PETSONA_TEST_HOOKS_PORT", [string] $script:TestHookPort, "Process")
@@ -198,6 +204,7 @@ function Start-PetsonaProcess {
         [Environment]::SetEnvironmentVariable("PETSONA_TEST_HOOKS", $oldHooksEnabled, "Process")
         [Environment]::SetEnvironmentVariable("PETSONA_TEST_HOOKS_PORT", $oldHooksPort, "Process")
         [Environment]::SetEnvironmentVariable("PETSONA_TEST_HOOKS_TOKEN", $oldHooksToken, "Process")
+        [Environment]::SetEnvironmentVariable("PETSONA_AUTOSTART_VALUE_NAME", $oldAutoStartValue, "Process")
         if ($hadKey) {
             $env:DEEPSEEK_API_KEY = $oldKey
         }
@@ -322,6 +329,12 @@ function Invoke-StatePost {
     if ($null -ne $TtlMs) {
         $body.ttlMs = [int] $TtlMs
     }
+    if ($null -ne $X) {
+        $body.x = [double] $X
+    }
+    if ($null -ne $Y) {
+        $body.y = [double] $Y
+    }
 
     $json = $body | ConvertTo-Json -Compress
     Invoke-RestMethod -Uri ("http://127.0.0.1:{0}/state" -f $script:Port) `
@@ -371,7 +384,9 @@ function Invoke-TestAction {
         [object] $Enabled = $null,
         [object] $Value = $null,
         [string] $Text = $null,
-        [object] $TtlMs = $null
+        [object] $TtlMs = $null,
+        [object] $X = $null,
+        [object] $Y = $null
     )
 
     $body = [ordered] @{ action = $Action }
@@ -386,6 +401,12 @@ function Invoke-TestAction {
     }
     if ($null -ne $TtlMs) {
         $body.ttlMs = [int] $TtlMs
+    }
+    if ($null -ne $X) {
+        $body.x = [double] $X
+    }
+    if ($null -ne $Y) {
+        $body.y = [double] $Y
     }
 
     $json = $body | ConvertTo-Json -Compress
@@ -548,6 +569,8 @@ namespace PetsonaSmoke
 
         [DllImport("user32.dll")]
         private static extern bool IsWindowVisible(IntPtr hWnd);
+
+
 
         [DllImport("user32.dll")]
         private static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint processId);
@@ -765,6 +788,38 @@ namespace PetsonaSmoke
             return (int)SendMessageW(hWnd, 0x0021u, UIntPtr.Zero, IntPtr.Zero);
         }
 
+        [StructLayout(LayoutKind.Sequential)]
+        private struct MONITORINFO
+        {
+            public uint Size;
+            public RECT Monitor;
+            public RECT Work;
+            public uint Flags;
+        }
+
+        [DllImport("user32.dll")]
+        private static extern IntPtr MonitorFromPoint(POINT point, uint flags);
+
+        [DllImport("user32.dll")]
+        private static extern bool GetMonitorInfoW(IntPtr monitor, ref MONITORINFO info);
+
+        public static int[] MonitorWorkArea(int x, int y)
+        {
+            POINT point;
+            point.X = x;
+            point.Y = y;
+            IntPtr monitor = MonitorFromPoint(point, 2u);
+            MONITORINFO info = new MONITORINFO();
+            info.Size = (uint)Marshal.SizeOf(typeof(MONITORINFO));
+            if (monitor != IntPtr.Zero && GetMonitorInfoW(monitor, ref info))
+            {
+                return new int[] { info.Work.Left, info.Work.Top, info.Work.Right, info.Work.Bottom };
+            }
+            return new int[] { 0, 0, GetSystemMetrics(0), GetSystemMetrics(1) };
+        }
+
+
+
         public static List<WindowInfo> GetTopLevelWindows(int processId)
         {
             return GetWindows(processId);
@@ -853,6 +908,7 @@ if (-not (Test-Path -LiteralPath $executable)) {
 $tempRoot = [System.IO.Path]::GetTempPath()
 $stamp = Get-Date -Format "yyyyMMdd-HHmmssfff"
 $script:SmokeHome = Join-Path $tempRoot ("petsona-windows-smoke-{0}-{1}" -f $PID, $stamp)
+$script:AutoStartValueName = "PetsonaSmoke-$PID-$(([Guid]::NewGuid()).ToString('N').Substring(0, 8))"
 [void] (New-Item -ItemType Directory -Path $script:SmokeHome -Force)
 $script:Port = Find-FreeTcpPort
 if ($UseTestHooks) {
@@ -909,6 +965,18 @@ try {
             }
             Assert-True $opened "the shell's native menu never appeared."
 
+            # Phase 2: the menu has to open on the monitor the click is on,
+            # inside its work area (taskbar excluded).
+            $menuWindow = (Get-NativeMenuWindows)[0]
+            $menuWork = [PetsonaSmoke.Native]::MonitorWorkArea(
+                $menuWindow.Left + [int] ($menuWindow.Width / 2),
+                $menuWindow.Top + [int] ($menuWindow.Height / 2))
+            Assert-True ($menuWindow.Left -ge ($menuWork[0] - 2) -and
+                $menuWindow.Top -ge ($menuWork[1] - 2) -and
+                ($menuWindow.Left + $menuWindow.Width) -le ($menuWork[2] + 2) -and
+                ($menuWindow.Top + $menuWindow.Height) -le ($menuWork[3] + 2)) `
+                "native menu opened outside the monitor work area (menu $($menuWindow.Left),$($menuWindow.Top) $($menuWindow.Width)x$($menuWindow.Height), work $($menuWork -join ','))."
+
             Invoke-TestAction -Action "native-menu"
             Start-Sleep -Milliseconds 800
             $stacked = (Get-NativeMenuWindows).Count
@@ -926,6 +994,40 @@ try {
             }
             Assert-True $closed "the native menu stayed open after a dismiss request."
         }
+
+        Invoke-SmokeCheck -Id "T4" -Name "login autostart registry toggle" {
+            $runKey = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run"
+            $status = Wait-ForTestStatus -Predicate { param($candidate) $candidate.autostartSupported } -Description "autostart support" -TimeoutSeconds 5
+            Assert-True (-not $status.autostartEnabled) "the throwaway Run value already existed before enabling it."
+
+            Invoke-TestAction -Action "set-autostart" -Enabled $true
+            try {
+                [void] (Wait-ForTestStatus -Predicate { param($candidate) $candidate.autostartEnabled } -Description "autostart enabled" -TimeoutSeconds 3)
+            }
+            catch {
+                # A restricted/CI session cannot write HKCU at all. Probe the
+                # registry directly: if this PowerShell cannot write either, the
+                # check is inconclusive instead of a product failure.
+                $probeName = "$($script:AutoStartValueName)-probe"
+                try {
+                    New-ItemProperty -Path $runKey -Name $probeName -Value "probe" -PropertyType String -Force -ErrorAction Stop | Out-Null
+                    Remove-ItemProperty -Path $runKey -Name $probeName -ErrorAction SilentlyContinue
+                }
+                catch {
+                    Write-Host "       [SKIP] this session cannot write HKCU; run autostart verification in a normal desktop session." -ForegroundColor Yellow
+                    return
+                }
+                throw
+            }
+            $value = (Get-ItemProperty -Path $runKey -Name $script:AutoStartValueName -ErrorAction Stop).PSObject.Properties[$script:AutoStartValueName].Value
+            Assert-True (-not [string]::IsNullOrWhiteSpace($value)) "the Run value is empty."
+            Assert-True ($value -match "petsona-windows\.exe") "the Run value does not point at the shell executable: $value"
+
+            Invoke-TestAction -Action "set-autostart" -Enabled $false
+            [void] (Wait-ForTestStatus -Predicate { param($candidate) -not $candidate.autostartEnabled } -Description "autostart disabled" -TimeoutSeconds 3)
+            $leftover = Get-ItemProperty -Path $runKey -Name $script:AutoStartValueName -ErrorAction SilentlyContinue
+            Assert-True ($null -eq $leftover) "the Run value was not removed after disabling autostart."
+        }
     }
 
     Invoke-SmokeCheck -Id "A1" -Name "window exists and is visible" {
@@ -935,6 +1037,20 @@ try {
     }
 
     Invoke-SmokeCheck -Id "A8" -Name "state protocol POST and TTL" {
+        # A cursor resting on the pet starts the ambient V2 gaze (look-row-9 /
+        # look-row-10), which deliberately holds until the cursor leaves and
+        # outranks locomotion in the engine. Park the cursor in the opposite
+        # screen corner so the protocol states below are actually visible.
+        $petWindow = Get-PetsonaWindow -ProcessId $first.Process.Id -Title "Petsona" -TimeoutSeconds 5
+        $petWork = [PetsonaSmoke.Native]::MonitorWorkArea(
+            $petWindow.Left + [int] ($petWindow.Width / 2),
+            $petWindow.Top + [int] ($petWindow.Height / 2))
+        $awayX = if (($petWindow.Left + $petWindow.Width / 2) -lt (($petWork[0] + $petWork[2]) / 2)) { $petWork[2] - 8 } else { $petWork[0] + 8 }
+        $awayY = if (($petWindow.Top + $petWindow.Height / 2) -lt (($petWork[1] + $petWork[3]) / 2)) { $petWork[3] - 8 } else { $petWork[1] + 8 }
+        $script:A8SavedCursor = [PetsonaSmoke.Native]::CursorPosition()
+        [void] [PetsonaSmoke.Native]::MoveCursorWithInput($awayX, $awayY)
+        Start-Sleep -Milliseconds 350
+
         $loopStates = @("running", "waiting", "failed", "review", "running-left", "running-right")
         foreach ($state in $loopStates) {
             Invoke-StatePost -State $state -Message ("smoke:{0}" -f $state) -TtlMs 1200
@@ -1021,6 +1137,14 @@ try {
             Invoke-TestAction -Action "show-bubble" -Text "windows smoke bubble" -TtlMs 3000
             [void] (Wait-ForTestStatus -Predicate { param($candidate) $candidate.bubbleText -eq "windows smoke bubble" } -Description "bubble text" -TimeoutSeconds 3)
             [void] (Wait-ForTestStatus -Predicate { param($candidate) $candidate.bubbleWindowCreated } -Description "bubble overlay window" -TimeoutSeconds 3)
+            # The bubble is a real top-level window, and it must not keep the
+            # DWM show transition: that is what made it slide in from a screen
+            # edge instead of appearing above the pet. `DwmGetWindowAttribute`
+            # cannot read this attribute back, so the shell reports whether the
+            # `DwmSetWindowAttribute` call was accepted.
+            [void] (Get-PetsonaWindow -ProcessId $first.Process.Id -Title "Petsona 气泡" -TimeoutSeconds 5)
+            $bubbleStatus = Get-TestStatus
+            Assert-True ($bubbleStatus.bubbleTransitionsDisabled) "bubble window still plays the DWM show transition (it would slide in)."
             $during = Get-PetsonaWindow -ProcessId $first.Process.Id -Title "Petsona" -TimeoutSeconds 5
             Assert-True ($before.Left -eq $during.Left -and $before.Top -eq $during.Top -and $before.Width -eq $during.Width -and $before.Height -eq $during.Height) "bubble changed the pet window geometry."
             Invoke-TestAction -Action "clear-bubble"
@@ -1212,6 +1336,71 @@ try {
             Invoke-TestAction -Action "stop-auto-walk"
             [void] (Wait-ForTestStatus -Predicate { param($candidate) $candidate.state -eq "idle" } -Description "auto-walk stopped" -TimeoutSeconds 3)
         }
+
+        Invoke-SmokeCheck -Id "C3" -Name "window position memory is physical" {
+            # The desktop may be 100%/125%/150% scaled. The window is placed
+            # with a physical-pixel origin and config.json must store that same
+            # physical origin, not a logical point divided by the scale.
+            $work = [PetsonaSmoke.Native]::MonitorWorkArea(100, 100)
+            Invoke-TestAction -Action "set-window-position-physical" -X ($work[0] + 40) -Y ($work[1] + 60)
+            Start-Sleep -Milliseconds 500
+            $placed = Get-TestStatus
+            Assert-True ($placed.monitorCount -ge 1) "the shell found no monitor."
+            Assert-True $placed.windowWithinWorkArea "the pet was placed outside every monitor work area."
+            Assert-True (-not $placed.gravityEnabled) "gravity should be off before the gravity check."
+
+            Invoke-TestAction -Action "save-window-position"
+            Start-Sleep -Milliseconds 400
+            $configPath = Join-Path $script:SmokeHome "config.json"
+            $config = Get-Content -Raw -LiteralPath $configPath | ConvertFrom-Json
+            Assert-True ($null -ne $config.window.startPosition) "config.json has no startPosition after saving."
+            Assert-True ([Math]::Abs([double] $config.window.startPosition.x - [double] $placed.windowX) -le 2) `
+                "saved x is not the physical window origin (saved $($config.window.startPosition.x), window $($placed.windowX))."
+            Assert-True ([Math]::Abs([double] $config.window.startPosition.y - [double] $placed.windowY) -le 2) `
+                "saved y is not the physical window origin (saved $($config.window.startPosition.y), window $($placed.windowY))."
+        }
+
+        Invoke-SmokeCheck -Id "C7" -Name "gravity falls to the work area floor" {
+            Invoke-StatePost -State "idle" -TtlMs 0
+            $window = Get-PetsonaWindow -ProcessId $first.Process.Id -Title "Petsona" -TimeoutSeconds 5
+            $work = [PetsonaSmoke.Native]::MonitorWorkArea(
+                $window.Left + [int] ($window.Width / 2),
+                $window.Top + [int] ($window.Height / 2))
+            $startX = $work[0] + 80
+            $startY = $work[1] + 10
+
+            Invoke-TestAction -Action "set-gravity" -Enabled $false
+            Invoke-TestAction -Action "set-window-position-physical" -X $startX -Y $startY
+            Start-Sleep -Milliseconds 500
+            $landingsBefore = (Get-TestStatus).gravityLandings
+            Invoke-TestAction -Action "set-gravity" -Enabled $true
+
+            $deadline = (Get-Date).AddSeconds(10)
+            $sawJump = $false
+            $landed = $null
+            while ((Get-Date) -lt $deadline) {
+                $status = Get-TestStatus
+                if ($status.state -eq "jumping") {
+                    $sawJump = $true
+                }
+                if ($status.gravityGrounded) {
+                    $landed = $status
+                    break
+                }
+                Start-Sleep -Milliseconds 100
+            }
+            Assert-True ($null -ne $landed) "the pet never reached the work-area floor."
+            Assert-True ($landed.gravityLandings -gt $landingsBefore) "landing did not raise the landing animation."
+            Assert-True $sawJump "landing did not play the jumping animation."
+
+            $landedWindow = Get-PetsonaWindow -ProcessId $first.Process.Id -Title "Petsona" -TimeoutSeconds 5
+            $floor = $work[3] - $landedWindow.Height
+            Assert-True ($landedWindow.Top -gt $startY) "the pet did not fall (start top $startY, now $($landedWindow.Top))."
+            Assert-True ([Math]::Abs($landedWindow.Top - $floor) -le 3) `
+                "the pet did not stop on the work-area bottom (top $($landedWindow.Top), expected $floor)."
+            Assert-True $landed.windowWithinWorkArea "the landed pet is outside the monitor work area."
+            Invoke-TestAction -Action "set-gravity" -Enabled $false
+        }
     }
     Invoke-SmokeCheck -Id "B12" -Name "single instance lock" {
         $second = Start-PetsonaProcess -DataHome $script:SmokeHome -Tag "second" -Executable $executable
@@ -1238,7 +1427,14 @@ try {
         Assert-True ($log.Contains("source=windows-smoke")) "log does not contain the smoke source."
     }
 
-    Invoke-SmokeCheck -Id "B14" -Name "quit and restart" {
+    Invoke-SmokeCheck -Id "B14" -Name "quit and restart (off-screen position falls back)" {
+        # Phase 2: a position saved on a monitor that no longer exists must be
+        # clamped back into the nearest visible work area on restore.
+        $configPath = Join-Path $script:SmokeHome "config.json"
+        $savedConfig = Get-Content -Raw -LiteralPath $configPath | ConvertFrom-Json
+        $savedConfig.window.startPosition = [pscustomobject] @{ x = 100000; y = 100000 }
+        Write-Utf8NoBom -Path $configPath -Text ($savedConfig | ConvertTo-Json -Depth 8)
+
         if ($UseTestHooks) {
             Invoke-TestAction -Action "quit"
             $quitCode = Wait-ProcessExit -Entry $first -TimeoutMilliseconds 8000
@@ -1256,6 +1452,14 @@ try {
         Assert-True ($restartHealth.ok -eq $true) "restart health.ok is not true."
         $restartWindow = Get-PetsonaWindow -ProcessId $restart.Process.Id -Title "Petsona" -TimeoutSeconds 10
         Assert-True $restartWindow.Visible "restart window is not visible."
+        $restartWork = [PetsonaSmoke.Native]::MonitorWorkArea(
+            $restartWindow.Left + [int] ($restartWindow.Width / 2),
+            $restartWindow.Top + [int] ($restartWindow.Height / 2))
+        Assert-True ($restartWindow.Left -ge ($restartWork[0] - 2) -and
+            $restartWindow.Top -ge ($restartWork[1] - 2) -and
+            ($restartWindow.Left + $restartWindow.Width) -le ($restartWork[2] + 2) -and
+            ($restartWindow.Top + $restartWindow.Height) -le ($restartWork[3] + 2)) `
+            "the off-screen saved position was restored off-screen (window $($restartWindow.Left),$($restartWindow.Top) $($restartWindow.Width)x$($restartWindow.Height), work $($restartWork -join ','))."
     }
 }
 catch {
@@ -1275,6 +1479,15 @@ finally {
     }
     if ($null -ne $script:NotepadFile -and (Test-Path -LiteralPath $script:NotepadFile)) {
         Remove-Item -LiteralPath $script:NotepadFile -Force -ErrorAction SilentlyContinue
+    }
+    if (-not [string]::IsNullOrWhiteSpace($script:AutoStartValueName)) {
+        Remove-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run" `
+            -Name $script:AutoStartValueName -ErrorAction SilentlyContinue
+    }
+    if ($null -ne $script:A8SavedCursor) {
+        if (-not [PetsonaSmoke.Native]::MoveCursorWithInput($script:A8SavedCursor[0], $script:A8SavedCursor[1])) {
+            [PetsonaSmoke.Native]::SetCursorPosition($script:A8SavedCursor[0], $script:A8SavedCursor[1])
+        }
     }
 
     $keep = $KeepArtifacts -or $script:ExitCode -ne 0

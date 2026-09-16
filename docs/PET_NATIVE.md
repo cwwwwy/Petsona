@@ -77,7 +77,7 @@ cargo run -p petsona-core --example pet_inspect -- <宠物目录> [输出目录]
 | 右键菜单 | macOS 使用 AppKit 原生菜单；Windows 使用专用 Win32 菜单线程；egui 菜单仅作回退 |
 | 像素级点击穿透 | `AlphaMask` + `opaque_at_cell_dilated`（1 格≈4px 外扩，避免抗锯齿边缘点不中） |
 | 自动行走（活动提醒） | `update_auto_walk`：默认 45 分钟一次，走 8 秒、速度 18px/s、范围 120px，可在设置里调；有事件/问候时不打断 |
-| 换宠物 | 设置 →「宠物」：扫描 `~/.codex/pets`、`~/.unipet/pets` 与本地库，带首帧预览，切换后热替换图集与动画并写回配置 |
+| 换宠物 | 设置 →「宠物」：列出本地库（含内置 Superintendent），另有「从 Codex 导入」面板显式导入 `~/.codex/pets`；带首帧预览，切换后热替换图集与动画并写回配置 |
 | 状态驱动（Codex hooks） | `crates/petsona-core/src/state_server.rs` 本地 HTTP 协议，见下节 |
 
 ## 4. 本地状态协议

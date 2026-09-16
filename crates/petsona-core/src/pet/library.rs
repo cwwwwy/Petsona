@@ -1,5 +1,8 @@
-//! Pet library: discovery across Codex / UniPet / app-local roots, validation,
-//! import and export.
+//! Pet library: the app-local (writable) library plus explicit imports.
+//!
+//! Pets that live in `~/.codex/pets` are **not** picked up automatically: the
+//! settings window lists them through [`codex_pets_dir`] + [`PetLibrary::scan_dir`]
+//! and the user decides what to copy into the local library.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -34,6 +37,14 @@ impl RootKind {
             RootKind::Custom => "custom",
         }
     }
+}
+
+/// Where Codex keeps its own pet packages (`~/.codex/pets`).
+///
+/// The directory is returned even when it does not exist yet; callers should
+/// treat a missing directory as "nothing to import".
+pub fn codex_pets_dir() -> Option<PathBuf> {
+    dirs::home_dir().map(|home| home.join(".codex").join("pets"))
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -99,29 +110,17 @@ pub struct PetLibrary {
 }
 
 impl PetLibrary {
-    /// Discover all standard roots. `app_pets_dir` is created on demand.
+    /// The library the app runs with: the writable app-local root and nothing
+    /// else.
+    ///
+    /// Codex / UniPet folders used to be scanned automatically. They are now
+    /// import sources only: the settings window lists them on demand and copies
+    /// the pets the user picks (see [`codex_pets_dir`] and [`Self::scan_dir`]).
     pub fn discover(app_pets_dir: PathBuf) -> Self {
-        let mut roots = vec![LibraryRoot {
-            kind: RootKind::AppData,
-            path: app_pets_dir,
-            writable: true,
-        }];
-        if let Some(home) = dirs::home_dir() {
-            roots.push(LibraryRoot {
-                kind: RootKind::Codex,
-                path: home.join(".codex").join("pets"),
-                writable: false,
-            });
-            roots.push(LibraryRoot {
-                kind: RootKind::UniPet,
-                path: home.join(".unipet").join("pets"),
-                writable: false,
-            });
-        }
-        Self { roots }
+        Self::single_root(app_pets_dir)
     }
 
-    /// A library with one writable root and no Codex/UniPet scanning. Used by
+    /// A library with one writable root and no scanning of other roots. Used by
     /// tests and tooling that must not touch the user's own libraries.
     pub fn single_root(app_pets_dir: PathBuf) -> Self {
         Self {
@@ -159,32 +158,45 @@ impl PetLibrary {
         Ok(root)
     }
 
-    /// Scan every root. Invalid packages are skipped with a warning rather than
-    /// failing the whole library. App-local pets win over linked ones.
+    /// Scan every configured root. Invalid packages are skipped with a debug log
+    /// rather than failing the whole library. App-local pets win over linked
+    /// ones.
     pub fn list(&self) -> Vec<PetEntry> {
         let mut found: Vec<PetEntry> = Vec::new();
         for root in &self.roots {
-            let Ok(entries) = std::fs::read_dir(&root.path) else {
-                continue;
-            };
-            for entry in entries.flatten() {
-                let dir = entry.path();
-                if !dir.is_dir() {
-                    continue;
+            for pet in Self::scan_dir(&root.path, root.kind) {
+                if let Some(existing) = found.iter_mut().find(|p| p.id == pet.id) {
+                    if root.kind == RootKind::AppData {
+                        *existing = pet;
+                    }
+                } else {
+                    found.push(pet);
                 }
-                match Self::load_entry(&dir, root.kind) {
-                    Ok(pet) => {
-                        if let Some(existing) = found.iter_mut().find(|p| p.id == pet.id) {
-                            if root.kind == RootKind::AppData {
-                                *existing = pet;
-                            }
-                        } else {
-                            found.push(pet);
-                        }
-                    }
-                    Err(err) => {
-                        tracing::debug!(dir = %dir.display(), error = %err, "skipping invalid pet");
-                    }
+            }
+        }
+        found.sort_by_key(|p| p.display_name.to_lowercase());
+        found
+    }
+
+    /// Scan one directory for pet packages **without** adding it to the
+    /// library, and without touching anything on disk.
+    ///
+    /// This is what the "import from Codex" panel lists: the user sees what is
+    /// available there and imports the ones they want.
+    pub fn scan_dir(dir: &Path, kind: RootKind) -> Vec<PetEntry> {
+        let mut found: Vec<PetEntry> = Vec::new();
+        let Ok(entries) = std::fs::read_dir(dir) else {
+            return found;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if !path.is_dir() {
+                continue;
+            }
+            match Self::load_entry(&path, kind) {
+                Ok(pet) => found.push(pet),
+                Err(err) => {
+                    tracing::debug!(dir = %path.display(), error = %err, "skipping invalid pet");
                 }
             }
         }
@@ -581,14 +593,9 @@ mod tests {
 
         let lib = PetLibrary::discover(app.clone());
         let list = lib.list();
-        // `discover` also adds the real ~/.codex and ~/.unipet roots, so only
-        // the app-local entries are asserted here.
-        let local: Vec<_> = list
-            .iter()
-            .filter(|pet| pet.root == RootKind::AppData)
-            .collect();
-        assert_eq!(local.len(), 2);
-        assert!(local.iter().any(|p| p.id == "alpha"));
+        assert_eq!(list.len(), 2);
+        assert!(list.iter().any(|p| p.id == "alpha"));
+        assert!(list.iter().all(|pet| pet.root == RootKind::AppData));
         assert_eq!(lib.get("beta").unwrap().frame.rows, 11);
 
         let report = PetLibrary::validate_dir(&app.join("alpha"));
@@ -598,6 +605,44 @@ mod tests {
 
         let broken = PetLibrary::validate_dir(&app.join("broken"));
         assert!(!broken.ok);
+    }
+
+    #[test]
+    fn discover_only_scans_the_app_library() {
+        let tmp = tempfile::tempdir().unwrap();
+        let lib = PetLibrary::discover(tmp.path().join("app-pets"));
+        assert_eq!(lib.roots().len(), 1);
+        assert_eq!(lib.roots()[0].kind, RootKind::AppData);
+        assert!(lib.roots()[0].writable);
+    }
+
+    #[test]
+    fn scan_dir_lists_pets_without_copying_them() {
+        let tmp = tempfile::tempdir().unwrap();
+        let app = tmp.path().join("app-pets");
+        let codex = tmp.path().join("codex-pets");
+        write_pet(&codex.join("alpha"), "alpha", 9, "");
+        write_pet(
+            &codex.join("beta"),
+            "beta",
+            11,
+            r#","spriteVersionNumber":2"#,
+        );
+
+        let lib = PetLibrary::discover(app.clone());
+        let found = PetLibrary::scan_dir(&codex, RootKind::Codex);
+        let ids: Vec<&str> = found.iter().map(|pet| pet.id.as_str()).collect();
+        assert_eq!(ids, ["alpha", "beta"]);
+        assert!(found.iter().all(|pet| pet.root == RootKind::Codex));
+        // Listing is read-only: nothing shows up in the library and nothing is
+        // written next to it.
+        assert!(lib.list().is_empty());
+        assert!(!app.join("alpha").exists());
+
+        // Importing one of them is what copies it into the app library.
+        let imported = lib.import_dir(&codex.join("beta"), false).unwrap();
+        assert_eq!(imported.root, RootKind::AppData);
+        assert_eq!(lib.list().len(), 1);
     }
 
     #[test]

@@ -25,6 +25,50 @@ pub struct PointerSnapshot {
     pub secondary_down: Option<bool>,
 }
 
+/// A rectangle in **physical pixels**, using the same origin as Win32
+/// (`GetWindowRect`, monitor bounds, cursor coordinates).
+///
+/// Everything that has to line up across monitors with different DPI factors
+/// (window restore, work-area clamping, gravity's floor) goes through this
+/// type; logical `egui` points only exist at the winit boundary.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PhysicalRect {
+    pub x: i32,
+    pub y: i32,
+    pub width: i32,
+    pub height: i32,
+}
+
+impl PhysicalRect {
+    pub const fn new(x: i32, y: i32, width: i32, height: i32) -> Self {
+        Self {
+            x,
+            y,
+            width,
+            height,
+        }
+    }
+
+    pub const fn right(&self) -> i32 {
+        self.x.saturating_add(self.width)
+    }
+
+    pub const fn bottom(&self) -> i32 {
+        self.y.saturating_add(self.height)
+    }
+
+    pub const fn center(&self) -> (i32, i32) {
+        (
+            self.x.saturating_add(self.width / 2),
+            self.y.saturating_add(self.height / 2),
+        )
+    }
+
+    pub const fn contains(&self, x: i32, y: i32) -> bool {
+        x >= self.x && x < self.right() && y >= self.y && y < self.bottom()
+    }
+}
+
 /// What a native context menu asks the shared UI to do.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MenuCommand {
@@ -80,6 +124,47 @@ pub trait PlatformHost: Send + Sync + 'static {
         set_winit_geometry(window, x, y, width, height);
     }
 
+    /// Move and resize in physical pixels.
+    ///
+    /// Position memory, gravity and multi-monitor clamping all reason in
+    /// physical pixels; only the portable fallback converts back to logical
+    /// points for winit.
+    fn set_window_geometry_physical(&self, window: &winit::window::Window, rect: PhysicalRect) {
+        // winit takes physical positions and sizes directly, so the portable
+        // path does not have to guess a scale factor (which would be wrong
+        // when the target monitor has a different DPI than the current one).
+        // The pet window is undecorated, so inner size == outer size.
+        window.set_outer_position(winit::dpi::PhysicalPosition::new(rect.x, rect.y));
+        let _ = window.request_inner_size(winit::dpi::PhysicalSize::new(
+            rect.width.max(1) as u32,
+            rect.height.max(1) as u32,
+        ));
+    }
+
+    /// Work area (the monitor minus taskbar/dock) of the monitor nearest to a
+    /// physical screen point, in physical pixels.
+    ///
+    /// `None` makes the shared UI fall back to winit's full monitor bounds.
+    fn monitor_work_area(&self, _x: i32, _y: i32) -> Option<PhysicalRect> {
+        None
+    }
+
+    /// Can the shell register/unregister a login item?
+    fn autostart_supported(&self) -> bool {
+        false
+    }
+
+    /// Is the login item currently registered? This reads the real OS state,
+    /// not a config copy, so it stays correct if the user edits it elsewhere.
+    fn autostart_enabled(&self) -> bool {
+        false
+    }
+
+    /// Register or remove the login item. Errors are shown in the settings UI.
+    fn set_autostart(&self, _enabled: bool) -> Result<(), String> {
+        Err("当前平台不支持在设置里配置开机自启动".to_string())
+    }
+
     /// Apply the undecorated, non-activating popup style to our own top-level
     /// windows with this title (bubble, egui context menu). Returns how many
     /// windows were styled.
@@ -94,6 +179,14 @@ pub trait PlatformHost: Send + Sync + 'static {
     /// Returning true means the focus request has been satisfied.
     fn confirm_settings_focus(&self, _title: &str) -> bool {
         true
+    }
+
+    /// Disable the OS show/hide transition for one of our own windows that keeps
+    /// its normal activation behaviour (the conversation window has to accept
+    /// keyboard focus, so it cannot use the non-activating popup styling).
+    /// Returns how many windows were touched.
+    fn disable_window_animation_for_title(&self, _title: &str) -> usize {
+        0
     }
 
     /// Show a tray-icon menu next to the cursor over one of our own views.
@@ -178,6 +271,15 @@ pub trait PlatformHost: Send + Sync + 'static {
 
     #[cfg(feature = "test-hooks")]
     fn is_window_key_for_title(&self, _title: &str) -> bool {
+        false
+    }
+
+    /// Did the shell switch off the OS show/hide transition for its popup
+    /// windows (bubble, context menu)? Windows otherwise fades — and with the
+    /// "fade or slide menus" accessibility option, slides — them in, which
+    /// fights the bubble's own entry animation.
+    #[cfg(feature = "test-hooks")]
+    fn popup_transitions_disabled(&self) -> bool {
         false
     }
 }
