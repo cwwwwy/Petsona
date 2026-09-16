@@ -4,22 +4,21 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use eframe::egui;
 use petsona_core::config::{AppConfig, AppPaths, WindowPosition};
 use petsona_core::deepseek::{save_api_key, DeepSeekClient};
-use petsona_core::memory::{EventKind, PetMemory};
-use petsona_core::persona::{Persona, PersonaStore};
-use petsona_core::pet::state::{PetEngine, PetState};
-use petsona_core::pet::{PetAtlas, PetEntry, PetLibrary};
-use petsona_core::state_server::{Health, StateEvent, StateServer};
+use petsona_core::memory::EventKind;
+use petsona_core::pet::state::PetState;
+use petsona_core::pet::{PetAtlas, PetEntry};
+use petsona_runtime::pet::{PetSession, IDLE_REPAINT};
+use petsona_runtime::session::{Bubble, ConversationTurn, PetsonaRuntime};
 
-#[cfg(target_os = "macos")]
-use raw_window_handle::{HasWindowHandle as _, RawWindowHandle};
+use crate::platform::{MenuCommand, PlatformHost, PlatformMenu, PointerSnapshot};
 
-use crate::greeting;
 #[cfg(feature = "test-hooks")]
 use crate::test_hooks::{TestActionRequest, TestHookServer, TestStatus};
+use petsona_runtime::greeting;
 
 const PET_WINDOW_MIN_WIDTH: f32 = 220.0;
 const BUBBLE_TITLE: &str = "Petsona 气泡";
@@ -27,6 +26,10 @@ const BUBBLE_WINDOW_SIZE: egui::Vec2 = egui::vec2(360.0, 220.0);
 const BUBBLE_GAP: f32 = 8.0;
 const BUBBLE_TAIL: f32 = 7.0;
 const BUBBLE_BOTTOM_PADDING: f32 = 2.0;
+/// Fade-in for a newly shown bubble. The bubble lives in its own window, so
+/// this is what turns "the text appeared" into a smooth appearance instead of a
+/// hard pop.
+const BUBBLE_FADE: Duration = Duration::from_millis(140);
 const CONVERSATION_TITLE: &str = "Petsona 对话";
 const CONVERSATION_WINDOW_SIZE: egui::Vec2 = egui::vec2(440.0, 220.0);
 const CONVERSATION_GAP: f32 = 10.0;
@@ -38,7 +41,6 @@ const MENU_ROWS: f32 = 4.0;
 const MENU_SIZE: egui::Vec2 = egui::vec2(MENU_WIDTH, MENU_ROWS * MENU_ROW + MENU_PAD * 2.0);
 const ACTIVE_REPAINT: Duration = Duration::from_millis(16);
 const EVENT_POLL_REPAINT: Duration = Duration::from_millis(100);
-const IDLE_REPAINT: Duration = Duration::from_secs(1);
 const SCALE_PRESETS: &[(&str, f32)] = &[
     ("迷你", 0.5),
     ("小", 0.75),
@@ -61,15 +63,12 @@ fn nearest_scale(value: f32) -> f32 {
         .map(|(_, value)| *value)
         .unwrap_or(1.0)
 }
-#[cfg(target_os = "macos")]
+/// Identifiers of the tray-icon menu entries. Shells that hand the menu to the
+/// operating system (macOS) build it from these.
 const NATIVE_MENU_OPEN_SETTINGS_ID: &str = "petsona.open-settings";
-#[cfg(target_os = "macos")]
 const NATIVE_MENU_SELECT_PET_PREFIX: &str = "petsona.select-pet:";
-#[cfg(target_os = "macos")]
 const NATIVE_MENU_SCALE_PREFIX: &str = "petsona.scale:";
-#[cfg(target_os = "macos")]
 const NATIVE_MENU_TOGGLE_PET_ID: &str = "petsona.toggle-pet";
-#[cfg(target_os = "macos")]
 const NATIVE_MENU_QUIT_ID: &str = "petsona.quit";
 /// How far the cursor may travel before a press becomes a drag.
 const CLICK_MOVE_TOLERANCE: f32 = 4.0;
@@ -77,46 +76,28 @@ const CLICK_MOVE_TOLERANCE: f32 = 4.0;
 const CLICK_MAX_HOLD: Duration = Duration::from_millis(700);
 
 pub struct PetsonaApp {
-    paths: AppPaths,
-    config: AppConfig,
-    personas: PersonaStore,
-    persona: Persona,
-    memory: PetMemory,
-    pet: Option<PetRuntime>,
-    bubble: Option<Bubble>,
+    /// Native backend supplied by the shell.
+    platform: Arc<dyn PlatformHost>,
+    runtime: PetsonaRuntime,
+    pet_textures: PetTextures,
     bubble_window_created: bool,
+    /// When the current bubble text first appeared; drives the fade-in.
+    bubble_shown_at: Option<Instant>,
     bubble_styled: bool,
     conversation_open: bool,
     conversation_window_created: bool,
     conversation_focus_pending: bool,
     conversation_draft: String,
-    conversation_history: Vec<ConversationTurn>,
-    conversation_rx: Option<Receiver<std::result::Result<String, String>>>,
-    conversation_inflight: bool,
     conversation_cursor: Option<egui::Pos2>,
     settings_open: bool,
     /// A settings command requests a real activation once the viewport exists.
     /// `with_active` only applies when egui creates the child window, while the
     /// same viewport can be reused after it was hidden.
     settings_focus_pending: bool,
-    status: String,
     greeting_draft: String,
     api_key_draft: String,
-    greeting_rx: Option<Receiver<std::result::Result<String, String>>>,
-    greeting_inflight: bool,
-    last_greeting_at: Option<Instant>,
     fonts_installed: bool,
-    pet_visible: bool,
     last_passthrough: Option<bool>,
-    walk_direction: f32,
-    next_walk_at: Instant,
-    walk_until: Option<Instant>,
-    walk_origin_x: Option<f32>,
-    walk_position_x: Option<f32>,
-    last_user_action: Instant,
-    last_walk_tick: Instant,
-    last_click_at: Option<Instant>,
-    pending_single_click: bool,
     menu_open: bool,
     /// Global (monitor space) position of the open context menu.
     menu_anchor: Option<egui::Pos2>,
@@ -128,13 +109,8 @@ pub struct PetsonaApp {
     menu_button_was_down: bool,
     menu_right_button_was_down: bool,
     /// Pet library (Codex / UniPet / local roots) and its current contents.
-    library: PetLibrary,
-    pets: Vec<PetEntry>,
-    selected_pet: Option<String>,
     pet_preview: Option<(String, egui::TextureHandle)>,
     /// Which side the cursor was on when the pet last glanced (-1/0/1).
-    glance_side: i8,
-    last_glance_at: Option<Instant>,
     /// The pet is being moved by the user right now.
     pet_dragged: bool,
     pointer_left_down: bool,
@@ -149,17 +125,13 @@ pub struct PetsonaApp {
     start_position_applied: bool,
     tray: Option<tray_icon::TrayIcon>,
     tray_events: Option<Receiver<tray_icon::TrayIconEvent>>,
-    #[cfg(target_os = "windows")]
-    windows_menu: Option<crate::windows_menu::WindowsMenu>,
-    #[cfg(target_os = "macos")]
+    /// Native context menu owned by the shell (Win32 popup-menu thread).
+    platform_menu: Option<Box<dyn PlatformMenu>>,
+    /// `tray-icon` menu used by shells that let the system show it (macOS).
     native_tray_menu: Option<NativeMenu>,
-    #[cfg(target_os = "macos")]
     native_menu_events: Option<Receiver<tray_icon::menu::MenuEvent>>,
     settings_pos: Option<egui::Pos2>,
     /// Local state protocol (Codex hooks -> pet).
-    state_server: Option<StateServer>,
-    state_events: Option<Receiver<StateEvent>>,
-    state_server_port: u16,
     #[cfg(feature = "test-hooks")]
     test_hooks: Option<TestHookServer>,
     #[cfg(feature = "test-hooks")]
@@ -187,9 +159,8 @@ pub struct PetsonaApp {
     #[cfg(feature = "test-hooks")]
     test_glance_side: Option<i8>,
     repaint_context: Arc<Mutex<Option<egui::Context>>>,
-    pointer: crate::platform::PointerSnapshot,
+    pointer: PointerSnapshot,
     last_pointer_refresh: Option<Instant>,
-    last_health_at: Instant,
     /// Pet import / export state for the settings window.
     import_draft: String,
     pending_overwrite: Option<PathBuf>,
@@ -198,39 +169,73 @@ pub struct PetsonaApp {
     /// redraw the non-client frame, which showed up as a flashing border.
     applied_window_size: Option<egui::Vec2>,
     applied_always_on_top: Option<bool>,
-    #[cfg(target_os = "windows")]
-    window_chrome_ready: bool,
-    /// When the window was last resized; the Windows chrome is re-applied once
-    /// the resize settles instead of on every step of a drag.
-    resize_settled_at: Option<Instant>,
     /// Icon built from the active pet, cached by pet id.
     pet_icon: Option<(String, std::sync::Arc<egui::IconData>)>,
     applied_window_icon: Option<String>,
 }
 
-struct PetRuntime {
-    entry: PetEntry,
-    atlas: PetAtlas,
-    engine: PetEngine,
+impl std::ops::Deref for PetsonaApp {
+    type Target = PetsonaRuntime;
+
+    fn deref(&self) -> &Self::Target {
+        &self.runtime
+    }
+}
+
+impl std::ops::DerefMut for PetsonaApp {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.runtime
+    }
+}
+#[derive(Default)]
+struct PetTextures {
     textures: Vec<Option<egui::TextureHandle>>,
-    cell_size: egui::Vec2,
-    anim_started: Instant,
-    last_state: PetState,
-    last_sprite: u32,
 }
 
-struct Bubble {
-    text: String,
-    until: Instant,
+impl PetTextures {
+    fn texture_for(
+        &mut self,
+        ctx: &egui::Context,
+        session: &PetSession,
+        sprite_index: u32,
+    ) -> Option<egui::TextureId> {
+        let index = sprite_index as usize;
+        if index >= self.textures.len() {
+            self.textures.resize_with(index + 1, || None);
+        }
+        if self.textures[index].is_none() {
+            let frame = session.atlas.frame;
+            let row = sprite_index / frame.columns.max(1);
+            if row >= frame.rows {
+                return None;
+            }
+            let col = sprite_index % frame.columns.max(1);
+            let cell_width = frame.width as usize;
+            let cell_height = frame.height as usize;
+            let source_x = col * frame.width;
+            let source_y = row * frame.height;
+            let image = &session.atlas.image;
+            let mut pixels = Vec::with_capacity(cell_width * cell_height * 4);
+            for y in 0..frame.height {
+                for x in 0..frame.width {
+                    let pixel = image.get_pixel(source_x + x, source_y + y);
+                    pixels.extend_from_slice(&pixel.0);
+                }
+            }
+            let color =
+                egui::ColorImage::from_rgba_unmultiplied([cell_width, cell_height], &pixels);
+            let texture = ctx.load_texture(
+                format!("pet-{}-cell-{}", session.entry.id, sprite_index),
+                color,
+                egui::TextureOptions::NEAREST,
+            );
+            self.textures[index] = Some(texture);
+        }
+        self.textures[index].as_ref().map(|texture| texture.id())
+    }
 }
 
-#[derive(Debug, Clone)]
-struct ConversationTurn {
-    user: bool,
-    text: String,
-}
-
-#[cfg(target_os = "macos")]
+/// Tray menu handed to AppKit, kept so the check marks can be refreshed.
 struct NativeMenu {
     menu: tray_icon::menu::Menu,
     pet_menu: tray_icon::menu::Submenu,
@@ -248,66 +253,16 @@ enum MenuAction {
 }
 
 impl PetsonaApp {
-    pub fn new(paths: AppPaths, mut config: AppConfig) -> Result<Self> {
-        paths.ensure()?;
+    pub fn new(
+        paths: AppPaths,
+        mut config: AppConfig,
+        platform: Arc<dyn PlatformHost>,
+    ) -> Result<Self> {
         config.window.scale = nearest_scale(config.window.scale);
+        let mut runtime = PetsonaRuntime::load(paths, config)?;
 
-        let personas = PersonaStore::new(paths.personas_dir.clone());
-        personas.ensure()?;
-        let persona = config
-            .active_persona
-            .as_ref()
-            .and_then(|id| personas.get(id).ok().flatten())
-            .or_else(|| {
-                personas
-                    .list()
-                    .ok()
-                    .and_then(|list| list.into_iter().next())
-            })
-            .unwrap_or_default();
-        if config.active_persona.as_deref() != Some(persona.id.as_str()) {
-            config.active_persona = Some(persona.id.clone());
-        }
-
-        let library = PetLibrary::discover(paths.pets_dir.clone());
-        // The bundled pet lives in the local library next to the user's own
-        // pets. Deleting it in the settings opts out for good.
-        if let Some(installed) =
-            petsona_core::pet::default_pet::ensure_installed(&library, config.bundled_pet_removed)?
-        {
-            tracing::info!(pet = %installed.id, "installed the bundled pet");
-            if config.active_pet.is_none() {
-                config.active_pet = Some(installed.id);
-            }
-        }
-        let pets = library.list();
-        let entry = config
-            .active_pet
-            .as_ref()
-            .and_then(|id| pets.iter().find(|pet| &pet.id == id).cloned())
-            .or_else(|| pets.first().cloned());
-        let pet = match entry {
-            Some(entry) => {
-                config.active_pet = Some(entry.id.clone());
-                Some(PetRuntime::load(entry)?)
-            }
-            None => None,
-        };
-
-        let memory = PetMemory::open(&paths.memory_file)?;
-        if let Some(pet) = &pet {
-            memory.record_event(
-                &persona.id,
-                EventKind::AppStart,
-                Some(format!("Petsona 启动：{}", pet.entry.display_name)),
-            )?;
-        }
-        config.save(&paths.config_file)?;
-
-        let greeting_draft = persona.greeting.clone().unwrap_or_default();
-        let fallback = greeting::fallback_greeting(&persona);
-        let selected_pet = config.active_pet.clone();
-        let state_port = config.state_server.port;
+        let greeting_draft = runtime.persona.greeting.clone().unwrap_or_default();
+        let fallback = greeting::fallback_greeting(&runtime.persona);
         let repaint_context: Arc<Mutex<Option<egui::Context>>> = Arc::new(Mutex::new(None));
 
         #[cfg(feature = "test-hooks")]
@@ -332,47 +287,30 @@ impl PetsonaApp {
             .as_ref()
             .map(|server| server.status())
             .unwrap_or_else(|| Arc::new(Mutex::new(TestStatus::default())));
+
+        runtime.bubble = Some(Bubble {
+            text: fallback,
+            until: Instant::now() + Duration::from_secs(8),
+        });
+
         let mut app = Self {
-            paths,
-            config,
-            personas,
-            persona,
-            memory,
-            pet,
-            bubble: Some(Bubble {
-                text: fallback,
-                until: Instant::now() + Duration::from_secs(8),
-            }),
+            platform,
+            runtime,
+            pet_textures: PetTextures::default(),
             bubble_window_created: false,
+            bubble_shown_at: None,
             bubble_styled: false,
             conversation_open: false,
             conversation_window_created: false,
             conversation_focus_pending: false,
             conversation_draft: String::new(),
-            conversation_history: Vec::new(),
-            conversation_rx: None,
-            conversation_inflight: false,
             conversation_cursor: None,
             settings_open: false,
             settings_focus_pending: false,
-            status: String::new(),
             greeting_draft,
             api_key_draft: String::new(),
-            greeting_rx: None,
-            greeting_inflight: false,
-            last_greeting_at: None,
             fonts_installed: false,
-            pet_visible: true,
             last_passthrough: None,
-            walk_direction: 1.0,
-            next_walk_at: Instant::now() + Duration::from_secs(45 * 60),
-            walk_until: None,
-            walk_origin_x: None,
-            walk_position_x: None,
-            last_user_action: Instant::now(),
-            last_walk_tick: Instant::now(),
-            last_click_at: None,
-            pending_single_click: false,
             menu_open: false,
             menu_anchor: None,
             menu_window_pos: None,
@@ -380,10 +318,7 @@ impl PetsonaApp {
             menu_styled: false,
             menu_button_was_down: false,
             menu_right_button_was_down: false,
-            selected_pet,
             pet_preview: None,
-            glance_side: 0,
-            last_glance_at: None,
             pet_dragged: false,
             pointer_left_down: false,
             pointer_right_down: false,
@@ -393,20 +328,12 @@ impl PetsonaApp {
             drag_grab: None,
             last_window_pos: None,
             start_position_applied: false,
-            library,
-            pets,
             tray: None,
             tray_events: None,
-            #[cfg(target_os = "windows")]
-            windows_menu: None,
-            #[cfg(target_os = "macos")]
+            platform_menu: None,
             native_tray_menu: None,
-            #[cfg(target_os = "macos")]
             native_menu_events: None,
             settings_pos: None,
-            state_server: None,
-            state_events: None,
-            state_server_port: state_port,
             #[cfg(feature = "test-hooks")]
             test_hooks,
             #[cfg(feature = "test-hooks")]
@@ -434,17 +361,13 @@ impl PetsonaApp {
             #[cfg(feature = "test-hooks")]
             test_glance_side: None,
             repaint_context,
-            pointer: crate::platform::PointerSnapshot::default(),
+            pointer: PointerSnapshot::default(),
             last_pointer_refresh: None,
-            last_health_at: Instant::now(),
             import_draft: String::new(),
             pending_overwrite: None,
             pending_delete: None,
             applied_window_size: None,
             applied_always_on_top: None,
-            #[cfg(target_os = "windows")]
-            window_chrome_ready: false,
-            resize_settled_at: None,
             pet_icon: None,
             applied_window_icon: None,
         };
@@ -457,28 +380,19 @@ impl PetsonaApp {
         if let Ok(mut repaint_context) = self.repaint_context.lock() {
             *repaint_context = Some(creation_context.egui_ctx.clone());
         }
-        #[cfg(target_os = "windows")]
-        {
-            let installed = crate::platform::install_mouse_waker(&creation_context.egui_ctx);
-            tracing::info!(installed, "event-driven mouse waker");
-            match crate::windows_menu::WindowsMenu::start(&creation_context.egui_ctx) {
-                Ok(menu) => {
-                    self.windows_menu = Some(menu);
-                    tracing::info!("Win32 native menu thread started");
-                }
-                Err(error) => {
-                    tracing::warn!(%error, "Win32 native menu unavailable; using egui fallback");
-                }
-            }
-        }
+        let installed = self
+            .platform
+            .install_event_waker(&creation_context.egui_ctx);
+        tracing::info!(installed, "event-driven mouse waker");
+        self.platform_menu = self.platform.create_menu(&creation_context.egui_ctx);
         self.install_tray(creation_context.egui_ctx.clone());
     }
 
-    // macOS uses ctx for edge-triggered pointer sampling; other platforms poll directly.
-    #[cfg_attr(not(target_os = "macos"), allow(unused_variables))]
+    /// Sampling the global pointer is cheap on Windows (the low-level hook
+    /// caches the position) but expensive on macOS, so only shells that ask for
+    /// it get edge-triggered sampling.
     fn refresh_pointer(&mut self, ctx: &egui::Context) {
-        #[cfg(target_os = "macos")]
-        {
+        if self.platform.throttle_pointer_sampling() {
             let pointer_event = ctx.input(|input| {
                 input.pointer.delta() != egui::Vec2::ZERO
                     || input.pointer.primary_pressed()
@@ -493,14 +407,14 @@ impl PetsonaApp {
                 return;
             }
         }
-        self.pointer = crate::platform::pointer_snapshot();
+        self.pointer = self.platform.pointer_snapshot();
         self.last_pointer_refresh = Some(Instant::now());
     }
 
     fn pet_size(&self) -> egui::Vec2 {
         self.pet
             .as_ref()
-            .map(|pet| pet.cell_size * self.effective_scale())
+            .map(|pet| egui::vec2(pet.cell_width, pet.cell_height) * self.effective_scale())
             .unwrap_or_else(|| egui::vec2(192.0, 208.0))
     }
 
@@ -525,7 +439,6 @@ impl PetsonaApp {
         if let Err(error) = self.config.save(&self.paths.config_file) {
             tracing::warn!(%error, "cannot save pet scale preset");
         }
-        #[cfg(target_os = "macos")]
         self.refresh_native_tray_menu();
     }
 
@@ -544,7 +457,7 @@ impl PetsonaApp {
     fn pet_cell_size(&self) -> egui::Vec2 {
         self.pet
             .as_ref()
-            .map(|pet| pet.cell_size)
+            .map(|pet| egui::vec2(pet.cell_width, pet.cell_height))
             .unwrap_or_else(|| egui::vec2(192.0, 208.0))
     }
 
@@ -594,7 +507,7 @@ impl PetsonaApp {
                     let anchor = bottom_center_anchor(current, actual_size);
                     let next = restore_position
                         .unwrap_or_else(|| position_for_bottom_center(anchor, target));
-                    crate::platform::set_window_geometry(
+                    self.platform.set_window_geometry(
                         window,
                         next.x as f64,
                         next.y as f64,
@@ -611,7 +524,7 @@ impl PetsonaApp {
                 ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(target));
             }
             self.applied_window_size = Some(target);
-            self.resize_settled_at = Some(Instant::now());
+            self.platform.notify_window_resize();
         }
     }
 
@@ -625,8 +538,8 @@ impl PetsonaApp {
         let pet_rect = self.pet_rect(window_size);
         let scale = self.effective_scale();
         let total = window_size;
-        let pet = self.pet.as_mut().expect("checked above");
-        let cell = pet.cell_size * scale;
+        let pet = self.runtime.pet.as_mut().expect("checked above");
+        let cell = egui::vec2(pet.cell_width, pet.cell_height) * scale;
 
         egui::CentralPanel::default()
             .frame(egui::Frame::NONE.fill(egui::Color32::TRANSPARENT))
@@ -639,7 +552,7 @@ impl PetsonaApp {
 
                 let elapsed_ms = pet.anim_started.elapsed().as_secs_f32() * 1000.0;
                 let sprite = pet.current_sprite(elapsed_ms);
-                if let Some(texture_id) = pet.texture_for(ui.ctx(), sprite) {
+                if let Some(texture_id) = self.pet_textures.texture_for(ui.ctx(), pet, sprite) {
                     // SizedTexture uses `ImageFit::Exact`, so hand it the scaled
                     // size or the 大小 setting would be ignored.
                     let image = egui::Image::new(egui::load::SizedTexture::new(texture_id, cell));
@@ -661,6 +574,7 @@ impl PetsonaApp {
             None
         };
         let Some(text) = text else {
+            self.bubble_shown_at = None;
             if self.bubble_window_created {
                 ctx.send_viewport_cmd_to(bubble_id, egui::ViewportCommand::Visible(false));
                 self.bubble_window_created = false;
@@ -692,6 +606,11 @@ impl PetsonaApp {
             bubble_rect_global
                 .contains(egui::pos2(x as f32 / scale as f32, y as f32 / scale as f32))
         });
+        let shown_at = *self.bubble_shown_at.get_or_insert_with(Instant::now);
+        let progress =
+            (shown_at.elapsed().as_secs_f32() / BUBBLE_FADE.as_secs_f32()).clamp(0.0, 1.0);
+        // Ease-out cubic: fast start, soft landing.
+        let opacity = 1.0 - (1.0 - progress).powi(3);
         let builder = egui::ViewportBuilder::default()
             .with_title(BUBBLE_TITLE)
             .with_inner_size([BUBBLE_WINDOW_SIZE.x, BUBBLE_WINDOW_SIZE.y])
@@ -710,7 +629,7 @@ impl PetsonaApp {
                 .frame(egui::Frame::NONE.fill(egui::Color32::TRANSPARENT))
                 .show(ui, |ui| {
                     let window = ui.max_rect();
-                    let bubble_rect = draw_bubble_window(ui.painter(), window, &text);
+                    let bubble_rect = draw_bubble_window(ui.painter(), window, &text, opacity);
                     if bubble_hovered {
                         let reply_rect = egui::Rect::from_min_size(
                             egui::pos2(bubble_rect.right() - 66.0, bubble_rect.top() + 8.0),
@@ -727,7 +646,7 @@ impl PetsonaApp {
         }
         self.bubble_window_created = true;
         if !self.bubble_styled {
-            self.bubble_styled = crate::platform::set_no_activate_for_title(BUBBLE_TITLE) > 0;
+            self.bubble_styled = self.platform.set_no_activate_for_title(BUBBLE_TITLE) > 0;
         }
     }
 
@@ -817,7 +736,7 @@ impl PetsonaApp {
         if !self.menu_styled {
             // Menus never activate, so they cannot steal focus (or repaint a
             // frame) either. Retry until the window really exists.
-            self.menu_styled = crate::platform::set_no_activate_for_title(MENU_TITLE) > 0;
+            self.menu_styled = self.platform.set_no_activate_for_title(MENU_TITLE) > 0;
         }
         let Some(action) = action else {
             return;
@@ -852,7 +771,7 @@ impl PetsonaApp {
             self.menu_right_button_was_down = false;
             return;
         }
-        if crate::platform::escape_pressed() {
+        if self.platform.escape_pressed() {
             self.dismiss_menu();
             return;
         }
@@ -936,14 +855,7 @@ impl PetsonaApp {
             // had been closed/hidden. On macOS the explicit AppKit activation
             // is needed because the pet itself is deliberately non-activating.
             ctx.send_viewport_cmd_to(viewport_id, egui::ViewportCommand::Focus);
-            #[cfg(target_os = "macos")]
-            {
-                if crate::platform::focus_window_for_title("Petsona 设置") > 0 {
-                    self.settings_focus_pending = false;
-                }
-            }
-            #[cfg(not(target_os = "macos"))]
-            {
+            if self.platform.confirm_settings_focus("Petsona 设置") {
                 self.settings_focus_pending = false;
             }
         }
@@ -1037,9 +949,9 @@ impl PetsonaApp {
                         .hint_text("宠物文件夹或 .zip 的路径")
                         .desired_width(240.0),
                 );
-                #[cfg(target_os = "macos")]
-                if ui.button("选择文件…").clicked() {
-                    if let Some(path) = crate::platform::choose_pet_import_path() {
+                if self.platform.supports_native_file_dialogs() && ui.button("选择文件…").clicked()
+                {
+                    if let Some(path) = self.platform.choose_pet_import_path() {
                         import_request = Some((path, false));
                     }
                 }
@@ -1054,7 +966,7 @@ impl PetsonaApp {
                     }
                 }
                 if ui.button("打开宠物库目录").clicked() {
-                    if crate::platform::open_in_file_manager(&self.paths.pets_dir) {
+                    if self.platform.open_in_file_manager(&self.paths.pets_dir) {
                         self.status = format!("宠物库：{}", self.paths.pets_dir.display());
                     } else {
                         self.status = format!("宠物库目录：{}", self.paths.pets_dir.display());
@@ -1407,23 +1319,10 @@ impl PetsonaApp {
     }
 
     /// Start, stop or restart the local state protocol to match the config.
+    /// Start, stop or restart the local state protocol to match the config.
     fn sync_state_server(&mut self) {
-        let wanted = self.config.state_server.enabled;
-        let port = self.config.state_server.port;
-        let running = self.state_server.is_some();
-        if running && (!wanted || port != self.state_server_port) {
-            self.state_server = None;
-            self.state_events = None;
-        }
-        if !wanted || self.state_server.is_some() {
-            if !wanted {
-                self.status = "状态服务已关闭".to_string();
-            }
-            return;
-        }
-        let (sender, receiver) = mpsc::channel();
         let repaint_context = Arc::clone(&self.repaint_context);
-        let wake = move || {
+        self.runtime.sync_state_server(move || {
             let ctx = repaint_context
                 .lock()
                 .ok()
@@ -1431,52 +1330,6 @@ impl PetsonaApp {
             if let Some(ctx) = ctx {
                 ctx.request_repaint();
             }
-        };
-        match StateServer::start_with_waker(port, sender, wake) {
-            Ok(server) => {
-                tracing::info!(port = server.port(), "state protocol listening");
-                self.state_server_port = server.port();
-                self.state_server = Some(server);
-                self.state_events = Some(receiver);
-                self.status = format!(
-                    "状态协议已监听 http://127.0.0.1:{}/state",
-                    self.state_server_port
-                );
-                self.publish_health();
-            }
-            Err(error) => {
-                tracing::warn!(%error, "cannot start the state protocol");
-                self.state_server = None;
-                self.state_events = None;
-                self.status = format!("状态协议启动失败：{error}");
-            }
-        }
-    }
-
-    /// Publish the current pet / persona / state snapshot for `GET /health`.
-    fn publish_health(&self) {
-        let Some(server) = &self.state_server else {
-            return;
-        };
-        let (pet, pet_path) = self
-            .pet
-            .as_ref()
-            .map(|pet| (pet.entry.display_name.clone(), Some(pet.entry.dir.clone())))
-            .unwrap_or_else(|| ("".to_string(), None));
-        let state = self
-            .pet
-            .as_ref()
-            .map(|pet| pet.engine.current().name().to_string())
-            .unwrap_or_default();
-        server.set_health(Health {
-            ok: true,
-            version: env!("CARGO_PKG_VERSION").to_string(),
-            pet,
-            pet_path,
-            persona: self.persona.id.clone(),
-            state,
-            pets: self.pets.iter().map(|pet| pet.id.clone()).collect(),
-            sources: Vec::new(),
         });
     }
 
@@ -1506,6 +1359,19 @@ impl PetsonaApp {
                 self.open_menu_at(anchor);
             }
             "close-menu" => self.dismiss_menu(),
+            // Show/dismiss the shell's own context menu (Win32 popup menu on
+            // Windows) so the smoke test can cover it without SendInput.
+            "native-menu" => {
+                if let Some(menu) = &self.platform_menu {
+                    let (x, y) = self.test_native_menu_anchor(frame);
+                    menu.show(x, y, self.pet_visible);
+                }
+            }
+            "close-native-menu" => {
+                if let Some(menu) = &self.platform_menu {
+                    menu.dismiss();
+                }
+            }
             "open-settings" => self.open_settings(),
             "close-settings" => {
                 self.settings_open = false;
@@ -1644,6 +1510,23 @@ impl PetsonaApp {
         egui::pos2(100.0, 100.0)
     }
 
+    /// Physical screen position at the centre of the pet window, used to pop
+    /// the shell's native menu from the smoke test.
+    #[cfg(feature = "test-hooks")]
+    fn test_native_menu_anchor(&self, frame: &eframe::Frame) -> (f64, f64) {
+        frame
+            .winit_window()
+            .and_then(|window| {
+                let position = window.outer_position().ok()?;
+                let size = window.outer_size();
+                Some((
+                    position.x as f64 + size.width as f64 * 0.5,
+                    position.y as f64 + size.height as f64 * 0.5,
+                ))
+            })
+            .unwrap_or((100.0, 100.0))
+    }
+
     #[cfg(feature = "test-hooks")]
     fn test_click_point(&self, frame: &eframe::Frame) -> Option<(i32, i32)> {
         let pet = self.pet.as_ref()?;
@@ -1739,11 +1622,7 @@ impl PetsonaApp {
             status.conversation_inflight = self.conversation_inflight;
             status.conversation_window_created = self.conversation_window_created;
             status.conversation_history_len = self.conversation_history.len();
-            #[cfg(target_os = "macos")]
-            {
-                status.settings_key_window =
-                    crate::platform::is_window_key_for_title("Petsona 设置");
-            }
+            status.settings_key_window = self.platform.is_window_key_for_title("Petsona 设置");
             status.menu_open = self.menu_open;
             status.click_through = self.config.window.click_through;
             status.passthrough = self.last_passthrough.unwrap_or(false);
@@ -1755,15 +1634,9 @@ impl PetsonaApp {
             status.sprite_index = sprite_index;
             status.bubble_text = bubble_text;
             status.bubble_window_created = self.bubble_window_created;
-            #[cfg(target_os = "windows")]
-            {
-                status.native_menu_ready = self.windows_menu.is_some();
-            }
-            #[cfg(target_os = "macos")]
-            {
-                status.native_menu_ready = self.native_tray_menu.is_some();
-                status.native_menu_checked_pet = self.native_checked_pet_id();
-            }
+            status.native_menu_ready =
+                self.platform_menu.is_some() || self.native_tray_menu.is_some();
+            status.native_menu_checked_pet = self.native_checked_pet_id();
             status.gaze_side = self.glance_side;
             status.gaze_phase = self
                 .pet
@@ -1781,9 +1654,10 @@ impl PetsonaApp {
             status.logic_count = self.test_logic_count;
             status.ui_count = self.test_ui_count;
             status.state_event_count = self.test_state_event_count;
-            status.cursor_poll_count = crate::platform::cursor_poll_count();
-            status.mouse_events = crate::platform::event_driven_mouse();
-            status.mouse_position_valid = crate::platform::mouse_position_valid();
+            status.cursor_poll_count = self.platform.cursor_poll_count();
+            status.mouse_events = self.platform.event_driven_mouse();
+            status.mouse_event_count = self.platform.mouse_event_count();
+            status.mouse_position_valid = self.platform.mouse_position_valid();
             status.style_reapply_count = self.test_style_reapply_count;
             status.last_repaint_ms = self.test_last_repaint_ms;
             status.animation_repaint_ms = self.test_animation_repaint_ms;
@@ -1800,49 +1674,18 @@ impl PetsonaApp {
     }
 
     /// Apply state events pushed by hooks.
+    /// Apply state protocol events and wake the UI when something changed.
     fn poll_state_events(&mut self, ctx: &egui::Context) {
-        let Some(receiver) = &self.state_events else {
-            return;
-        };
-        let mut events = Vec::new();
-        while let Ok(event) = receiver.try_recv() {
-            events.push(event);
-        }
-        if events.is_empty() {
+        let processed = self.runtime.poll_state_events();
+        if processed == 0 {
             return;
         }
-        for event in events {
-            #[cfg(feature = "test-hooks")]
-            {
-                self.test_state_event_count = self.test_state_event_count.wrapping_add(1);
-            }
-            let Some(state) = event.pet_state() else {
-                continue;
-            };
-            tracing::info!(source = %event.source, state = state.name(), "state event");
-            let message = event.message_clipped();
-            if let Some(text) = &message {
-                self.show_bubble(text.clone());
-            }
-            if let Some(pet) = &mut self.pet {
-                let source = format!("hook:{}", event.source);
-                pet.engine
-                    .raise(state, &source, message.clone(), event.ttl(), Instant::now());
-                pet.anim_started = Instant::now();
-                pet.last_state = pet.engine.current();
-            }
-            let _ = self.memory.record_event(
-                &self.persona.id,
-                EventKind::CodexStatus,
-                Some(match &message {
-                    Some(text) => format!("{}：{}", state.name(), text),
-                    None => state.name().to_string(),
-                }),
-            );
-            self.last_user_action = Instant::now();
-            ctx.request_repaint();
+        #[cfg(feature = "test-hooks")]
+        {
+            self.test_state_event_count =
+                self.test_state_event_count.wrapping_add(processed as u64);
         }
-        self.publish_health();
+        ctx.request_repaint();
     }
 
     fn active_pet_id(&self) -> String {
@@ -1856,7 +1699,6 @@ impl PetsonaApp {
     fn refresh_pets(&mut self) {
         self.pets = self.library.list();
         self.pet_preview = None;
-        #[cfg(target_os = "macos")]
         self.refresh_native_tray_menu();
         self.publish_health();
     }
@@ -1976,9 +1818,10 @@ impl PetsonaApp {
     /// Write the Codex upload format next to the config directory.
     fn export_pet_zip(&mut self, id: &str) {
         let exports = self.paths.config_dir.join("exports");
-        #[cfg(target_os = "macos")]
-        let (out, reveal_dir) = {
-            let Some(out) = crate::platform::choose_pet_export_path(&exports, &format!("{id}.zip"))
+        let (out, reveal_dir) = if self.platform.supports_native_file_dialogs() {
+            let Some(out) = self
+                .platform
+                .choose_pet_export_path(&exports, &format!("{id}.zip"))
             else {
                 return;
             };
@@ -1987,13 +1830,13 @@ impl PetsonaApp {
                 .map(Path::to_path_buf)
                 .unwrap_or_else(|| exports.clone());
             (out, reveal_dir)
+        } else {
+            (exports.join(format!("{id}.zip")), exports.clone())
         };
-        #[cfg(not(target_os = "macos"))]
-        let (out, reveal_dir) = (exports.join(format!("{id}.zip")), exports.clone());
         match self.library.export_zip(id, &out) {
             Ok(()) => {
                 self.status = format!("已导出 {}", out.display());
-                if crate::platform::open_in_file_manager(&reveal_dir) {
+                if self.platform.open_in_file_manager(&reveal_dir) {
                     self.status.push_str("（已打开导出目录）");
                 }
             }
@@ -2035,7 +1878,7 @@ impl PetsonaApp {
             .unwrap_or_else(|| "（无）".to_string())
     }
 
-    #[cfg(target_os = "macos")]
+    /// Fill the "select pet" submenu of the tray-icon menu.
     fn fill_native_pet_menu(
         pet_menu: &tray_icon::menu::Submenu,
         pets: &[PetEntry],
@@ -2071,7 +1914,7 @@ impl PetsonaApp {
         true
     }
 
-    #[cfg(target_os = "macos")]
+    /// Fill the "pet size" submenu of the tray-icon menu.
     fn fill_native_scale_menu(scale_menu: &tray_icon::menu::Submenu, active_scale: f32) -> bool {
         use tray_icon::menu::CheckMenuItem;
 
@@ -2098,7 +1941,7 @@ impl PetsonaApp {
         true
     }
 
-    #[cfg(target_os = "macos")]
+    /// Build the `tray-icon` menu used by shells that let the system show it.
     fn build_native_menu(&self) -> Option<NativeMenu> {
         use tray_icon::menu::{IsMenuItem, Menu, MenuItem, Submenu};
 
@@ -2140,7 +1983,7 @@ impl PetsonaApp {
         })
     }
 
-    #[cfg(target_os = "macos")]
+    /// Keep the native tray menu in sync; a no-op when the shell has none.
     fn refresh_native_tray_menu(&self) {
         let Some(native_menu) = &self.native_tray_menu else {
             return;
@@ -2158,7 +2001,7 @@ impl PetsonaApp {
         }
     }
 
-    #[cfg(all(target_os = "macos", feature = "test-hooks"))]
+    #[cfg(feature = "test-hooks")]
     fn native_checked_pet_id(&self) -> Option<String> {
         let native_menu = self.native_tray_menu.as_ref()?;
         native_menu.pet_menu.items().iter().find_map(|item| {
@@ -2173,26 +2016,24 @@ impl PetsonaApp {
         })
     }
 
-    #[cfg(target_os = "windows")]
-    fn poll_windows_menu(&mut self, ctx: &egui::Context) {
+    /// Apply the commands selected in the shell's native context menu.
+    fn poll_platform_menu(&mut self, ctx: &egui::Context) {
         let commands = self
-            .windows_menu
+            .platform_menu
             .as_ref()
-            .map(|menu| menu.poll_commands().collect::<Vec<_>>())
+            .map(|menu| menu.poll())
             .unwrap_or_default();
         for command in commands {
             match command {
-                crate::windows_menu::COMMAND_OPEN_SETTINGS
-                | crate::windows_menu::COMMAND_CHANGE_PET => {
+                MenuCommand::OpenSettings | MenuCommand::ChangePet => {
                     self.open_settings();
                 }
-                crate::windows_menu::COMMAND_TOGGLE_PET => {
+                MenuCommand::TogglePet => {
                     self.set_pet_visible(ctx, !self.pet_visible);
                 }
-                crate::windows_menu::COMMAND_QUIT => {
+                MenuCommand::Quit => {
                     ctx.send_viewport_cmd(egui::ViewportCommand::Close);
                 }
-                _ => {}
             }
         }
     }
@@ -2203,16 +2044,16 @@ impl PetsonaApp {
             self.status = format!("找不到宠物 {id}");
             return;
         };
-        match PetRuntime::load(entry) {
-            Ok(runtime) => {
+        match PetSession::load(entry) {
+            Ok(session) => {
                 tracing::info!(pet = %id, "switching pet");
-                self.pet = Some(runtime);
+                self.runtime.pet = Some(session);
                 self.config.active_pet = Some(id.to_string());
                 self.selected_pet = Some(id.to_string());
+                self.pet_textures = PetTextures::default();
                 self.pet_preview = None;
                 self.pet_icon = None;
                 self.refresh_tray_icon();
-                #[cfg(target_os = "macos")]
                 self.refresh_native_tray_menu();
                 self.walk_until = None;
                 self.walk_origin_x = None;
@@ -2236,14 +2077,16 @@ impl PetsonaApp {
         // Windows keeps the custom egui menu because TrackPopupMenu enters a
         // modal loop on the event-loop thread. macOS uses AppKit's native menu
         // so the status-item menu is positioned and dismissed by the system.
-        #[cfg(target_os = "macos")]
-        let native_tray_menu = self.build_native_menu();
+        let native_tray_menu = if self.platform.uses_native_tray_menu() {
+            self.build_native_menu()
+        } else {
+            None
+        };
 
         let mut builder = tray_icon::TrayIconBuilder::new()
             .with_menu_on_left_click(false)
             .with_menu_on_right_click(false)
             .with_tooltip("Petsona");
-        #[cfg(target_os = "macos")]
         if let Some(native_menu) = native_tray_menu.as_ref() {
             builder = builder
                 .with_menu(Box::new(native_menu.menu.clone()))
@@ -2275,9 +2118,8 @@ impl PetsonaApp {
         ));
         self.tray_events = Some(receiver);
 
-        #[cfg(target_os = "macos")]
-        {
-            self.native_tray_menu = native_tray_menu;
+        self.native_tray_menu = native_tray_menu;
+        if self.native_tray_menu.is_some() {
             let (sender, receiver) = mpsc::channel();
             let menu_ctx = ctx.clone();
             tray_icon::menu::MenuEvent::set_event_handler(Some(
@@ -2291,12 +2133,10 @@ impl PetsonaApp {
     }
 
     fn poll_tray(&mut self, ctx: &egui::Context) {
-        #[cfg(target_os = "windows")]
-        self.poll_windows_menu(ctx);
+        self.poll_platform_menu(ctx);
 
-        #[cfg(target_os = "macos")]
         if self.native_tray_menu.is_some() {
-            // AppKit already opened and positioned the status-item menu.
+            // The system already opened and positioned the status-item menu.
             if let Some(receiver) = &self.tray_events {
                 while receiver.try_recv().is_ok() {}
             }
@@ -2326,13 +2166,8 @@ impl PetsonaApp {
                 continue;
             }
             tracing::info!(?position, "tray click");
-            #[cfg(target_os = "windows")]
-            if let Some(menu) = &self.windows_menu {
-                menu.show(
-                    position.x.round() as i32,
-                    position.y.round() as i32,
-                    self.pet_visible,
-                );
+            if let Some(menu) = &self.platform_menu {
+                menu.show(position.x, position.y, self.pet_visible);
                 continue;
             }
             self.open_menu_at(egui::pos2(
@@ -2343,7 +2178,7 @@ impl PetsonaApp {
         }
     }
 
-    #[cfg(target_os = "macos")]
+    /// Apply the tray-icon menu events on shells that let the system show it.
     fn poll_native_menu(&mut self, ctx: &egui::Context) {
         let Some(receiver) = &self.native_menu_events else {
             return;
@@ -2393,7 +2228,6 @@ impl PetsonaApp {
     fn set_pet_visible(&mut self, ctx: &egui::Context, visible: bool) {
         tracing::info!(visible, "set pet visible");
         self.pet_visible = visible;
-        #[cfg(target_os = "macos")]
         self.refresh_native_tray_menu();
         self.walk_position_x = None;
         self.last_passthrough = None;
@@ -2878,28 +2712,29 @@ impl PetsonaApp {
         }
     }
 
-    #[cfg(target_os = "macos")]
-    fn show_native_pet_menu(&self, window: &winit::window::Window) {
-        use tray_icon::menu::ContextMenu as _;
-
-        let Some(native_menu) = self.build_native_menu() else {
-            return;
-        };
-        let Ok(handle) = window.window_handle() else {
-            return;
-        };
-        let RawWindowHandle::AppKit(handle) = handle.as_raw() else {
-            return;
-        };
-
-        // Passing None asks AppKit to use the current mouse location in
-        // screen coordinates, so it handles menu-bar offsets, Retina scaling,
-        // and multi-monitor placement itself.
-        unsafe {
-            let _ = native_menu
-                .menu
-                .show_context_menu_for_nsview(handle.ns_view.as_ptr(), None);
+    /// Show the context menu through the shell.
+    ///
+    /// Windows owns a Win32 popup-menu thread; macOS hands a freshly built
+    /// `tray-icon` menu to AppKit, which places it at the cursor. Returns false
+    /// when the caller has to fall back to the in-window egui menu.
+    fn show_platform_menu(
+        &self,
+        window: &winit::window::Window,
+        cursor_x: f64,
+        cursor_y: f64,
+    ) -> bool {
+        if let Some(menu) = &self.platform_menu {
+            menu.show(cursor_x, cursor_y, self.pet_visible);
+            return true;
         }
+        if self.platform.uses_native_tray_menu() {
+            if let Some(native_menu) = self.build_native_menu() {
+                self.platform
+                    .show_context_menu_for_window(window, &native_menu.menu);
+            }
+            return true;
+        }
+        false
     }
 
     /// Read the cursor and the mouse buttons and turn them into pet input.
@@ -2985,20 +2820,9 @@ impl PetsonaApp {
                 self.register_click();
             }
         }
-        if right_pressed && over_pet {
-            #[cfg(target_os = "macos")]
-            self.show_native_pet_menu(window);
-            #[cfg(target_os = "windows")]
-            if let Some(menu) = &self.windows_menu {
-                menu.show(
-                    cursor_x.round() as i32,
-                    cursor_y.round() as i32,
-                    self.pet_visible,
-                );
-            } else {
-                self.open_menu_at(egui::pos2(cursor_x as f32 / scale, cursor_y as f32 / scale));
-            }
-            #[cfg(all(not(target_os = "windows"), not(target_os = "macos")))]
+        // The shell owns the native context menu; only shells without one
+        // (and a failed Win32 menu thread) fall back to the egui menu.
+        if right_pressed && over_pet && !self.show_platform_menu(window, cursor_x, cursor_y) {
             self.open_menu_at(egui::pos2(cursor_x as f32 / scale, cursor_y as f32 / scale));
         }
     }
@@ -3469,7 +3293,7 @@ impl PetsonaApp {
             }
         }
 
-        if self.pet_visible && !self.settings_open && !crate::platform::event_driven_mouse() {
+        if self.pet_visible && !self.settings_open && !self.platform.event_driven_mouse() {
             // macOS still needs a low-frequency global pointer poll. Windows
             // uses the low-level mouse hook and wakes only on real input.
             sooner(EVENT_POLL_REPAINT);
@@ -3501,6 +3325,13 @@ impl PetsonaApp {
                         .saturating_duration_since(now)
                         .max(Duration::from_millis(1)),
                 );
+            }
+            if self
+                .bubble_shown_at
+                .is_some_and(|shown_at| shown_at.elapsed() < BUBBLE_FADE)
+            {
+                // Keep the fade smooth instead of jumping in one step.
+                sooner(ACTIVE_REPAINT);
             }
         }
 
@@ -3534,147 +3365,6 @@ impl PetsonaApp {
     }
 }
 
-impl PetRuntime {
-    /// Sprite that was drawn last, used for the window / tray icon.
-    fn current_sprite_index(&self) -> u32 {
-        self.last_sprite
-    }
-
-    /// Time until the current animation can display a different frame.
-    fn next_frame_after(&self) -> Duration {
-        let elapsed_ms = self.anim_started.elapsed().as_secs_f32() * 1000.0;
-        if let Some(after) = self.engine.gaze_next_frame_after(elapsed_ms) {
-            return after;
-        }
-        let Some(animation) = self.engine.current_animation() else {
-            return IDLE_REPAINT;
-        };
-        if animation.total_ms <= 0.0 || animation.durations_ms.is_empty() {
-            return IDLE_REPAINT;
-        }
-
-        let time_ms = if animation.loop_anim {
-            elapsed_ms % animation.total_ms
-        } else {
-            elapsed_ms
-        };
-        if !animation.loop_anim && time_ms >= animation.total_ms {
-            return Duration::from_millis(1);
-        }
-
-        let mut frame_end = 0.0;
-        for duration in &animation.durations_ms {
-            frame_end += duration.max(1.0);
-            if time_ms < frame_end {
-                let remaining_ms = (frame_end - time_ms).clamp(1.0, 60_000.0);
-                return Duration::from_millis(remaining_ms.ceil() as u64);
-            }
-        }
-        Duration::from_millis(1)
-    }
-
-    fn load(entry: PetEntry) -> Result<Self> {
-        let (atlas, warnings) = PetAtlas::open(&entry.dir, &entry.manifest)
-            .with_context(|| format!("cannot open pet '{}'", entry.id))?;
-        for warning in warnings {
-            tracing::warn!(pet = %entry.id, %warning, "pet atlas warning");
-        }
-        let frame = atlas.frame;
-        // `from_atlas` follows the frames this pet actually drew instead of the
-        // frame count of the reference sheet.
-        let engine = PetEngine::from_atlas(&atlas, &entry.manifest);
-        Ok(Self {
-            entry,
-            atlas,
-            engine,
-            textures: Vec::new(),
-            cell_size: egui::vec2(frame.width as f32, frame.height as f32),
-            anim_started: Instant::now(),
-            last_state: PetState::Idle,
-            last_sprite: 0,
-        })
-    }
-
-    fn texture_for(&mut self, ctx: &egui::Context, sprite_index: u32) -> Option<egui::TextureId> {
-        let index = sprite_index as usize;
-        if index >= self.textures.len() {
-            self.textures.resize_with(index + 1, || None);
-        }
-        if self.textures[index].is_none() {
-            let frame = self.atlas.frame;
-            let row = sprite_index / frame.columns.max(1);
-            if row >= frame.rows {
-                return None;
-            }
-            let col = sprite_index % frame.columns.max(1);
-            let cell_width = frame.width as usize;
-            let cell_height = frame.height as usize;
-            let source_x = col * frame.width;
-            let source_y = row * frame.height;
-            let image = &self.atlas.image;
-            let mut pixels = Vec::with_capacity(cell_width * cell_height * 4);
-            for y in 0..frame.height {
-                for x in 0..frame.width {
-                    let pixel = image.get_pixel(source_x + x, source_y + y);
-                    pixels.extend_from_slice(&pixel.0);
-                }
-            }
-            let color =
-                egui::ColorImage::from_rgba_unmultiplied([cell_width, cell_height], &pixels);
-            let texture = ctx.load_texture(
-                format!("pet-{}-cell-{}", self.entry.id, sprite_index),
-                color,
-                egui::TextureOptions::NEAREST,
-            );
-            self.textures[index] = Some(texture);
-        }
-        self.textures[index].as_ref().map(|texture| texture.id())
-    }
-
-    fn current_sprite(&mut self, elapsed_ms: f32) -> u32 {
-        let state = self.engine.current();
-        if state != self.last_state {
-            self.last_state = state;
-            self.anim_started = Instant::now();
-        }
-
-        if self.engine.gaze_visible() {
-            if let Some(sprite) = self.engine.gaze_sprite_at(elapsed_ms) {
-                self.last_sprite = sprite;
-                return sprite;
-            }
-            // The return segment completed. Start the base/event animation
-            // from its first frame instead of reusing the gaze elapsed time.
-            self.anim_started = Instant::now();
-            self.last_state = self.engine.current();
-            let sprite = self
-                .engine
-                .current_animation()
-                .and_then(|animation| animation.sprite_at(0.0))
-                .unwrap_or(0);
-            self.last_sprite = sprite;
-            return sprite;
-        }
-
-        let (sprite, finished) = {
-            let Some(animation) = self.engine.current_animation() else {
-                return 0;
-            };
-            (
-                animation.sprite_at(elapsed_ms).unwrap_or(0),
-                elapsed_ms >= animation.total_ms && animation.total_ms > 0.0,
-            )
-        };
-        if finished && self.engine.current().is_one_shot() {
-            self.engine.on_one_shot_finished();
-            self.anim_started = Instant::now();
-            self.last_state = self.engine.current();
-        }
-        self.last_sprite = sprite;
-        sprite
-    }
-}
-
 impl eframe::App for PetsonaApp {
     fn logic(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
         #[cfg(feature = "test-hooks")]
@@ -3684,7 +3374,6 @@ impl eframe::App for PetsonaApp {
         }
         self.refresh_pointer(ctx);
         self.poll_tray(ctx);
-        #[cfg(target_os = "macos")]
         self.poll_native_menu(ctx);
         self.poll_menu(ctx);
         self.poll_state_events(ctx);
@@ -3711,60 +3400,18 @@ impl eframe::App for PetsonaApp {
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
-        #[cfg(target_os = "macos")]
         if let Some(window) = _frame.winit_window() {
-            // AppKit needs the non-activating panel mask; winit's
-            // `with_active(false)` only affects initial creation.
-            crate::platform::set_no_activate(window);
-        }
-
-        #[cfg(target_os = "windows")]
-        {
-            use winit::platform::windows::{CornerPreference, WindowExtWindows as _};
-            if let Some(window) = _frame.winit_window() {
-                // Apply the chrome exactly once (and again after a resize):
-                // touching these attributes every frame made Windows repaint
-                // the non-client frame, which is the border that flashed.
-                let chrome_due = self
-                    .resize_settled_at
-                    .is_some_and(|at| at.elapsed() >= Duration::from_millis(200));
-                if !self.window_chrome_ready {
-                    window.set_undecorated_shadow(false);
-                    window.set_border_color(None);
-                    window.set_corner_preference(CornerPreference::DoNotRound);
-                    let changed = crate::platform::strip_frame_styles(window);
-                    if changed {
-                        crate::platform::clear_dwm_frame(window);
-                        crate::platform::enable_transparency(window);
-                    }
-                    // Never activate: an activation repaints the frame state and
-                    // would also steal focus from the user's editor.
-                    crate::platform::set_no_activate(window);
-                    #[cfg(feature = "test-hooks")]
-                    if changed {
-                        self.test_style_reapply_count =
-                            self.test_style_reapply_count.wrapping_add(1);
-                    }
-                    self.window_chrome_ready = true;
-                    self.resize_settled_at = None;
-                } else if chrome_due {
-                    // winit only needs a frame rebuild if Windows actually
-                    // restored the decorated style after a resize. Reapplying
-                    // DWM state unconditionally was the remaining flash risk.
-                    let changed = crate::platform::strip_frame_styles(window);
-                    if changed {
-                        crate::platform::clear_dwm_frame(window);
-                        crate::platform::enable_transparency(window);
-                        crate::platform::set_no_activate(window);
-                        #[cfg(feature = "test-hooks")]
-                        {
-                            self.test_style_reapply_count =
-                                self.test_style_reapply_count.wrapping_add(1);
-                        }
-                    }
-                    self.resize_settled_at = None;
-                }
+            // The shell owns the native window chrome: Win32 keeps the
+            // frameless `WS_POPUP` style and the non-activating flag in place,
+            // macOS re-asserts its non-activating panel mask, and a portable
+            // host does nothing at all.
+            let reapplied = self.platform.present_window(window);
+            #[cfg(feature = "test-hooks")]
+            if reapplied {
+                self.test_style_reapply_count = self.test_style_reapply_count.wrapping_add(1);
             }
+            #[cfg(not(feature = "test-hooks"))]
+            let _ = reapplied;
         }
 
         if !self.fonts_installed {
@@ -3881,7 +3528,12 @@ fn draw_bubble(painter: &egui::Painter, window: egui::Rect, pet: egui::Rect, tex
 }
 
 /// Draw a bubble in the fixed overlay viewport above the pet.
-fn draw_bubble_window(painter: &egui::Painter, window: egui::Rect, text: &str) -> egui::Rect {
+fn draw_bubble_window(
+    painter: &egui::Painter,
+    window: egui::Rect,
+    text: &str,
+    opacity: f32,
+) -> egui::Rect {
     let galley = painter.layout(
         text.to_owned(),
         egui::FontId::proportional(14.0),
@@ -3895,7 +3547,9 @@ fn draw_bubble_window(painter: &egui::Painter, window: egui::Rect, text: &str) -
     let x = (window.center().x - size.x * 0.5).clamp(window.left() + 6.0, max_x);
     let y = bubble_overlay_y(window, size);
     let rect = egui::Rect::from_min_size(egui::pos2(x, y), size);
-    let fill = egui::Color32::from_rgba_unmultiplied(24, 24, 28, 235);
+    let opacity = opacity.clamp(0.0, 1.0);
+    let alpha = |value: u8| (value as f32 * opacity).round() as u8;
+    let fill = egui::Color32::from_rgba_unmultiplied(24, 24, 28, alpha(235));
     painter.rect_filled(rect, egui::CornerRadius::same(10), fill);
     // Keep the bubble free of a bright outline. On Windows the old
     // semi-transparent white stroke read as a visible line along the top edge.
@@ -3912,7 +3566,11 @@ fn draw_bubble_window(painter: &egui::Painter, window: egui::Rect, text: &str) -
         fill,
         egui::Stroke::NONE,
     ));
-    painter.galley(rect.min + padding, galley, egui::Color32::WHITE);
+    painter.galley(
+        rect.min + padding,
+        galley,
+        egui::Color32::from_rgba_unmultiplied(255, 255, 255, alpha(255)),
+    );
     rect
 }
 
@@ -4025,7 +3683,12 @@ mod tests {
     fn test_app(name: &str) -> PetsonaApp {
         let paths = AppPaths::resolve(std::env::temp_dir().join(format!("petsona-test-{name}")));
         let _ = std::fs::remove_dir_all(&paths.config_dir);
-        PetsonaApp::new(paths, AppConfig::default()).expect("app starts")
+        PetsonaApp::new(
+            paths,
+            AppConfig::default(),
+            Arc::new(crate::platform::PortableHost),
+        )
+        .expect("app starts")
     }
 
     fn first_opaque_cell_point(app: &PetsonaApp) -> egui::Vec2 {

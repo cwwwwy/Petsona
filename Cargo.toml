@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/petsona-core", "crates/petsona-app"]
+members = ["crates/petsona-core", "crates/petsona-runtime", "crates/petsona-app", "crates/petsona-shell-windows", "crates/petsona-shell-macos"]
 
 [workspace.package]
 version = "0.1.0"

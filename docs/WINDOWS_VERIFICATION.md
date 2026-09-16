@@ -29,7 +29,7 @@
 powershell -ExecutionPolicy Bypass -File scripts\verify-windows.ps1
 ```
 
-也可以双击 `scripts\verify-windows.cmd`。脚本失败时先解决 Rust 门禁，再做本清单。
+脚本失败时先解决 Rust 门禁，再做本清单。`scripts\windows-smoke.ps1` 是 `-Full` 调用的实现文件，只在定位失败时单独运行。
 MSVC 工具链缺少 `link.exe` 时，可在当前 PowerShell 会话使用 GNU 回退：
 
 ```powershell
@@ -43,14 +43,17 @@ powershell -ExecutionPolicy Bypass -File scripts\verify-windows.ps1
 
 ```powershell
 $env:PETSONA_HOME = Join-Path $env:TEMP "petsona-win-test"
-cargo run -p petsona-app
+cargo run -p petsona-shell-windows
 ```
 
 - 默认数据目录：`%APPDATA%\Petsona`。
 - 覆盖数据目录：`PETSONA_HOME` 指定的目录。
 - 日志：`<数据目录>\logs\petsona.log`，同时输出到终端。
 - 单实例锁：`<数据目录>\petsona.lock`。
-- release 产物：`target\release\petsona.exe`。
+- release 产物：`target\release\petsona-windows.exe`（Windows 外壳二进制，已内嵌 `Petsona.ico`）。
+- 便携包：`powershell -ExecutionPolicy Bypass -File scripts\package-windows.ps1`
+  → `dist\Petsona-windows-x64-<version>.zip`（含 `Petsona.exe`、`Petsona.ico`、`VERSION.txt`、`README.txt`）。
+- 图标重新生成（改过 macOS 图标后）：`powershell -ExecutionPolicy Bypass -File packaging\windows\generate-icon.ps1`。
 - 查看日志：
 
 ```powershell
@@ -71,7 +74,7 @@ Invoke-RestMethod -Method Post -Uri http://127.0.0.1:17872/state `
 
 | # | 操作 | 预期结果 | 当前状态 |
 |---|---|---|---|
-| A1 | 启动 `cargo run -p petsona-app` | 宠物窗口出现；透明背景不是黑底/白底；无标题栏和边框；置顶；任务栏不出现额外宠物窗口 | 通过 |
+| A1 | 启动 `cargo run -p petsona-shell-windows` | 宠物窗口出现；透明背景不是黑底/白底；无标题栏和边框；置顶；任务栏不出现额外宠物窗口 | 通过 |
 | A2 | 看系统托盘 | `Petsona` 图标出现；图标使用当前宠物首帧；鼠标悬停显示 `Petsona` | 通过 |
 | A3 | 单击/右键托盘图标 | 在光标附近弹出专用线程承载的 Win32 原生菜单；菜单四项为打开设置、更换宠物、隐藏/显示宠物、退出 | 代码已完成；实机待确认 |
 | A4 | 点击菜单各项 | 打开设置、切换到宠物页、隐藏/显示宠物、退出分别生效；菜单点击后消失，不留下透明小窗 | 通过；设置开/关已自动化 |
@@ -132,9 +135,10 @@ NOACTIVATE=True
 
 | # | 操作 | 预期结果 | 当前状态 |
 |---|---|---|---|
-| D1 | 运行 release `target\release\petsona.exe` | 不打开控制台窗口；窗口、托盘、日志和退出行为与 debug 一致 | 待实测 |
-| D2 | 检查 exe 图标 | 资源管理器、任务栏和快捷方式显示 `Petsona.ico`，不是默认 Rust 图标 | 待实现 |
-| D3 | 运行 `scripts\package-windows.ps1` | 生成可解压运行的 zip，包含 exe、必要资源和版本信息 | 待实现 |
+| D1 | 运行 release `target\release\petsona-windows.exe` | 不打开控制台窗口；窗口、托盘、日志和退出行为与 debug 一致 | 待实测 |
+| D2 | 检查 exe 图标 | 资源管理器、任务栏和快捷方式显示 `Petsona.ico`，不是默认 Rust 图标 | 已实现（build.rs 内嵌，`ExtractAssociatedIcon` 已验证）；实机 Explorer 观感待确认 |
+| D3 | 运行 `scripts\package-windows.ps1` | 生成可解压运行的 zip，包含 exe、图标、README 和版本信息 | 已实现；`verify-windows.ps1 -Full` 会自动检查 zip 结构，解压运行待实机确认 |
+| D4 | 打 tag `windows-v<version>` | `.github/workflows/release-windows.yml` 跑门禁并上传 zip artifact | 待首次执行 |
 | D4 | 触发 Windows release workflow | GitHub Actions 生成架构包，产物可下载 | 待实现 |
 | D5 | 启用/关闭开机自启 | 写入/删除 HKCU Run 或 Startup 项，下一次登录行为正确 | 待实现 |
 | D6 | 在干净 Windows 用户环境启动 | 不依赖开发目录；首次启动能建立数据目录、日志和宠物库 | 待实测 |
@@ -143,8 +147,8 @@ NOACTIVATE=True
 
 | 日期 | Windows 版本 | 架构/工具链 | 构建方式 | 结论 | 备注 / 日志 |
 |---|---|---|---|---|---|
-|  |  |  | `cargo run -p petsona-app` |  |  |
-|  |  |  | `target\release\petsona.exe` |  |  |
+|  |  |  | `cargo run -p petsona-shell-windows` |  |  |
+|  |  |  | `target\release\petsona-windows.exe` |  |  |
 
 `待实测` 是默认状态，不是失败；只有实际执行并观察到结果后才改为 `✅ 已验证`。
 `待实现` 则表示功能尚未落地，不应写入当前 Windows 基线通过结论。
@@ -165,7 +169,8 @@ NOACTIVATE=True
 - `cargo test --workspace --locked`
 - `cargo build --workspace --release --locked`
 
-`test-hooks` 已落地；Full 模式会对 `petsona-app --features test-hooks` 跑 clippy、测试和 release 构建，避免仅测试模式启用的代码腐化。
+`test-hooks` 已落地；Full 模式会对 `petsona-app` 和 `petsona-shell-windows --features test-hooks`
+跑 clippy、测试和 release 构建，避免仅测试模式启用的代码腐化。
 
 纯逻辑必须先进入单元测试，例如宠物状态机、持续注视状态、菜单工作区夹取、位置持久化、
 自动行走和配置序列化。快速门禁应控制在几分钟内，不启动 GUI。
@@ -193,7 +198,8 @@ NOACTIVATE=True
 
 ### F.3 测试钩子边界
 
-`petsona-app` 已增加编译期 feature `test-hooks`，默认关闭，普通 release 不编译。它只绑定
+`petsona-app` 已增加编译期 feature `test-hooks`，默认关闭，普通 release 不编译；
+`petsona-shell-windows` 通过 `test-hooks = ["petsona-app/test-hooks"]` 转发该 feature。它只绑定
 `127.0.0.1`，要求环境变量提供随机 token，提供：
 
 - 状态快照：窗口可见性、菜单/设置是否打开、独立气泡文本、当前动画与帧、注视方向、
@@ -216,3 +222,52 @@ NOACTIVATE=True
 
 自动化目标不是消灭人工验收，而是把人工从“每次逐条点”缩减为“改动涉及什么，最后只看对应的
 视觉和真实桌面项目”。任何自动化通过都不能替代 `B8`、`C` 节和真实发布环境的最终人工签字。
+
+## G. 本轮回归重点（2026-09-16：平台拆分 + 发布形态）
+
+这一轮把平台后端搬进外壳（`petsona-shell-windows` / `petsona-shell-macos`）、给 exe 内嵌了图标、
+加了便携 zip 和发布 workflow。上面的 A–D 全表太长，因此本轮只需要走下面这些：
+
+准备（约 2 分钟，会自动通过或明确报错）：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\verify-windows.ps1 -Full
+powershell -ExecutionPolicy Bypass -File scripts\package-windows.ps1   # dist\Petsona-windows-x64-0.1.0.zip
+```
+
+开发版（`cargo run -p petsona-shell-windows`）：
+
+| # | 检查 | 关注点 | 状态 |
+|---|---|---|---|
+| G1 | 窗口外观 | 无边框、透明背景、置顶、任务栏无多余窗口 | 待实测 |
+| G2 | 拖动 | 贴边拖动不闪边框、跟手、松手不跳 | 待实测 |
+| G3 | 缩放 | 0.5→2.0 拖动滑块：底部中心不跳、无边框闪、透明处穿透/身体处命中都正确 | 待实测 |
+| G4 | 托盘菜单 | 左/右键托盘：4 项 Win32 原生菜单；**菜单打开时宠物仍在动**；Esc 关闭；点退出立即退出且无残留窗口 | Esc/关闭/连点已修（2026-09-16）；`T3` 自动覆盖弹出/替换/关闭，实机待复测 |
+| G5 | 宠物右键菜单 | 同一原生菜单出现在光标处，不被宠物窗口裁切 | 待实测 |
+| G6 | 设置窗口 | 从菜单打开能直接输入（焦点正常）；关闭再打开正常 | 待实测 |
+| G7 | 气泡 | 无白线；随宠物移动；不改变宠物窗口尺寸；进场为 140ms 淡入（不是 Win32 动画） | 淡入已加（2026-09-16）；观感待复测 |
+| G8 | 后台不冻结 | 菜单/设置开着时宠物动画继续；隐藏/显示后位置和层级一致 | 待实测 |
+
+release + 打包产物（`dist\Petsona-windows-x64-0.1.0.zip` 解压后运行）：
+
+| # | 检查 | 关注点 | 状态 |
+|---|---|---|---|
+| G9 | 无控制台 | 启动不弹黑窗口，行为与 debug 一致 | 待实测 |
+| G10 | exe 图标 | 资源管理器/任务栏/快捷方式显示 Petsona 图标（紫色笑脸），不是默认图标 | 待实测 |
+| G11 | 干净环境 | `$env:PETSONA_HOME` 指向空目录启动：自动建数据目录/日志/宠物库，宠物出现 | 待实测 |
+| G12 | 单实例 | 再启动一次：不出现第二只宠物 | 待实测 |
+
+肉眼项（沿用旧编号）：
+
+| # | 检查 | 关注点 | 状态 |
+|---|---|---|---|
+| G13 | B8 | 真实点击/改缩放/开关设置时宠物周围**没有任何**边框闪动 | 待实测 |
+| G14 | B7 | 记事本保持前台，点/拖宠物都不抢焦点（标题栏不灰、输入不丢） | 待实测 |
+| G15 | B5 | V2 宠物：鼠标停在左右两侧不动 → 转头并保持，移开 → 转回 | 待实测 |
+| G16 | C4/C5 | 125%/150% DPI 屏、全屏窗口、虚拟桌面切换下的清晰度/置顶/命中一致性 | 待实测 |
+
+macOS 侧本轮无需重复验收，但回 mac 时先跑：
+
+```bash
+bash scripts/verify-macos-all.sh
+```

@@ -29,11 +29,11 @@ done
 
 cd "$PETSONA_ROOT"
 
-cargo_args=(build --release --locked -p petsona-app)
-binary_path="$PETSONA_ROOT/target/release/petsona"
+cargo_args=(build --release --locked -p petsona-shell-macos)
+binary_path="$PETSONA_ROOT/target/release/petsona-macos"
 if [[ -n "$TARGET" ]]; then
   cargo_args+=(--target "$TARGET")
-  binary_path="$PETSONA_ROOT/target/$TARGET/release/petsona"
+  binary_path="$PETSONA_ROOT/target/$TARGET/release/petsona-macos"
 fi
 if [[ "${PETSONA_SKIP_BUILD:-0}" == "1" ]]; then
   printf 'Skipping release build because PETSONA_SKIP_BUILD=1\n'

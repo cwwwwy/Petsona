@@ -1,0 +1,49 @@
+name: Windows Release
+
+on:
+  push:
+    tags: ['windows-v*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    runs-on: windows-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.98.0
+          components: rustfmt, clippy
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: windows-release-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: windows-release-cargo-
+
+      - name: Fast gates
+        run: ./scripts/verify-windows.ps1
+
+      - name: Package portable zip
+        run: |
+          if ($env:GITHUB_REF_TYPE -eq 'tag') {
+            $env:PETSONA_VERSION = $env:GITHUB_REF_NAME -replace '^windows-v', ''
+          }
+          ./scripts/package-windows.ps1 -OutputDirectory dist
+
+      - name: Upload Windows artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: Petsona-windows-${{ runner.arch }}
+          path: dist/*.zip
+          if-no-files-found: error

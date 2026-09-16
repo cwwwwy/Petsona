@@ -7,7 +7,7 @@
 set -euo pipefail
 
 PETSONA_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-PETSONA_BINARY="$PETSONA_ROOT/target/release/petsona"
+PETSONA_BINARY="$PETSONA_ROOT/target/release/petsona-macos"
 PETSONA_SMOKE_HOME="$(mktemp -d "${TMPDIR:-/tmp}/petsona-macos-smoke.XXXXXX")"
 PETSONA_STATE_PORT="${PETSONA_SMOKE_STATE_PORT:-17872}"
 PETSONA_HOOK_PORT="${PETSONA_SMOKE_HOOK_PORT:-17873}"
@@ -176,8 +176,8 @@ require_command plutil
 [[ "$(uname -s)" == "Darwin" ]] || fail 'macOS smoke 只能在 macOS 上运行'
 
 if [[ "${PETSONA_SMOKE_SKIP_BUILD:-0}" != "1" ]]; then
-  printf 'Building petsona-app with test hooks...\n'
-  (cd "$PETSONA_ROOT" && cargo build -p petsona-app --release --features test-hooks --locked)
+  printf 'Building petsona-shell-macos with test hooks...\n'
+  (cd "$PETSONA_ROOT" && cargo build -p petsona-shell-macos --release --features test-hooks --locked)
 fi
 [[ -x "$PETSONA_BINARY" ]] || fail "找不到 release 可执行文件：$PETSONA_BINARY"
 

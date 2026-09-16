@@ -2322,18 +2322,12 @@ dependencies = [
  "anyhow",
  "eframe",
  "egui",
- "objc2 0.6.4",
- "objc2-app-kit 0.3.2",
- "objc2-foundation 0.3.2",
  "petsona-core",
- "raw-window-handle",
+ "petsona-runtime",
  "serde",
  "serde_json",
- "time",
  "tracing",
- "tracing-subscriber",
  "tray-icon",
- "windows-sys 0.61.2",
  "winit",
 ]
 
@@ -2353,6 +2347,46 @@ dependencies = [
  "ureq",
  "uuid",
  "zip",
+]
+
+[[package]]
+name = "petsona-runtime"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "petsona-core",
+ "time",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
+name = "petsona-shell-macos"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "egui",
+ "objc2 0.6.4",
+ "objc2-app-kit 0.3.2",
+ "objc2-foundation 0.3.2",
+ "petsona-app",
+ "raw-window-handle",
+ "tracing",
+ "tray-icon",
+ "winit",
+]
+
+[[package]]
+name = "petsona-shell-windows"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "egui",
+ "petsona-app",
+ "raw-window-handle",
+ "tracing",
+ "windows-sys 0.61.2",
+ "winit",
 ]
 
 [[package]]

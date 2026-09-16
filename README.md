@@ -23,15 +23,22 @@ and is no longer part of the workspace.
 ## Workspace
 
 ```text
-crates/petsona-core/   Pet format, animation engine, persona, memory, DeepSeek client
-crates/petsona-app/    egui/eframe desktop application
-legacy/                Previous Tauri app and frontend, reference only
+crates/petsona-core/          Pet format, animation engine, persona, memory, DeepSeek client
+crates/petsona-runtime/       Platform-independent runtime: config, memory, protocol, locks, logs
+crates/petsona-app/           Shared egui UI and the platform::PlatformHost boundary (library)
+crates/petsona-shell-windows/ Win32 shell (binary: petsona-windows)
+crates/petsona-shell-macos/   AppKit shell (binary: petsona-macos)
+legacy/                       Previous Tauri app and frontend, reference only
 ```
+
+Platform code no longer lives in `petsona-app`: each shell implements
+`petsona_app::platform::PlatformHost` and calls `petsona_app::run(host)`.
 
 ## Build
 
 ```powershell
-cargo run -p petsona-app
+cargo run -p petsona-shell-windows   # Windows
+cargo run -p petsona-shell-macos     # macOS
 ```
 
 The Windows MSVC target still requires the MSVC linker. Install Visual Studio
@@ -39,25 +46,30 @@ Build Tools with the "Desktop development with C++" workload before building.
 
 ## Verify
 
-Run the complete automated macOS verification chain from the repository root:
+One entry point per platform, run from the repository root:
 
 ```text
-macOS:  bash scripts/verify-macos-all.sh
-Windows: powershell -ExecutionPolicy Bypass -File scripts\verify-windows.ps1
+macOS:   bash scripts/verify-macos-all.sh               # gates + runtime smoke + package smoke
+         bash scripts/verify-macos-all.sh --gates-only  # fmt / clippy / test / release build
+Windows: powershell -ExecutionPolicy Bypass -File scripts\verify-windows.ps1        # gates
+         powershell -ExecutionPolicy Bypass -File scripts\verify-windows.ps1 -Full  # gates + smoke
 ```
 
-The macOS chain runs Rust gates, runtime smoke, and package-structure smoke.
-The individual commands remain available when diagnosing one layer:
+`scripts/macos-smoke.sh` is the runtime smoke implementation; it stays a separate
+file because it is long and can be rerun against an already-built bundle. The
+package-structure check runs inline in the macOS entry point. Native window interactions still require the manual checks in
+`docs/MACOS_VERIFICATION.md`.
 
-```bash
-bash scripts/verify-macos.sh
-bash scripts/macos-smoke.sh
-scripts/macos-package-smoke.sh
+## Package
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\package-windows.ps1   # dist\Petsona-windows-x64-<version>.zip
+bash scripts/package-macos.sh                                          # dist/Petsona.app + zip
 ```
 
-For a double-click entry point, use `scripts/verify-macos.command` in Finder or
-`scripts\verify-windows.cmd` in Windows Explorer. Native window interactions
-still require the manual checks in `docs/MACOS_VERIFICATION.md`.
+The Windows executable embeds `packaging/windows/Petsona.ico` (built from the
+macOS artwork by `packaging/windows/generate-icon.ps1`); the macOS bundle is
+produced by the matching script with the icon, `Info.plist` and `LSUIElement`.
 
 ## Interactions
 
@@ -121,7 +133,7 @@ Set the API key in the environment:
 
 ```powershell
 $env:DEEPSEEK_API_KEY = "sk-..."
-cargo run -p petsona-app
+cargo run -p petsona-shell-windows
 ```
 
 The settings window can also save the key to the operating system keychain.

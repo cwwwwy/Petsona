@@ -1,0 +1,45 @@
+[package]
+name = "petsona-shell-macos"
+description = "Petsona macOS shell: AppKit window behaviour, input and native menu"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "petsona-macos"
+path = "src/main.rs"
+
+[features]
+default = []
+test-hooks = ["petsona-app/test-hooks"]
+
+[dependencies]
+petsona-app = { path = "../petsona-app" }
+anyhow = { workspace = true }
+tracing = { workspace = true }
+egui = { workspace = true }
+winit = { workspace = true }
+tray-icon = { workspace = true }
+raw-window-handle = { workspace = true }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = { version = "0.6", features = ["std"] }
+objc2-app-kit = { version = "0.3", default-features = false, features = [
+    "std",
+    "NSApplication",
+    "NSEvent",
+    "NSOpenPanel",
+    "NSPanel",
+    "NSScreen",
+    "NSSavePanel",
+    "NSResponder",
+    "NSView",
+    "NSWindow",
+] }
+objc2-foundation = { version = "0.3", default-features = false, features = [
+    "std",
+    "NSArray",
+    "NSGeometry",
+    "NSString",
+    "NSURL",
+] }

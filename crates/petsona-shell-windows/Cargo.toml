@@ -1,0 +1,23 @@
+[package]
+name = "petsona-shell-windows"
+description = "Petsona Windows shell: Win32 window chrome, input hook and native menu"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "petsona-windows"
+path = "src/main.rs"
+
+[features]
+default = []
+test-hooks = ["petsona-app/test-hooks"]
+
+[dependencies]
+petsona-app = { path = "../petsona-app" }
+anyhow = { workspace = true }
+tracing = { workspace = true }
+egui = { workspace = true }
+winit = { workspace = true }
+windows-sys = { workspace = true }
+raw-window-handle = { workspace = true }

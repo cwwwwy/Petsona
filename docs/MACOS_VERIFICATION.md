@@ -27,20 +27,20 @@ xcode-select --install
 
 # 在仓库根目录
 cargo test --workspace
-cargo run -p petsona-app
+cargo run -p petsona-shell-macos
 ```
 
 - 用独立数据目录，避免污染真实数据：
 
 ```bash
-PETSONA_HOME="$HOME/.petsona-mac-test" cargo run -p petsona-app
+PETSONA_HOME="$HOME/.petsona-mac-test" cargo run -p petsona-shell-macos
 ```
 
 - 不设置 `PETSONA_HOME` 时，数据在 `~/Library/Application Support/Petsona/`。
 - 日志同时写入 `logs/petsona.log` 和终端；Finder/LaunchAgent 启动时也可直接查看文件日志：
 
 ```bash
-RUST_LOG=debug cargo run -p petsona-app
+RUST_LOG=debug cargo run -p petsona-shell-macos
 ```
 
 - 单实例锁位于数据目录的 `petsona.lock`；使用不同的 `PETSONA_HOME` 才会启动隔离实例。
@@ -116,7 +116,6 @@ curl -XPOST http://127.0.0.1:17872/state \
 
 ```bash
 ./scripts/package-macos.sh
-./scripts/macos-package-smoke.sh
 ./scripts/install-macos-launch-agent.sh install dist/Petsona.app
 ./scripts/install-macos-launch-agent.sh uninstall
 ```
@@ -136,13 +135,14 @@ NOTARYTOOL_PROFILE="petsona-notary" ./scripts/notarize-macos.sh
 bash scripts/verify-macos-all.sh
 ```
 
-如果只需要定位单层失败，也可以单独运行：
+只需要 Rust 门禁（跳过两个 smoke）时：
 
 ```bash
-bash scripts/verify-macos.sh
-bash scripts/macos-smoke.sh
-scripts/macos-package-smoke.sh
+bash scripts/verify-macos-all.sh --gates-only
 ```
+
+入口脚本内部只调用 `scripts/macos-smoke.sh`（较长，保留独立文件便于单独复现）；
+打包结构检查已经内联在入口脚本里，不再单独提供脚本。
 
 该脚本使用临时 `PETSONA_HOME` 和 `test-hooks` release，自动检查：
 
@@ -153,6 +153,26 @@ scripts/macos-package-smoke.sh
 - 找到 V2 宠物时，持续注视的 `turning → holding → returning → idle` 生命周期和保持帧。
 
 脚本不替代缩放闪动的肉眼观感、真实触控板/托盘点击、菜单勾选外观、Activity Monitor 最终 CPU、Retina/Spaces 和多显示器验收。
+
+### E.2 平台后端搬移后的首次验证（2026-09-16）
+
+2026-09-16 把 macOS 后端从 `petsona-app` 搬到了 `crates/petsona-shell-macos/src/platform.rs`
+（逐行搬运，逻辑未改），`petsona-app` 现在是纯共享 UI 库。这次搬移**只在 Windows 上做过
+`cargo fmt` 与静态审阅**（macOS 目标无法在 Windows 上链接检查：`ring` 需要 macOS C 工具链），
+所以回到 mac 后请先跑：
+
+```bash
+bash scripts/verify-macos-all.sh
+```
+
+一个脚本就够：它先跑 workspace 的 fmt / clippy / test / release 构建（等价于
+`cargo check -p petsona-shell-macos`，并覆盖新外壳），再跑 runtime smoke（内部会构建
+`petsona-macos --features test-hooks`）和打包结构 smoke。
+
+重点回归：托盘菜单（打开设置 / 选择宠物 / 宠物大小 / 隐藏显示 / 退出）、右键宠物菜单、
+设置窗口成为 Key Window、宠物与菜单不抢焦点、缩放几何与底部中心锚点、Escape 关闭菜单、
+导入/导出文件面板、打开宠物库目录。
+
 默认从 `~/.codex/pets`、`~/.unipet/pets` 搜索 V2 宠物；也可以显式指定：
 
 ```bash
@@ -163,4 +183,4 @@ PETSONA_SMOKE_V2_PET_DIR="$HOME/.codex/pets/<pet>" bash scripts/macos-smoke.sh
 
 | 日期 | macOS 版本 | 芯片 | 构建方式 | 结论 | 备注 / 日志 |
 |---|---|---|---|---|---|
-|  |  |  | `cargo run -p petsona-app` |  |  |
+|  |  |  | `cargo run -p petsona-shell-macos` |  |  |

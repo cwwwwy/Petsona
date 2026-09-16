@@ -2,7 +2,9 @@ name: macOS Release
 
 on:
   push:
-    tags: ['v*']
+    # macos-vX.Y.Z is the macOS release track; bare vX.Y.Z stays supported for
+    # the tags created before the split.
+    tags: ['macos-v*', 'v*']
   workflow_dispatch:
 
 permissions:
@@ -23,8 +25,11 @@ jobs:
 
       - name: Package app bundle
         run: |
-          if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
-            PETSONA_VERSION="${GITHUB_REF_NAME#v}" ./scripts/package-macos.sh dist
+          version="${GITHUB_REF_NAME:-}"
+          version="${version#macos-v}"
+          version="${version#v}"
+          if [[ "${GITHUB_REF_TYPE}" == "tag" && -n "$version" ]]; then
+            PETSONA_VERSION="$version" ./scripts/package-macos.sh dist
           else
             ./scripts/package-macos.sh dist
           fi

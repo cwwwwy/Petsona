@@ -1,13 +1,9 @@
 [package]
 name = "petsona-app"
-description = "Petsona desktop pet application"
+description = "Petsona shared egui UI and portable application wiring"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-
-[[bin]]
-name = "petsona"
-path = "src/main.rs"
 
 [features]
 default = []
@@ -15,37 +11,12 @@ test-hooks = ["dep:serde", "dep:serde_json"]
 
 [dependencies]
 petsona-core = { path = "../petsona-core" }
+petsona-runtime = { path = "../petsona-runtime" }
 anyhow = { workspace = true }
 tracing = { workspace = true }
-tracing-subscriber = { workspace = true }
-time = { workspace = true }
 eframe = { workspace = true }
 egui = { workspace = true }
 winit = { workspace = true }
 tray-icon = { workspace = true }
-windows-sys = { workspace = true }
-raw-window-handle = { workspace = true }
 serde = { workspace = true, optional = true }
 serde_json = { workspace = true, optional = true }
-
-[target.'cfg(target_os = "macos")'.dependencies]
-objc2 = { version = "0.6", features = ["std"] }
-objc2-app-kit = { version = "0.3", default-features = false, features = [
-    "std",
-    "NSApplication",
-    "NSEvent",
-    "NSOpenPanel",
-    "NSPanel",
-    "NSScreen",
-    "NSSavePanel",
-    "NSResponder",
-    "NSView",
-    "NSWindow",
-] }
-objc2-foundation = { version = "0.3", default-features = false, features = [
-    "std",
-    "NSArray",
-    "NSGeometry",
-    "NSString",
-    "NSURL",
-] }

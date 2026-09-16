@@ -1,0 +1,7 @@
+// Petsona application icon (Explorer, taskbar, shortcuts).
+//
+// Compiled by crates\petsona-shell-windows\build.rs with rc.exe (MSVC) or
+// windres.exe (GNU). Petsona.ico itself is generated from the macOS artwork by
+// packaging\windows\generate-icon.ps1.
+
+1 ICON "Petsona.ico"

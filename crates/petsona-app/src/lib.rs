@@ -1,25 +1,33 @@
-#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+//! Petsona shared UI crate.
+//!
+//! This crate owns the egui UI, the portable application wiring and the
+//! [`platform::PlatformHost`] boundary. Native window, input and menu behaviour
+//! is provided by the platform shells (`petsona-shell-windows`,
+//! `petsona-shell-macos`).
 
-mod app;
+pub mod app;
 mod fonts;
-mod greeting;
-mod instance_lock;
-mod logging;
-mod platform;
+pub mod platform;
 #[cfg(feature = "test-hooks")]
 mod test_hooks;
-#[cfg(target_os = "windows")]
-mod windows_menu;
+
+use std::sync::Arc;
 
 use petsona_core::config::{AppConfig, AppPaths};
+use petsona_runtime::{instance_lock, logging};
+use platform::PlatformHost;
 
-fn main() -> eframe::Result {
+pub type RunResult = eframe::Result;
+
+/// Run the shared application with a platform backend.
+pub fn run(host: Arc<dyn PlatformHost>) -> RunResult {
     let paths = AppPaths::default();
     if let Err(error) = paths.ensure() {
         eprintln!("cannot prepare Petsona data directory: {error}");
         return Ok(());
     }
     logging::init(&paths.logs_dir);
+    tracing::info!(host = host.name(), "starting Petsona");
 
     let _instance_lock =
         match instance_lock::InstanceLock::acquire(&paths.config_dir.join("petsona.lock")) {
@@ -38,7 +46,7 @@ fn main() -> eframe::Result {
         };
 
     let config = AppConfig::load(&paths.config_file).unwrap_or_default();
-    let app = match app::PetsonaApp::new(paths, config) {
+    let app = match app::PetsonaApp::new(paths, config, host) {
         Ok(app) => app,
         Err(error) => {
             eprintln!("Petsona failed to start: {error:#}");
