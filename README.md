@@ -39,20 +39,20 @@ Build Tools with the "Desktop development with C++" workload before building.
 
 ## Verify
 
-Run all formatting, lint, test and release-linking gates from the repository root:
+Run the complete automated macOS verification chain from the repository root:
 
 ```text
-macOS:  bash scripts/verify-macos.sh
+macOS:  bash scripts/verify-macos-all.sh
 Windows: powershell -ExecutionPolicy Bypass -File scripts\verify-windows.ps1
 ```
 
-On macOS, the optional application smoke test starts the real release app with
-an isolated data directory and verifies the loopback protocol, TTL, settings,
-persistence, bubbles, visibility and (when a V2 pet is available) continuous
-gaze:
+The macOS chain runs Rust gates, runtime smoke, and package-structure smoke.
+The individual commands remain available when diagnosing one layer:
 
 ```bash
+bash scripts/verify-macos.sh
 bash scripts/macos-smoke.sh
+scripts/macos-package-smoke.sh
 ```
 
 For a double-click entry point, use `scripts/verify-macos.command` in Finder or

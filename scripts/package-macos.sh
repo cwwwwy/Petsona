@@ -35,7 +35,11 @@ if [[ -n "$TARGET" ]]; then
   cargo_args+=(--target "$TARGET")
   binary_path="$PETSONA_ROOT/target/$TARGET/release/petsona"
 fi
-cargo "${cargo_args[@]}"
+if [[ "${PETSONA_SKIP_BUILD:-0}" == "1" ]]; then
+  printf 'Skipping release build because PETSONA_SKIP_BUILD=1\n'
+else
+  cargo "${cargo_args[@]}"
+fi
 
 if [[ ! -x "$binary_path" ]]; then
   printf 'Release binary was not found: %s\n' "$binary_path" >&2

@@ -242,6 +242,7 @@ impl Animation {
 /// The strongest side-facing pose is the middle frame of the shipped look
 /// rows.  Keep the calculation relative to the resolved animation so pets
 /// with a different number of drawn frames remain supported.
+#[cfg(test)]
 fn gaze_hold_frame(animation: &Animation) -> usize {
     animation
         .sprites
@@ -538,6 +539,7 @@ struct ActiveOverride {
 struct GazeOverride {
     state: PetState,
     phase: GazePhase,
+    target_frame: usize,
 }
 
 /// Priority state machine.
@@ -589,12 +591,17 @@ impl PetEngine {
         }
     }
 
-    /// Start the V2 look row that turns the pet towards the cursor.
-    ///
-    /// `dx` is the cursor offset from the pet centre in logical pixels. The
-    /// caller keeps the gaze alive until [`Self::release_gaze`] is requested.
+    /// Start a horizontal gaze using the row's default middle pose.
     pub fn glance(&mut self, dx: f32, now: Instant) -> Option<PetState> {
-        let state = PetState::look_towards(dx)?;
+        self.glance_towards(dx, 0.0, now)
+    }
+
+    /// Start a gaze toward a cursor vector. The two V2 look rows contain eight
+    /// directional poses each; use the target frame instead of always holding
+    /// the middle frame. This keeps the original row animation as the turn
+    /// path while exposing all sixteen look-related cells as target poses.
+    pub fn glance_towards(&mut self, dx: f32, dy: f32, now: Instant) -> Option<PetState> {
+        let (state, target_frame) = self.gaze_target(dx, dy)?;
         self.animations.get(&state)?;
 
         if let Some(active) = &self.active {
@@ -613,8 +620,60 @@ impl PetEngine {
         self.gaze = Some(GazeOverride {
             state,
             phase: GazePhase::Turning,
+            target_frame,
         });
         Some(state)
+    }
+
+    /// Resolve a cursor vector to a look row and one of its eight target
+    /// poses. `dy` uses screen coordinates: positive means below the pet.
+    pub fn gaze_target(&self, dx: f32, dy: f32) -> Option<(PetState, usize)> {
+        let state = if dx < 0.0 {
+            PetState::LookRow10
+        } else {
+            PetState::LookRow9
+        };
+        let len = self.animations.get(&state)?.sprites.len();
+        if len == 0 {
+            return None;
+        }
+        let vertical = if dx.abs() < f32::EPSILON {
+            if dy < 0.0 {
+                -1.0
+            } else {
+                1.0
+            }
+        } else {
+            (dy / dx.abs()).clamp(-1.0, 1.0)
+        };
+        let normalized = ((vertical + 1.0) * 0.5 * (len - 1) as f32).round() as usize;
+        let target = if state.look_towards_right() {
+            normalized
+        } else {
+            len - 1 - normalized
+        };
+        Some((state, target.min(len - 1)))
+    }
+
+    /// Retarget an active gaze without waiting for the old return segment.
+    /// Returns true when the visible animation should restart at the new
+    /// target pose.
+    pub fn retarget_gaze(&mut self, dx: f32, dy: f32) -> bool {
+        let Some((state, target_frame)) = self.gaze_target(dx, dy) else {
+            return false;
+        };
+        let Some(gaze) = &mut self.gaze else {
+            return false;
+        };
+        if gaze.state != state {
+            return false;
+        }
+        let changed = gaze.target_frame != target_frame || gaze.phase == GazePhase::Returning;
+        if changed {
+            gaze.target_frame = target_frame;
+            gaze.phase = GazePhase::Turning;
+        }
+        changed
     }
 
     /// Request the return segment of the current gaze.
@@ -660,6 +719,10 @@ impl PetEngine {
         self.gaze_phase().is_some()
     }
 
+    pub fn gaze_target_frame(&self) -> Option<usize> {
+        self.gaze.as_ref().map(|gaze| gaze.target_frame)
+    }
+
     /// Render the active gaze phase. Returning `None` means the return segment
     /// has completed and the engine has already fallen back to its base/event
     /// state.
@@ -669,7 +732,9 @@ impl PetEngine {
             return None;
         }
         let animation = self.animations.get(&gaze.state)?;
-        let hold = gaze_hold_frame(animation);
+        let hold = gaze
+            .target_frame
+            .min(animation.sprites.len().saturating_sub(1));
         let len = animation.sprites.len();
         let turn_end = hold + 1;
         let return_start = turn_end;
@@ -712,7 +777,9 @@ impl PetEngine {
             return None;
         }
         let animation = self.animations.get(&gaze.state)?;
-        let hold = gaze_hold_frame(animation);
+        let hold = gaze
+            .target_frame
+            .min(animation.sprites.len().saturating_sub(1));
         let turn_end = hold + 1;
         match gaze.phase {
             GazePhase::Turning => {

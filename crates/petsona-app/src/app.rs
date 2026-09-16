@@ -6,7 +6,7 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
 use eframe::egui;
-use petsona_core::config::{AppConfig, AppPaths};
+use petsona_core::config::{AppConfig, AppPaths, WindowPosition};
 use petsona_core::deepseek::{save_api_key, DeepSeekClient};
 use petsona_core::memory::{EventKind, PetMemory};
 use petsona_core::persona::{Persona, PersonaStore};
@@ -27,6 +27,9 @@ const BUBBLE_WINDOW_SIZE: egui::Vec2 = egui::vec2(360.0, 220.0);
 const BUBBLE_GAP: f32 = 8.0;
 const BUBBLE_TAIL: f32 = 7.0;
 const BUBBLE_BOTTOM_PADDING: f32 = 2.0;
+const CONVERSATION_TITLE: &str = "Petsona 对话";
+const CONVERSATION_WINDOW_SIZE: egui::Vec2 = egui::vec2(440.0, 220.0);
+const CONVERSATION_GAP: f32 = 10.0;
 const MENU_TITLE: &str = "Petsona 菜单";
 const MENU_WIDTH: f32 = 176.0;
 const MENU_ROW: f32 = 30.0;
@@ -36,10 +39,34 @@ const MENU_SIZE: egui::Vec2 = egui::vec2(MENU_WIDTH, MENU_ROWS * MENU_ROW + MENU
 const ACTIVE_REPAINT: Duration = Duration::from_millis(16);
 const EVENT_POLL_REPAINT: Duration = Duration::from_millis(100);
 const IDLE_REPAINT: Duration = Duration::from_secs(1);
+const SCALE_PRESETS: &[(&str, f32)] = &[
+    ("迷你", 0.5),
+    ("小", 0.75),
+    ("标准", 1.0),
+    ("大", 1.25),
+    ("特大", 1.5),
+    ("超大", 2.0),
+];
+
+fn nearest_scale(value: f32) -> f32 {
+    let value = value.clamp(0.5, 2.0);
+    SCALE_PRESETS
+        .iter()
+        .min_by(|(_, left), (_, right)| {
+            (value - *left)
+                .abs()
+                .partial_cmp(&(value - *right).abs())
+                .unwrap_or(std::cmp::Ordering::Equal)
+        })
+        .map(|(_, value)| *value)
+        .unwrap_or(1.0)
+}
 #[cfg(target_os = "macos")]
 const NATIVE_MENU_OPEN_SETTINGS_ID: &str = "petsona.open-settings";
 #[cfg(target_os = "macos")]
 const NATIVE_MENU_SELECT_PET_PREFIX: &str = "petsona.select-pet:";
+#[cfg(target_os = "macos")]
+const NATIVE_MENU_SCALE_PREFIX: &str = "petsona.scale:";
 #[cfg(target_os = "macos")]
 const NATIVE_MENU_TOGGLE_PET_ID: &str = "petsona.toggle-pet";
 #[cfg(target_os = "macos")]
@@ -59,6 +86,14 @@ pub struct PetsonaApp {
     bubble: Option<Bubble>,
     bubble_window_created: bool,
     bubble_styled: bool,
+    conversation_open: bool,
+    conversation_window_created: bool,
+    conversation_focus_pending: bool,
+    conversation_draft: String,
+    conversation_history: Vec<ConversationTurn>,
+    conversation_rx: Option<Receiver<std::result::Result<String, String>>>,
+    conversation_inflight: bool,
+    conversation_cursor: Option<egui::Pos2>,
     settings_open: bool,
     /// A settings command requests a real activation once the viewport exists.
     /// `with_active` only applies when egui creates the child window, while the
@@ -111,6 +146,7 @@ pub struct PetsonaApp {
     /// Offset from the window origin to the cursor when the drag started.
     drag_grab: Option<egui::Vec2>,
     last_window_pos: Option<egui::Vec2>,
+    start_position_applied: bool,
     tray: Option<tray_icon::TrayIcon>,
     tray_events: Option<Receiver<tray_icon::TrayIconEvent>>,
     #[cfg(target_os = "windows")]
@@ -188,10 +224,17 @@ struct Bubble {
     until: Instant,
 }
 
+#[derive(Debug, Clone)]
+struct ConversationTurn {
+    user: bool,
+    text: String,
+}
+
 #[cfg(target_os = "macos")]
 struct NativeMenu {
     menu: tray_icon::menu::Menu,
     pet_menu: tray_icon::menu::Submenu,
+    scale_menu: tray_icon::menu::Submenu,
     toggle_pet: tray_icon::menu::MenuItem,
 }
 
@@ -207,6 +250,7 @@ enum MenuAction {
 impl PetsonaApp {
     pub fn new(paths: AppPaths, mut config: AppConfig) -> Result<Self> {
         paths.ensure()?;
+        config.window.scale = nearest_scale(config.window.scale);
 
         let personas = PersonaStore::new(paths.personas_dir.clone());
         personas.ensure()?;
@@ -301,6 +345,14 @@ impl PetsonaApp {
             }),
             bubble_window_created: false,
             bubble_styled: false,
+            conversation_open: false,
+            conversation_window_created: false,
+            conversation_focus_pending: false,
+            conversation_draft: String::new(),
+            conversation_history: Vec::new(),
+            conversation_rx: None,
+            conversation_inflight: false,
+            conversation_cursor: None,
             settings_open: false,
             settings_focus_pending: false,
             status: String::new(),
@@ -340,6 +392,7 @@ impl PetsonaApp {
             press_moved: false,
             drag_grab: None,
             last_window_pos: None,
+            start_position_applied: false,
             library,
             pets,
             tray: None,
@@ -447,8 +500,33 @@ impl PetsonaApp {
     fn pet_size(&self) -> egui::Vec2 {
         self.pet
             .as_ref()
-            .map(|pet| pet.cell_size * self.config.window.scale.clamp(0.5, 3.0))
+            .map(|pet| pet.cell_size * self.effective_scale())
             .unwrap_or_else(|| egui::vec2(192.0, 208.0))
+    }
+
+    fn effective_scale(&self) -> f32 {
+        nearest_scale(self.config.window.scale)
+    }
+
+    fn scale_label(&self) -> &'static str {
+        SCALE_PRESETS
+            .iter()
+            .find(|(_, value)| (*value - self.effective_scale()).abs() < f32::EPSILON)
+            .map(|(label, _)| *label)
+            .unwrap_or("标准")
+    }
+
+    fn set_scale_preset(&mut self, value: f32) {
+        let snapped = nearest_scale(value);
+        if (self.config.window.scale - snapped).abs() < f32::EPSILON {
+            return;
+        }
+        self.config.window.scale = snapped;
+        if let Err(error) = self.config.save(&self.paths.config_file) {
+            tracing::warn!(%error, "cannot save pet scale preset");
+        }
+        #[cfg(target_os = "macos")]
+        self.refresh_native_tray_menu();
     }
 
     fn pet_window_size(&self) -> egui::Vec2 {
@@ -472,8 +550,7 @@ impl PetsonaApp {
 
     /// Window scale rounded up to the next quarter step.
     fn stage_scale(&self) -> f32 {
-        let scale = self.config.window.scale.clamp(0.5, 3.0);
-        ((scale * 4.0).ceil() / 4.0).max(0.5)
+        self.effective_scale()
     }
 
     fn apply_viewport(
@@ -494,6 +571,16 @@ impl PetsonaApp {
         let target = egui::vec2(window_size.x.round(), window_size.y.round());
         let previous = self.applied_window_size;
         if previous != Some(target) {
+            let restore_position = if !self.start_position_applied {
+                self.start_position_applied = true;
+                self.config
+                    .window
+                    .start_position
+                    .filter(|position| position.x.is_finite() && position.y.is_finite())
+                    .map(|position| egui::pos2(position.x, position.y))
+            } else {
+                None
+            };
             let mut positioned = false;
             if let Some(window) = frame.winit_window() {
                 if let Ok(position) = window.outer_position() {
@@ -505,7 +592,8 @@ impl PetsonaApp {
                         actual_size.height as f32 / scale,
                     );
                     let anchor = bottom_center_anchor(current, actual_size);
-                    let next = position_for_bottom_center(anchor, target);
+                    let next = restore_position
+                        .unwrap_or_else(|| position_for_bottom_center(anchor, target));
                     crate::platform::set_window_geometry(
                         window,
                         next.x as f64,
@@ -517,6 +605,9 @@ impl PetsonaApp {
                 }
             }
             if !positioned {
+                if let Some(position) = restore_position {
+                    ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(position));
+                }
                 ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(target));
             }
             self.applied_window_size = Some(target);
@@ -532,7 +623,7 @@ impl PetsonaApp {
 
         // Compute the sprite rectangle before borrowing the pet mutably.
         let pet_rect = self.pet_rect(window_size);
-        let scale = self.config.window.scale.clamp(0.5, 3.0);
+        let scale = self.effective_scale();
         let total = window_size;
         let pet = self.pet.as_mut().expect("checked above");
         let cell = pet.cell_size * scale;
@@ -596,6 +687,11 @@ impl PetsonaApp {
             pet_center.x - BUBBLE_WINDOW_SIZE.x * 0.5,
             pet_top - BUBBLE_WINDOW_SIZE.y - BUBBLE_GAP,
         );
+        let bubble_rect_global = egui::Rect::from_min_size(bubble_position, BUBBLE_WINDOW_SIZE);
+        let bubble_hovered = self.pointer.position.is_some_and(|(x, y)| {
+            bubble_rect_global
+                .contains(egui::pos2(x as f32 / scale as f32, y as f32 / scale as f32))
+        });
         let builder = egui::ViewportBuilder::default()
             .with_title(BUBBLE_TITLE)
             .with_inner_size([BUBBLE_WINDOW_SIZE.x, BUBBLE_WINDOW_SIZE.y])
@@ -606,16 +702,29 @@ impl PetsonaApp {
             .with_taskbar(false)
             .with_resizable(false)
             .with_active(false)
-            .with_mouse_passthrough(true)
+            .with_mouse_passthrough(!bubble_hovered)
             .with_visible(true);
+        let mut open_conversation = false;
         ctx.show_viewport_immediate(bubble_id, builder, |ui, _class| {
             egui::CentralPanel::default()
                 .frame(egui::Frame::NONE.fill(egui::Color32::TRANSPARENT))
                 .show(ui, |ui| {
                     let window = ui.max_rect();
-                    draw_bubble_window(ui.painter(), window, &text);
+                    let bubble_rect = draw_bubble_window(ui.painter(), window, &text);
+                    if bubble_hovered {
+                        let reply_rect = egui::Rect::from_min_size(
+                            egui::pos2(bubble_rect.right() - 66.0, bubble_rect.top() + 8.0),
+                            egui::vec2(56.0, 26.0),
+                        );
+                        if ui.put(reply_rect, egui::Button::new("回复")).clicked() {
+                            open_conversation = true;
+                        }
+                    }
                 });
         });
+        if open_conversation {
+            self.open_conversation();
+        }
         self.bubble_window_created = true;
         if !self.bubble_styled {
             self.bubble_styled = crate::platform::set_no_activate_for_title(BUBBLE_TITLE) > 0;
@@ -1101,10 +1210,18 @@ impl PetsonaApp {
 
         ui.collapsing("宠物行为", |ui| {
             ui.horizontal(|ui| {
-                ui.label("大小");
-                ui.add(
-                    egui::Slider::new(&mut self.config.window.scale, 0.5..=2.0).fixed_decimals(2),
-                );
+                ui.label(format!("大小（{}）", self.scale_label()));
+                for (label, value) in SCALE_PRESETS {
+                    if ui
+                        .selectable_label(
+                            (self.effective_scale() - *value).abs() < f32::EPSILON,
+                            *label,
+                        )
+                        .clicked()
+                    {
+                        self.set_scale_preset(*value);
+                    }
+                }
             });
             ui.checkbox(&mut self.config.window.auto_walk.enabled, "启用活动提醒");
             egui::Grid::new("auto-walk-grid")
@@ -1394,6 +1511,12 @@ impl PetsonaApp {
                 self.settings_open = false;
                 self.settings_pos = None;
             }
+            "open-conversation" => self.open_conversation(),
+            "close-conversation" => self.close_conversation(),
+            "set-conversation-text" => {
+                self.conversation_draft = action.text.unwrap_or_default();
+            }
+            "send-conversation" => self.send_conversation(),
             "hide-pet" => self.set_pet_visible(ctx, false),
             "show-pet" => self.set_pet_visible(ctx, true),
             "toggle-pet" => {
@@ -1402,7 +1525,19 @@ impl PetsonaApp {
             }
             "set-scale" => {
                 if let Some(value) = action.value {
-                    self.config.window.scale = (value as f32).clamp(0.5, 2.0);
+                    self.set_scale_preset(value as f32);
+                }
+            }
+            "set-window-position" => {
+                if let (Some(x), Some(y)) = (action.x, action.y) {
+                    ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(egui::pos2(
+                        x as f32, y as f32,
+                    )));
+                }
+            }
+            "save-window-position" => {
+                if let Some(window) = frame.winit_window() {
+                    self.remember_window_position(window);
                 }
             }
             "set-click-through" => {
@@ -1540,8 +1675,9 @@ impl PetsonaApp {
         let (x, y) = found?;
 
         let pet_rect = self.pet_rect(self.pet_window_size());
-        let logical_x = pet_rect.min.x + x * self.config.window.scale;
-        let logical_y = pet_rect.min.y + y * self.config.window.scale;
+        let scale = self.effective_scale();
+        let logical_x = pet_rect.min.x + x * scale;
+        let logical_y = pet_rect.min.y + y * scale;
         let position = window.outer_position().ok()?;
         let scale = window.scale_factor().max(0.1) as f32;
         Some((
@@ -1599,6 +1735,10 @@ impl PetsonaApp {
             status.process_id = std::process::id();
             status.pet_visible = self.pet_visible;
             status.settings_open = self.settings_open;
+            status.conversation_open = self.conversation_open;
+            status.conversation_inflight = self.conversation_inflight;
+            status.conversation_window_created = self.conversation_window_created;
+            status.conversation_history_len = self.conversation_history.len();
             #[cfg(target_os = "macos")]
             {
                 status.settings_key_window =
@@ -1622,6 +1762,7 @@ impl PetsonaApp {
             #[cfg(target_os = "macos")]
             {
                 status.native_menu_ready = self.native_tray_menu.is_some();
+                status.native_menu_checked_pet = self.native_checked_pet_id();
             }
             status.gaze_side = self.glance_side;
             status.gaze_phase = self
@@ -1931,6 +2072,33 @@ impl PetsonaApp {
     }
 
     #[cfg(target_os = "macos")]
+    fn fill_native_scale_menu(scale_menu: &tray_icon::menu::Submenu, active_scale: f32) -> bool {
+        use tray_icon::menu::CheckMenuItem;
+
+        for item in scale_menu.items() {
+            let Some(item) = item.as_check_menuitem() else {
+                return false;
+            };
+            if scale_menu.remove(item).is_err() {
+                return false;
+            }
+        }
+        for (label, value) in SCALE_PRESETS {
+            let item = CheckMenuItem::with_id(
+                format!("{NATIVE_MENU_SCALE_PREFIX}{value:.2}"),
+                *label,
+                true,
+                (*value - active_scale).abs() < f32::EPSILON,
+                None,
+            );
+            if scale_menu.append(&item).is_err() {
+                return false;
+            }
+        }
+        true
+    }
+
+    #[cfg(target_os = "macos")]
     fn build_native_menu(&self) -> Option<NativeMenu> {
         use tray_icon::menu::{IsMenuItem, Menu, MenuItem, Submenu};
 
@@ -1938,6 +2106,10 @@ impl PetsonaApp {
         let open_settings = MenuItem::with_id(NATIVE_MENU_OPEN_SETTINGS_ID, "打开设置", true, None);
         let pets = Submenu::with_id("petsona.select-pet", "选择宠物", !self.pets.is_empty());
         if !Self::fill_native_pet_menu(&pets, &self.pets, &self.active_pet_id()) {
+            return None;
+        }
+        let scale_menu = Submenu::with_id("petsona.scale", "宠物大小", true);
+        if !Self::fill_native_scale_menu(&scale_menu, self.effective_scale()) {
             return None;
         }
         let toggle_pet = MenuItem::with_id(
@@ -1952,7 +2124,7 @@ impl PetsonaApp {
         );
         let quit = MenuItem::with_id(NATIVE_MENU_QUIT_ID, "退出", true, None);
 
-        let items: [&dyn IsMenuItem; 4] = [&open_settings, &pets, &toggle_pet, &quit];
+        let items: [&dyn IsMenuItem; 5] = [&open_settings, &pets, &scale_menu, &toggle_pet, &quit];
         for item in items {
             if let Err(error) = menu.append(item) {
                 tracing::warn!(%error, "cannot build native macOS menu");
@@ -1963,6 +2135,7 @@ impl PetsonaApp {
         Some(NativeMenu {
             menu,
             pet_menu: pets,
+            scale_menu,
             toggle_pet,
         })
     }
@@ -1980,6 +2153,24 @@ impl PetsonaApp {
         if !Self::fill_native_pet_menu(&native_menu.pet_menu, &self.pets, &self.active_pet_id()) {
             tracing::warn!("cannot refresh native macOS pet menu");
         }
+        if !Self::fill_native_scale_menu(&native_menu.scale_menu, self.effective_scale()) {
+            tracing::warn!("cannot refresh native macOS scale menu");
+        }
+    }
+
+    #[cfg(all(target_os = "macos", feature = "test-hooks"))]
+    fn native_checked_pet_id(&self) -> Option<String> {
+        let native_menu = self.native_tray_menu.as_ref()?;
+        native_menu.pet_menu.items().iter().find_map(|item| {
+            let item = item.as_check_menuitem()?;
+            if !item.is_checked() {
+                return None;
+            }
+            item.id()
+                .as_ref()
+                .strip_prefix(NATIVE_MENU_SELECT_PET_PREFIX)
+                .map(str::to_string)
+        })
     }
 
     #[cfg(target_os = "windows")]
@@ -2166,6 +2357,12 @@ impl PetsonaApp {
             let id = id.as_ref();
             if let Some(pet_id) = id.strip_prefix(NATIVE_MENU_SELECT_PET_PREFIX) {
                 self.switch_pet(pet_id);
+                continue;
+            }
+            if let Some(scale) = id.strip_prefix(NATIVE_MENU_SCALE_PREFIX) {
+                if let Ok(scale) = scale.parse::<f32>() {
+                    self.set_scale_preset(scale);
+                }
                 continue;
             }
             match id {
@@ -2363,6 +2560,7 @@ impl PetsonaApp {
             .primary_down
             .unwrap_or_else(|| ctx.input(|input| input.pointer.any_down()));
         if self.pet_dragged && !button_down {
+            self.remember_window_position(window);
             self.pet_dragged = false;
             self.drag_grab = None;
         }
@@ -2410,6 +2608,27 @@ impl PetsonaApp {
         }
     }
 
+    /// Persist the logical outer position after a user drag. The saved value
+    /// is intentionally independent of the current Retina scale so winit can
+    /// restore it as a logical viewport position on the next launch.
+    fn remember_window_position(&mut self, window: &winit::window::Window) {
+        let Ok(position) = window.outer_position() else {
+            return;
+        };
+        let scale = window.scale_factor().max(0.1);
+        let saved = WindowPosition {
+            x: position.x as f32 / scale as f32,
+            y: position.y as f32 / scale as f32,
+        };
+        if self.config.window.start_position == Some(saved) {
+            return;
+        }
+        self.config.window.start_position = Some(saved);
+        if let Err(error) = self.config.save(&self.paths.config_file) {
+            tracing::warn!(%error, "cannot save pet window position");
+        }
+    }
+
     fn cancel_glance(&mut self) {
         self.glance_side = 0;
         if let Some(pet) = &mut self.pet {
@@ -2420,9 +2639,9 @@ impl PetsonaApp {
     fn release_glance(&mut self, now: Instant) {
         self.glance_side = 0;
         if let Some(pet) = &mut self.pet {
-            let visible = pet.engine.gaze_visible();
+            let had_gaze = pet.engine.gaze_direction().is_some();
             let released = pet.engine.release_gaze(now);
-            if released && visible {
+            if released && had_gaze {
                 pet.anim_started = now;
                 pet.last_state = pet.engine.current();
             }
@@ -2495,16 +2714,17 @@ impl PetsonaApp {
         let Some(window) = frame.winit_window() else {
             return;
         };
-        let (Some((cursor_x, cursor_y)), Ok(position), size) = (
-            self.pointer.position,
-            window.outer_position(),
-            window.outer_size(),
-        ) else {
+        let (Ok(position), size) = (window.outer_position(), window.outer_size()) else {
             return;
         };
         let scale = window.scale_factor().max(0.1);
-        let cursor_x = cursor_x / scale;
-        let cursor_y = cursor_y / scale;
+        let (cursor_x, cursor_y) = if let Some(cursor) = self.conversation_cursor {
+            (cursor.x as f64, cursor.y as f64)
+        } else if let Some((cursor_x, cursor_y)) = self.pointer.position {
+            (cursor_x / scale, cursor_y / scale)
+        } else {
+            return;
+        };
         let pet_size = self.pet_size();
         let window_width = size.width as f64 / scale;
         let window_height = size.height as f64 / scale;
@@ -2519,24 +2739,42 @@ impl PetsonaApp {
             self.release_glance(Instant::now());
             return;
         }
-        let dead_zone = pet_size.x as f64 * 0.35;
-        let side = if dx > dead_zone {
-            1
-        } else if dx < -dead_zone {
-            -1
-        } else {
-            0
-        };
-        if side == 0 {
+        let dead_zone = pet_size.x.min(pet_size.y) as f64 * 0.22;
+        if dx.hypot(dy) <= dead_zone {
             self.release_glance(Instant::now());
             return;
         }
+
+        let Some((target_state, _)) = self
+            .pet
+            .as_ref()
+            .and_then(|pet| pet.engine.gaze_target(dx as f32, dy as f32))
+        else {
+            self.release_glance(Instant::now());
+            return;
+        };
+        let side = if target_state.look_towards_right() {
+            1
+        } else {
+            -1
+        };
 
         let existing_direction = self
             .pet
             .as_ref()
             .and_then(|pet| pet.engine.gaze_direction());
         if existing_direction == Some(side) {
+            let retargeted = self
+                .pet
+                .as_mut()
+                .is_some_and(|pet| pet.engine.retarget_gaze(dx as f32, dy as f32));
+            if retargeted {
+                let now = Instant::now();
+                if let Some(pet) = &mut self.pet {
+                    pet.anim_started = now;
+                    pet.last_state = pet.engine.current();
+                }
+            }
             self.glance_side = side;
             return;
         }
@@ -2554,10 +2792,11 @@ impl PetsonaApp {
             return;
         }
         let now = Instant::now();
-        let raised = self
-            .pet
-            .as_mut()
-            .is_some_and(|pet| pet.engine.glance(dx as f32, now).is_some());
+        let raised = self.pet.as_mut().is_some_and(|pet| {
+            pet.engine
+                .glance_towards(dx as f32, dy as f32, now)
+                .is_some()
+        });
         if raised {
             if let Some(pet) = &mut self.pet {
                 pet.anim_started = now;
@@ -2597,7 +2836,7 @@ impl PetsonaApp {
         if !self.config.window.click_through {
             return true;
         }
-        let scale = self.config.window.scale.clamp(0.5, 3.0);
+        let scale = self.effective_scale();
         pet.atlas.mask.opaque_at_cell_dilated(
             pet.last_sprite,
             (local.x - rect.min.x) / scale,
@@ -2803,6 +3042,7 @@ impl PetsonaApp {
 
     fn on_double_click(&mut self) {
         self.last_user_action = Instant::now();
+        self.open_conversation();
         let _ =
             self.memory
                 .record_event(&self.persona.id, EventKind::UserClick, Some("双击".into()));
@@ -2930,6 +3170,264 @@ impl PetsonaApp {
         });
     }
 
+    fn open_conversation(&mut self) {
+        self.conversation_open = true;
+        self.conversation_focus_pending = true;
+        self.conversation_window_created = false;
+    }
+
+    fn close_conversation(&mut self) {
+        self.conversation_open = false;
+        self.conversation_focus_pending = false;
+        self.conversation_cursor = None;
+    }
+
+    fn conversation_history_text(&self) -> String {
+        self.conversation_history
+            .iter()
+            .rev()
+            .take(6)
+            .rev()
+            .map(|turn| {
+                if turn.user {
+                    format!("用户：{}", turn.text)
+                } else {
+                    format!("宠物：{}", turn.text)
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    fn remember_user_preferences(&self, text: &str) {
+        let trimmed = text.trim();
+        let preference = [
+            "我喜欢",
+            "我喜歡",
+            "我偏好",
+            "我习惯",
+            "我習慣",
+            "我不喜欢",
+            "我不喜歡",
+        ]
+        .iter()
+        .any(|prefix| trimmed.starts_with(prefix));
+        if preference && trimmed.chars().count() >= 4 {
+            let _ = self
+                .memory
+                .remember_fact(&self.persona.id, "用户偏好", trimmed, 0.75);
+        }
+    }
+
+    fn send_conversation(&mut self) {
+        let text = self.conversation_draft.trim().to_string();
+        if text.is_empty() || self.conversation_inflight {
+            return;
+        }
+        self.conversation_draft.clear();
+        let _ =
+            self.memory
+                .record_event(&self.persona.id, EventKind::UserMessage, Some(text.clone()));
+        self.remember_user_preferences(&text);
+        self.conversation_history.push(ConversationTurn {
+            user: true,
+            text: text.clone(),
+        });
+        let context = self.memory.build_greeting_context(
+            &self.persona.id,
+            self.config.memory.recent_events,
+            self.config.memory.fact_limit,
+        );
+        let history = self.conversation_history_text();
+        let persona = self.persona.clone();
+        let config = self.config.deepseek.clone();
+        let now_text = greeting::local_now_text();
+        let pet_name = self.pet.as_ref().map(|pet| pet.entry.display_name.clone());
+        let pet_state = self
+            .pet
+            .as_ref()
+            .map(|pet| pet.engine.current().name().to_string())
+            .unwrap_or_else(|| PetState::Idle.name().to_string());
+        let (sender, receiver) = mpsc::channel();
+        self.conversation_rx = Some(receiver);
+        self.conversation_inflight = true;
+        let repaint_context = Arc::clone(&self.repaint_context);
+        thread::spawn(move || {
+            let result = DeepSeekClient::new(config)
+                .and_then(|client| {
+                    client.generate_reply(
+                        &persona,
+                        &context,
+                        &history,
+                        &text,
+                        &now_text,
+                        pet_name.as_deref(),
+                        &pet_state,
+                    )
+                })
+                .map_err(|error| format!("{error:#}"));
+            let _ = sender.send(result);
+            if let Some(ctx) = repaint_context
+                .lock()
+                .ok()
+                .and_then(|context| context.clone())
+            {
+                ctx.request_repaint();
+            }
+        });
+    }
+
+    fn poll_conversation(&mut self) {
+        let received = self
+            .conversation_rx
+            .as_ref()
+            .map(|receiver| receiver.try_recv());
+        match received {
+            Some(Ok(Ok(reply))) => {
+                self.conversation_rx = None;
+                self.conversation_inflight = false;
+                self.conversation_history.push(ConversationTurn {
+                    user: false,
+                    text: reply.clone(),
+                });
+                let _ = self.memory.record_event(
+                    &self.persona.id,
+                    EventKind::PetReaction,
+                    Some(reply.clone()),
+                );
+                self.show_bubble(reply);
+            }
+            Some(Ok(Err(error))) => {
+                self.conversation_rx = None;
+                self.conversation_inflight = false;
+                self.status = error;
+                let fallback = greeting::fallback_greeting(&self.persona);
+                self.conversation_history.push(ConversationTurn {
+                    user: false,
+                    text: fallback.clone(),
+                });
+                let _ = self.memory.record_event(
+                    &self.persona.id,
+                    EventKind::PetReaction,
+                    Some(fallback.clone()),
+                );
+                self.show_bubble(fallback);
+            }
+            Some(Err(TryRecvError::Empty)) | None => {}
+            Some(Err(TryRecvError::Disconnected)) => {
+                self.conversation_rx = None;
+                self.conversation_inflight = false;
+            }
+        }
+    }
+
+    fn show_conversation_viewport(&mut self, ctx: &egui::Context, frame: &eframe::Frame) {
+        let conversation_id = egui::ViewportId::from_hash_of("petsona-conversation");
+        if !self.conversation_open {
+            if self.conversation_window_created {
+                ctx.send_viewport_cmd_to(conversation_id, egui::ViewportCommand::Visible(false));
+                self.conversation_window_created = false;
+            }
+            return;
+        }
+        let Some(window) = frame.winit_window() else {
+            return;
+        };
+        let Ok(position) = window.outer_position() else {
+            return;
+        };
+        let scale = window.scale_factor().max(0.1) as f32;
+        let parent = egui::pos2(position.x as f32 / scale, position.y as f32 / scale);
+        let pet_window = self.pet_window_size();
+        let conversation_position = egui::pos2(
+            parent.x + pet_window.x * 0.5 - CONVERSATION_WINDOW_SIZE.x * 0.5,
+            parent.y + pet_window.y + CONVERSATION_GAP,
+        );
+        let builder = egui::ViewportBuilder::default()
+            .with_title(CONVERSATION_TITLE)
+            .with_inner_size([CONVERSATION_WINDOW_SIZE.x, CONVERSATION_WINDOW_SIZE.y])
+            .with_position([conversation_position.x, conversation_position.y])
+            .with_transparent(true)
+            .with_decorations(false)
+            .with_always_on_top()
+            .with_taskbar(false)
+            .with_resizable(false)
+            .with_active(true)
+            .with_mouse_passthrough(false)
+            .with_visible(true);
+        let mut send = false;
+        let mut close = false;
+        ctx.show_viewport_immediate(conversation_id, builder, |ui, _class| {
+            egui::CentralPanel::default()
+                .frame(egui::Frame::popup(ui.style()).inner_margin(egui::Margin::same(12)))
+                .show(ui, |ui| {
+                    ui.heading("和宠物聊聊");
+                    if !self.conversation_history.is_empty() {
+                        egui::ScrollArea::vertical()
+                            .max_height(72.0)
+                            .stick_to_bottom(true)
+                            .show(ui, |ui| {
+                                for turn in self.conversation_history.iter().rev().take(4).rev() {
+                                    ui.label(if turn.user {
+                                        format!("你：{}", turn.text)
+                                    } else {
+                                        format!("宠物：{}", turn.text)
+                                    });
+                                }
+                            });
+                    }
+                    let output = egui::TextEdit::multiline(&mut self.conversation_draft)
+                        .id_salt("conversation-input")
+                        .desired_rows(3)
+                        .hint_text("输入消息…")
+                        .show(ui);
+                    if let Some(cursor_range) = output.cursor_range {
+                        let cursor = output.galley.pos_from_cursor(cursor_range.primary);
+                        self.conversation_cursor = Some(
+                            conversation_position
+                                + output.galley_pos.to_vec2()
+                                + cursor.min.to_vec2(),
+                        );
+                    } else {
+                        self.conversation_cursor = Some(
+                            conversation_position
+                                + output.response.response.rect.center().to_vec2(),
+                        );
+                    }
+                    ui.horizontal(|ui| {
+                        if ui
+                            .add_enabled(!self.conversation_inflight, egui::Button::new("发送"))
+                            .clicked()
+                        {
+                            send = true;
+                        }
+                        if ui.button("关闭").clicked() {
+                            close = true;
+                        }
+                        if self.conversation_inflight {
+                            ui.spinner();
+                        }
+                    });
+                    if output.response.response.has_focus()
+                        && ui.input(|input| input.key_pressed(egui::Key::Enter))
+                    {
+                        send = true;
+                    }
+                });
+        });
+        self.conversation_window_created = true;
+        if self.conversation_focus_pending {
+            ctx.send_viewport_cmd_to(conversation_id, egui::ViewportCommand::Focus);
+            self.conversation_focus_pending = false;
+        }
+        if send {
+            self.send_conversation();
+        }
+        if close {
+            self.close_conversation();
+        }
+    }
+
     fn expire_bubble(&mut self) {
         if self
             .bubble
@@ -2955,7 +3453,8 @@ impl PetsonaApp {
             }
         };
 
-        if self.pet_dragged || self.walk_until.is_some() || self.menu_open {
+        if self.pet_dragged || self.walk_until.is_some() || self.menu_open || self.conversation_open
+        {
             sooner(ACTIVE_REPAINT);
         }
 
@@ -3190,6 +3689,7 @@ impl eframe::App for PetsonaApp {
         self.poll_menu(ctx);
         self.poll_state_events(ctx);
         self.poll_greeting();
+        self.poll_conversation();
         self.expire_bubble();
         self.update_pet_timers();
         self.update_auto_walk(ctx, frame);
@@ -3302,6 +3802,7 @@ impl eframe::App for PetsonaApp {
             self.draw_pet(ui, window_size);
         }
         self.show_bubble_viewport(ui.ctx(), _frame);
+        self.show_conversation_viewport(ui.ctx(), _frame);
 
         if self.settings_open {
             self.show_settings_viewport(ui.ctx());
@@ -3380,7 +3881,7 @@ fn draw_bubble(painter: &egui::Painter, window: egui::Rect, pet: egui::Rect, tex
 }
 
 /// Draw a bubble in the fixed overlay viewport above the pet.
-fn draw_bubble_window(painter: &egui::Painter, window: egui::Rect, text: &str) {
+fn draw_bubble_window(painter: &egui::Painter, window: egui::Rect, text: &str) -> egui::Rect {
     let galley = painter.layout(
         text.to_owned(),
         egui::FontId::proportional(14.0),
@@ -3412,6 +3913,7 @@ fn draw_bubble_window(painter: &egui::Painter, window: egui::Rect, text: &str) {
         egui::Stroke::NONE,
     ));
     painter.galley(rect.min + padding, galley, egui::Color32::WHITE);
+    rect
 }
 
 fn bubble_overlay_y(window: egui::Rect, bubble_size: egui::Vec2) -> f32 {
@@ -3602,9 +4104,9 @@ mod tests {
         let mut app = test_app("stage");
         for (scale, expected) in [
             (0.5, 0.5),
-            (0.51, 0.75),
+            (0.51, 0.5),
             (1.0, 1.0),
-            (1.26, 1.5),
+            (1.26, 1.25),
             (2.0, 2.0),
         ] {
             app.config.window.scale = scale;
@@ -3614,9 +4116,9 @@ mod tests {
                 app.stage_scale()
             );
         }
-        // The sprite keeps following the raw scale while the stage snaps.
+        // The sprite and window use the same fixed preset scale.
         app.config.window.scale = 1.1;
-        assert!((app.pet_size().x - app.pet_cell_size().x * 1.1).abs() < 0.01);
+        assert!((app.pet_size().x - app.pet_cell_size().x * 1.0).abs() < 0.01);
         assert!(app.pet_window_size().x >= app.pet_size().x);
     }
 }

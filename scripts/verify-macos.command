@@ -2,7 +2,7 @@
 set -uo pipefail
 
 PETSONA_SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-bash "$PETSONA_SCRIPT_DIR/verify-macos.sh"
+bash "$PETSONA_SCRIPT_DIR/verify-macos-all.sh"
 PETSONA_EXIT_CODE=$?
 
 printf '\n'

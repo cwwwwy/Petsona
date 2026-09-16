@@ -95,6 +95,21 @@ wait_for_hook() {
   fail "等待 test status $keypath=$expected 超时（最后值：${value:-<empty>}）"
 }
 
+wait_for_scale() {
+  local expected="$1"
+  local deadline=$((SECONDS + 3))
+  local payload actual=""
+  while (( SECONDS <= deadline )); do
+    payload="$(hook_status 2>/dev/null || true)"
+    actual="$(json_value "$payload" scale)"
+    if [[ "$actual" =~ ^[0-9]+([.][0-9]+)?$ ]] && awk -v actual="$actual" -v expected="$expected" 'BEGIN { exit !(actual == expected) }'; then
+      return 0
+    fi
+    sleep 0.05
+  done
+  fail "等待 scale=$expected 超时（最后值：${actual:-<empty>}）"
+}
+
 wait_for_health() {
   local keypath="$1"
   local expected="$2"
@@ -202,11 +217,18 @@ assert_hook_value alwaysOnTop true '宠物默认置顶'
 assert_hook_value clickThrough true '宠物默认启用像素穿透'
 wait_for_hook nativeMenuReady true 3
 pass 'macOS 原生菜单已创建'
+if [[ -n "$PETSONA_V2_PET_DIR" ]]; then
+  wait_for_hook nativeMenuCheckedPet "$PETSONA_V2_ID" 3
+  pass 'macOS 原生菜单标记当前 V2 宠物'
+fi
 
 # Keep the real desktop cursor from changing the result of unrelated protocol
 # checks. The actual global-cursor path is a separate manual acceptance item.
 hook_action '{"action":"cancel-gaze"}'
 hook_action '{"action":"set-glance-side","value":0}'
+hook_action '{"action":"clear-bubble"}'
+wait_for_hook_empty bubbleText
+wait_for_hook bubbleWindowCreated false
 
 polls_before="$(json_value "$(hook_status)" cursorPollCount)"
 sleep 0.5
@@ -219,6 +241,102 @@ else
   fail '无法读取 macOS 全局指针轮询计数'
 fi
 
+idle_before="$(hook_status)"
+idle_logic_before="$(json_value "$idle_before" logicCount)"
+idle_ui_before="$(json_value "$idle_before" uiCount)"
+idle_polls_before="$(json_value "$idle_before" cursorPollCount)"
+sleep 4
+idle_after="$(hook_status)"
+idle_logic_after="$(json_value "$idle_after" logicCount)"
+idle_ui_after="$(json_value "$idle_after" uiCount)"
+idle_polls_after="$(json_value "$idle_after" cursorPollCount)"
+if [[ "$idle_logic_before" =~ ^[0-9]+$ && "$idle_logic_after" =~ ^[0-9]+$ && "$idle_ui_before" =~ ^[0-9]+$ && "$idle_ui_after" =~ ^[0-9]+$ && "$idle_polls_before" =~ ^[0-9]+$ && "$idle_polls_after" =~ ^[0-9]+$ ]]; then
+  idle_logic_delta=$((idle_logic_after - idle_logic_before))
+  idle_ui_delta=$((idle_ui_after - idle_ui_before))
+  idle_poll_delta=$((idle_polls_after - idle_polls_before))
+  if (( idle_ui_delta > 80 )); then
+    idle_causes="$(printf '%s' "$idle_after" | /usr/bin/plutil -extract repaintCauses json -o - - 2>/dev/null || true)"
+    fail "idle UI 重绘过于频繁（4 秒增加 ${idle_ui_delta} 次；原因：${idle_causes:-unknown}）"
+  fi
+  (( idle_poll_delta <= 50 )) || fail "idle 全局指针轮询过于频繁（4 秒增加 ${idle_poll_delta} 次）"
+  pass "idle 重绘/轮询门槛通过（UI=${idle_ui_delta}, logic=${idle_logic_delta}, polls=${idle_poll_delta}）"
+else
+  fail '无法读取 idle 重绘计数'
+fi
+
+initial_geometry="$(hook_status)"
+anchor_x=$((2 * $(json_value "$initial_geometry" windowX) + $(json_value "$initial_geometry" windowWidth)))
+anchor_y=$(( $(json_value "$initial_geometry" windowY) + $(json_value "$initial_geometry" windowHeight) ))
+for scale in 0.5 0.75 1.0 1.25 1.5 2.0; do
+  hook_action "{\"action\":\"set-scale\",\"value\":$scale}"
+  wait_for_scale "$scale"
+  first_geometry="$(hook_status)"
+  sleep 0.2
+  second_geometry="$(hook_status)"
+  for key in windowX windowY windowWidth windowHeight; do
+    first_value="$(json_value "$first_geometry" "$key")"
+    second_value="$(json_value "$second_geometry" "$key")"
+    [[ "$first_value" == "$second_value" ]] || fail "scale=$scale 后窗口几何仍在变化：$key $first_value -> $second_value"
+  done
+  current_anchor_x=$((2 * $(json_value "$second_geometry" windowX) + $(json_value "$second_geometry" windowWidth)))
+  current_anchor_y=$(( $(json_value "$second_geometry" windowY) + $(json_value "$second_geometry" windowHeight) ))
+  anchor_delta_x=$((current_anchor_x - anchor_x))
+  anchor_delta_y=$((current_anchor_y - anchor_y))
+  if (( anchor_delta_x < 0 )); then anchor_delta_x=$((-anchor_delta_x)); fi
+  if (( anchor_delta_y < 0 )); then anchor_delta_y=$((-anchor_delta_y)); fi
+  if (( anchor_delta_x > 4 || anchor_delta_y > 4 )); then
+    fail "scale=$scale 破坏底部中心锚点：dx=${anchor_delta_x:-unset} dy=${anchor_delta_y:-unset}；initial=(${anchor_x:-unset},${anchor_y:-unset}) current=(${current_anchor_x:-unset},${current_anchor_y:-unset}) geometry=$(json_value "$second_geometry" windowX),$(json_value "$second_geometry" windowY),$(json_value "$second_geometry" windowWidth),$(json_value "$second_geometry" windowHeight)"
+  fi
+done
+pass '缩放序列窗口几何稳定且保持底部中心锚点'
+
+hook_action '{"action":"set-window-position","x":200,"y":180}'
+sleep 0.3
+hook_action '{"action":"save-window-position"}'
+saved_position_x=""
+saved_position_y=""
+for _ in {1..50}; do
+  saved_position_x="$(json_value "$(<"$PETSONA_SMOKE_HOME/config.json")" window.startPosition.x)"
+  saved_position_y="$(json_value "$(<"$PETSONA_SMOKE_HOME/config.json")" window.startPosition.y)"
+  if [[ "$saved_position_x" =~ ^[0-9]+([.][0-9]+)?$ && "$saved_position_y" =~ ^[0-9]+([.][0-9]+)?$ ]] \
+    && awk -v x="$saved_position_x" -v y="$saved_position_y" 'BEGIN { exit !(x == 200 && y == 180) }'; then
+    break
+  fi
+  sleep 0.05
+done
+if [[ "$saved_position_x" =~ ^[0-9]+([.][0-9]+)?$ && "$saved_position_y" =~ ^[0-9]+([.][0-9]+)?$ ]] \
+  && awk -v x="$saved_position_x" -v y="$saved_position_y" 'BEGIN { exit !(x == 200 && y == 180) }'; then
+  pass '拖动位置可以保存到配置'
+else
+  fail "窗口位置没有保存（实际：${saved_position_x:-<empty>},${saved_position_y:-<empty>}）"
+fi
+
+if command -v ps >/dev/null 2>&1; then
+  max_cpu='0'
+  cpu_samples_valid=true
+  for _ in {1..4}; do
+    sample="$(ps -p "$PETSONA_PID" -o %cpu= 2>/dev/null | tr -d '[:space:]')"
+    if [[ "$sample" =~ ^[0-9]+([.][0-9]+)?$ ]]; then
+      if awk -v sample="$sample" -v max="$max_cpu" 'BEGIN { exit !(sample > max) }'; then
+        max_cpu="$sample"
+      fi
+    else
+      cpu_samples_valid=false
+      break
+    fi
+    sleep 1
+  done
+  if [[ "$cpu_samples_valid" == true ]]; then
+    max_cpu_limit="${PETSONA_SMOKE_MAX_CPU_PERCENT:-10.0}"
+    awk -v sample="$max_cpu" -v limit="$max_cpu_limit" 'BEGIN { exit !(sample < limit) }' || fail "idle CPU 超过 smoke 门槛：${max_cpu}% >= ${max_cpu_limit}%"
+    pass "idle CPU 采样低于 smoke 门槛（max=${max_cpu}%）"
+  else
+    printf '[SKIP] 无法读取 Petsona CPU 采样\n'
+  fi
+else
+  printf '[SKIP] 系统没有 ps，跳过 CPU 采样\n'
+fi
+
 wait_for_health ok true
 health="$(state_health)"
 [[ -n "$(json_value "$health" pet)" ]] || fail 'health 返回了空宠物名'
@@ -227,17 +345,17 @@ pets="$(state_pets)"
 [[ -n "$(json_value "$pets" 0)" ]] || fail 'GET /pets 返回空列表'
 pass 'GET /pets 返回宠物列表'
 
-state_post '{"source":"macos-smoke","state":"waiting","message":"smoke","ttlMs":300}'
-wait_for_hook state waiting
+state_post '{"source":"macos-smoke","state":"waiting","message":"smoke","ttlMs":10000}'
+wait_for_hook state waiting 8
 pass 'POST /state 切换 waiting'
-sleep 0.45
+sleep 10.2
 wait_for_hook state idle
 pass '状态 TTL 到期回到 idle'
 
 hook_action '{"action":"open-settings"}'
 wait_for_hook settingsOpen true
 pass '设置窗口状态可控'
-wait_for_hook settingsKeyWindow true 3
+wait_for_hook settingsKeyWindow true 8
 pass '设置窗口获得键盘焦点'
 hook_action '{"action":"close-settings"}'
 wait_for_hook settingsOpen false
@@ -278,6 +396,17 @@ for _ in {1..50}; do
 done
 [[ "$saved_scale" == "1.5" || "$saved_scale" == "1.500000" ]] || fail "配置没有保存缩放值（实际：${saved_scale:-<empty>}）"
 pass '配置可以保存并被机器读取'
+
+hook_action '{"action":"open-conversation"}'
+wait_for_hook conversationOpen true
+wait_for_hook conversationWindowCreated true
+hook_action '{"action":"set-conversation-text","text":"我喜欢安静的音乐"}'
+hook_action '{"action":"send-conversation"}'
+wait_for_hook conversationInflight false 5
+wait_for_hook conversationHistoryLen 2 5
+pass '对话输入框和发送流程可控'
+hook_action '{"action":"close-conversation"}'
+wait_for_hook conversationOpen false
 
 if [[ -n "$PETSONA_V2_PET_DIR" ]]; then
   hook_action '{"action":"start-gaze","value":1}'

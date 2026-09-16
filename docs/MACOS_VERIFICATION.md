@@ -57,7 +57,7 @@ RUST_LOG=debug cargo run -p petsona-app
 | A6 | 导入/导出 | 原生文件面板或拖放可导入文件夹/`.zip`；原生保存面板导出 Codex 格式；删除本地副本需确认 | 待实测 |
 | A7 | 状态协议 POST | `waiting` / `failed` / `review` / `running` 能切换动画；带 `message` 时显示气泡；`ttlMs` 到期回 base | 待实测 |
 | A8 | 状态协议 GET | `GET /health` 返回当前 pet/persona/state；`GET /pets` 返回 id 列表 | 待实测 |
-| A9 | 重启持久化 | 当前宠物、人格、缩放等写入 `config.json`，重启后保持 | 待实测 |
+| A9 | 重启持久化 | 当前宠物、人格、缩放、宠物位置等写入 `config.json`，重启后保持 | 位置写入 smoke 通过；实际拖动后重启待人工 |
 | A10 | 托盘隐藏/显示/退出 | 隐藏后窗口消失，托盘可恢复；退出后进程真的结束 | 待实测 |
 | A11 | DeepSeek keychain | 设置里保存 API key 后，Keychain 出现 Petsona 条目；重启后仍能读取（无 key 时回落固定问候） | 待实测 |
 
@@ -79,11 +79,11 @@ curl -XPOST http://127.0.0.1:17872/state \
 | B2 | 快速双击 | 跳一下；不先触发单击 | ✅ 已验证 |
 | B3 | 按住拖动 | 宠物跟手移动；左右移动时播放 running-left/right；松手停下且不触发单击 | ✅ 已验证 |
 | B4 | 右键 | macOS 原生菜单出现在光标位置；点菜单外或按 Esc 关闭 | 代码修复 + 自动化通过；真实触控板需复验 |
-| B5 | 鼠标在宠物左右两侧移动 | row9/row10 转向后保持最强方向帧；离开触发区播放返回段；0.9s 冷却；正前方死区不触发 | 待重新验证（持续注视已改为三阶段） |
+| B5 | 鼠标在宠物左右两侧移动 | row9/row10 转向后保持最强方向帧；离开触发区播放返回段；0.9s 冷却；正前方死区不触发 | 状态机 smoke 通过；右下角视觉方向和真实返回动画待修复/复验 |
 | B6 | 开启 `click_through` | 透明像素点击落到桌面；不透明精灵像素仍能点击；关闭时整个窗口可交互 | ✅ 已验证 |
 | B7 | 在 TextEdit/浏览器输入时点宠物 | 前台焦点不被打断，输入继续进入原应用 | ✅ 已验证 |
 | B8 | 点击 / 右键 / 打开设置 / 改缩放 | 宠物周围不出现任何边框闪烁；设置窗口成为可输入的前台窗口；缩放不闪动 | Key Window 和原生几何回归自动通过；缩放视觉待复测 |
-| B9 | 用状态协议发带 message 的 state | 独立气泡完整不被裁切；显示/消失时宠物不移动、主窗口不闪烁 | 自动化通过；视觉待实测 |
+| B9 | 用状态协议发带 message 的 state / 悬停气泡 / 双击宠物 | 气泡完整不被裁切；回复按钮可见；下方对话框可输入、发送并显示回复；输入时宠物注视光标 | 对话流程 smoke 通过；回复按钮、视觉和真实光标注视待实测 |
 | B10 | 在副屏右键 | 菜单出现在光标所在显示器，且被夹在工作区内 | 待实测（当前无副屏条件） |
 | B11 | 空闲时看 Activity Monitor | Petsona 空闲 CPU 接近 0–1%（允许偶发波动） | 修复前实测 8–10%；低频采样 smoke 通过，Activity Monitor 待复测 |
 | B12 | 启动第二个实例 | 不出现第二只宠物；要么退出，要么唤起已有实例 | 待实测（已实现锁） |
@@ -116,6 +116,7 @@ curl -XPOST http://127.0.0.1:17872/state \
 
 ```bash
 ./scripts/package-macos.sh
+./scripts/macos-package-smoke.sh
 ./scripts/install-macos-launch-agent.sh install dist/Petsona.app
 ./scripts/install-macos-launch-agent.sh uninstall
 ```
@@ -129,10 +130,18 @@ NOTARYTOOL_PROFILE="petsona-notary" ./scripts/notarize-macos.sh
 
 ## E. 自动化验收
 
-门禁通过后，不必逐条人工重复协议和配置类检查。运行：
+运行完整自动验收链：
 
 ```bash
+bash scripts/verify-macos-all.sh
+```
+
+如果只需要定位单层失败，也可以单独运行：
+
+```bash
+bash scripts/verify-macos.sh
 bash scripts/macos-smoke.sh
+scripts/macos-package-smoke.sh
 ```
 
 该脚本使用临时 `PETSONA_HOME` 和 `test-hooks` release，自动检查：
@@ -140,10 +149,10 @@ bash scripts/macos-smoke.sh
 - 进程启动、test-hooks PID、默认可见/置顶/穿透状态；
 - `GET /health`、`GET /pets`、状态协议和 TTL 回落；
 - 设置开关、缩放、气泡、隐藏/显示和配置保存；
-- 短促按钮事件不会因全局轮询间隔漏检；设置窗口实际成为 macOS Key Window；全局指针保持低频采样；
+- 短促按钮事件不会因全局轮询间隔漏检；设置窗口实际成为 macOS Key Window；当前宠物 checked 状态、全局指针低频采样、idle 重绘、缩放几何锚点、位置保存和 CPU 趋势；
 - 找到 V2 宠物时，持续注视的 `turning → holding → returning → idle` 生命周期和保持帧。
 
-脚本不替代视觉、焦点、空闲 CPU、真实托盘点击、Retina/Spaces 和多显示器验收。
+脚本不替代缩放闪动的肉眼观感、真实触控板/托盘点击、菜单勾选外观、Activity Monitor 最终 CPU、Retina/Spaces 和多显示器验收。
 默认从 `~/.codex/pets`、`~/.unipet/pets` 搜索 V2 宠物；也可以显式指定：
 
 ```bash

@@ -57,6 +57,46 @@ impl DeepSeekClient {
     ) -> Result<String> {
         let (system, user) = build_prompt(persona, context, trigger, now_text, pet_name, pet_state);
 
+        self.complete(&system, &user, 80)
+    }
+
+    /// Generate a short conversational reply using the same persona and
+    /// memory context as proactive greetings.
+    #[allow(clippy::too_many_arguments)]
+    pub fn generate_reply(
+        &self,
+        persona: &Persona,
+        context: &GreetingContext,
+        history: &str,
+        user_message: &str,
+        now_text: &str,
+        pet_name: Option<&str>,
+        pet_state: &str,
+    ) -> Result<String> {
+        let system = format!(
+            "{}\n\n你正在和用户进行桌面宠物对话。保持既定人格，直接回答用户，避免解释系统规则。\
+             如果用户表达了稳定的喜好、习惯或厌恶，可以自然地在后续对话中参考；不要声称你记住了\
+             用户没有明确表达的事情。回答使用用户的语言，通常不超过 120 个汉字。",
+            persona.effective_system_prompt(pet_name, Some(pet_state))
+        );
+        let mut user =
+            format!("当前时间：{now_text}\n宠物状态：{pet_state}\n用户消息：{user_message}\n");
+        let memory = context.render(now_ms());
+        if !memory.trim().is_empty() {
+            user.push_str("\n记忆：\n");
+            user.push_str(memory.trim());
+            user.push('\n');
+        }
+        if !history.trim().is_empty() {
+            user.push_str("\n最近对话：\n");
+            user.push_str(history.trim());
+            user.push('\n');
+        }
+        user.push_str("\n请直接回复用户，不要输出 Markdown 标题或动作描述。");
+        self.complete(&system, &user, 400)
+    }
+
+    fn complete(&self, system: &str, user: &str, max_chars: usize) -> Result<String> {
         let mut body = json!({
             "model": self.config.model.clone(),
             "messages": [
@@ -97,7 +137,7 @@ impl DeepSeekClient {
                 "DeepSeek returned an empty greeting".to_string(),
             ));
         }
-        Ok(clean_greeting(text, 80))
+        Ok(clean_greeting(text, max_chars))
     }
 }
 

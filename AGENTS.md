@@ -34,13 +34,13 @@ cargo fmt --check
 两端完整验证：
 
 ```text
-macOS:  bash scripts/verify-macos.sh
+macOS:  bash scripts/verify-macos-all.sh
 Windows 快速门禁: powershell -ExecutionPolicy Bypass -File scripts\verify-windows.ps1
 Windows 完整门禁: powershell -ExecutionPolicy Bypass -File scripts\verify-windows.ps1 -Full
 Windows smoke: powershell -ExecutionPolicy Bypass -File scripts\windows-smoke.ps1
 ```
 
-也可以在 Finder 双击 `scripts/verify-macos.command`，或在 Windows 资源管理器双击
+也可以在 Finder 双击 `scripts/verify-macos.command`，它会运行完整 macOS 自动验收链；或在 Windows 资源管理器双击
 `scripts\verify-windows.cmd`。脚本负责格式、Clippy、测试和 release 链接；窗口、托盘、菜单与
 点击穿透仍需按 `docs/MACOS_VERIFICATION.md` 或 `docs/WINDOWS_VERIFICATION.md` 检查。
 
@@ -74,8 +74,8 @@ cargo +stable-x86_64-pc-windows-gnu test --workspace
 - 当前分支 `codex/cross`（已推送 origin；验证清单更新尚未提交），比 `main` 多 3 个提交：
   `8398a0d` macOS native menus、`7f48c4b` desktop usability + macOS release flow、
   `20cd2ba` Rename BytePet to Petsona。`main` 在 `af99831`（跨平台 verify 脚本）。
-- 最近一次工作区测试 56 个 core、12 个普通 Mac app 测试通过；`test-hooks` app 测试 14 个通过；本轮 Mac smoke 通过 25 项，包含 Key Window 和低频指针采样检查。
-- 平台验收：macOS A3、B1–B4、B6–B7 曾实测通过；2026-09-15 用户反馈的触控板右键、设置聚焦已修复；用户同时确认透明像素、托盘、设置、全屏和当前 Space 稳定。缩放闪动已改为 macOS 单次原生几何更新，CPU 8–10% 基线已改为低频采样但需 Activity Monitor 复测；真实触控板、菜单勾选外观、缩放视觉和 B11 仍需复验。多屏/Retina 暂缓；B5、B9、B12/B13、A1/A2/A4–A11、真实签名/公证仍待实测。
+- 最近一次工作区测试 56 个 core、12 个普通 Mac app 测试通过；`test-hooks` app 测试 14 个通过；本轮 Mac smoke 通过 31 项，包含 Key Window、低频指针采样、idle 重绘、固定缩放几何、位置保存、对话流程和 CPU 采样检查；`scripts/macos-package-smoke.sh` 通过 bundle/zip/Info.plist/LaunchAgent 静态检查；`scripts/verify-macos-all.sh` 已统一串联三层自动验收。
+- 平台验收：macOS A3、B1–B4、B6–B7 曾实测通过；触控板右键、设置聚焦已修复；固定缩放档位、位置记忆、对话输入/发送、记忆事件和输入框光标驱动注视已实现并由 smoke 覆盖。当前宠物图集的 row9/row10 是 16 个转向目标帧，不是独立的 16 个静态方向；真实注视方向视觉、气泡回复按钮、对话窗口观感和输入时注视仍需实机复验。CPU 仍需 Activity Monitor 复测；多屏/Retina 暂缓；B9、B12/B13、A1/A2/A4–A11、真实签名/公证仍待实测。
 - 菜单决策（2026-09-14）：不引入 WinUI3/Windows App Runtime；macOS 托盘/宠物右键继续使用 AppKit 原生菜单，Windows 改用同进程专用 Win32 原生菜单线程，优先保证性能、主题一致性和零额外运行时。
 - Windows 自动门禁：`scripts\verify-windows.ps1` 已于 2026-09-14 通过（fmt / clippy / test / release）；
   `-Full` 已接入 smoke 和 `test-hooks`，原有检查保持，并新增 T2 原生菜单线程就绪检查。
@@ -199,8 +199,8 @@ Fast + Full 验证全绿；手工清单只剩视觉/真实桌面/多屏/DPI/登�
 - AppKit 非激活窗口样式：宠物和菜单不抢前台焦点；
 - `winit::Window::set_cursor_hittest`：继续由现有 `MousePassthrough` 路径切换点击穿透。
 
-代码已经通过编译、clippy、workspace 测试和 release 构建；smoke 已确认原生菜单可创建、设置窗口为 Key Window、指针采样保持低频；用户已确认透明像素、托盘、设置、全屏和当前 Space 稳定，但缩放视觉和 Activity Monitor CPU 仍需复验；B5 的持续注视改动后需重新确认。
-`scripts/macos-smoke.sh` 可自动检查协议、TTL、设置、Key Window、低频指针采样、持久化、独立气泡、隐藏/显示和 V2 注视生命周期；仍需按
+代码已经通过编译、clippy、workspace 测试和 release 构建；smoke 已确认原生菜单可创建、当前宠物 checked 状态、设置窗口为 Key Window、低频指针采样、idle 重绘、固定缩放几何、位置保存、对话输入/发送流程和 CPU 采样。
+`scripts/macos-smoke.sh` 可自动检查协议、TTL、设置、Key Window、当前宠物 checked 状态、低频指针采样、idle 重绘、固定缩放几何/底部中心锚点、位置保存、CPU 趋势、持久化、独立气泡、对话流程、隐藏/显示和 V2 注视生命周期；`scripts/macos-package-smoke.sh` 可检查 app/zip/Info.plist/LaunchAgent 静态结构；仍需按
 `docs/MACOS_VERIFICATION.md` 实测 B10 多显示器坐标、B11 空闲 CPU，以及 C 节的 Retina/Spaces 行为。
 
 平台差异仍保持如下：
@@ -229,6 +229,7 @@ Fast + Full 验证全绿；手工清单只剩视觉/真实桌面/多屏/DPI/登�
   需要用户的 Developer ID 证书和 `notarytool` profile。
 - **发布工作流**：`.github/workflows/release-macos.yml` 在 tag 或手动触发时生成架构包；默认产物
   未签名，签名/公证需在有凭据的环境中执行。
+- **自动化发布结构检查**：`scripts/macos-package-smoke.sh` 生成临时 app/zip 并检查可执行文件、图标、Bundle ID、`LSUIElement`、Retina 字段和 LaunchAgent 模板；不会安装 LaunchAgent，也不替代真实 Finder/Gatekeeper 验收。
 
 ### 3. 重绘预算（省电）
 
