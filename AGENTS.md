@@ -76,7 +76,12 @@ cargo +stable-x86_64-pc-windows-gnu test --workspace
 ## 协作偏好（重要）
 
 - **用中文交流。**
-- **不要自动 `git add/commit/push`**，需要提交时用户会明确说。
+- **Git 相关操作一律由用户手动执行（2026-09-16 起，用户明确要求）**：AI 只做**只读查询**
+  （`git status` / `log` / `diff` / `remote -v` / `branch -vv`）来判断状态，然后**给出命令让用户自己跑**。
+  不要代为 `add` / `commit` / `push` / 建删分支 / 改 remote / 打 tag / 改仓库设置（`gh repo edit` 等）；
+  只有用户明确说"你来操作"时才例外。
+- **仓库对外元数据要和 Petsona 同步**：改名、改定位、加功能后，除代码外还要检查 GitHub 的仓库名、
+  About 描述、主页、Topics（以及 README 第一段口径）。当前建议值见「GitHub 仓库元数据」一节。
 - **`AGENTS.md` 由 AI 协作者直接维护**：内容可以自己看着改，不需要先征求同意；提交仍按上一条。
 - **本文件是跨会话/跨机器的上下文载体**：新会话先读 AGENTS.md、docs/PET_NATIVE.md、docs/MACOS_VERIFICATION.md、docs/WINDOWS_VERIFICATION.md、docs/WINUI3_MENU.md 和 git log；重要决策和计划要及时写回本文件。
 - **尽量不新增第三方依赖**：能用标准库 / 已有 `windows-sys` 解决的，不要引新 crate。
@@ -88,7 +93,9 @@ cargo +stable-x86_64-pc-windows-gnu test --workspace
 ## 当前状态（2026-09-16）
 
 - 项目已从 BytePet 改名为 **Petsona**；本机仓库目录为 `C:\Users\happyddz\Desktop\Petsona`
-  （原 `Desktop\bytepet` 已不存在）。GitHub remote 仍是 `https://github.com/cwwwwy/bytepet.git`。
+  （原 `Desktop\bytepet` 已不存在）。**GitHub 仓库已于 2026-09-16 重命名为
+  `https://github.com/cwwwwy/Petsona.git`**（旧 `bytepet` 地址由 GitHub 自动重定向，但每台机器都要
+  `git remote set-url origin https://github.com/cwwwwy/Petsona.git` 或 `gh repo rename` 更新一次）。
 - 当前分支 `codex/cross`（已推送 origin），比 `main` 多 7 个提交；最新提交是
   `5619f84` `feat: add pet scale presets and conversation UI`。`main` 在 `af99831`（跨平台 verify 脚本）。
 - 平台架构决策（2026-09-16）：采用「共享 `petsona-core` / `petsona-runtime` + 独立平台 UI 外壳」；Windows 和 macOS 可以独立发布和独立规划，但不拆仓库、不维护长期平台开发分支。目标见 `docs/PLATFORM_ARCHITECTURE.md`。
@@ -104,8 +111,9 @@ cargo +stable-x86_64-pc-windows-gnu test --workspace
   A1–A7、A10–A12 通过，A8/A9 的协议层已由 smoke 自动通过，A13 属长测；B1–B6、B9、B10、B12–B14 通过，
   B5 的持续注视共享状态机已实现，Windows 实机仍需验证；B7 已加入 `WM_MOUSEACTIVATE -> MA_NOACTIVATE` 守卫，B8 已加入 `WM_STYLECHANGING` 守卫，并修复缩放底部中心锚点与命中掩码缩放；B11 已改为低层鼠标事件唤醒并缓存坐标，真实桌面 CPU/GPU 仍需实机确认；B7/B8 的肉眼/真实输入仍需实机确认；
   C1 通过，C2/C3 待 Phase 2，C4–C5 待实测，C6 的宠物窗口与菜单样式已自动化通过。
-- 分支策略（2026-09-14）：用户暂不提交 PR、不合并 `main`，继续在 `codex/cross` 上开发；
-  合并时机由用户决定。
+- 分支策略（2026-09-16 更新）：`codex/cross` 已快进合并进 `main`，本地和远程分支都已删除；
+  现在**直接在 `main` 上开发**（见文末「Git 工作流」）。需要试验性改动时开短期分支，
+  合并后立即删除，不长期保留平台分支。
 - 改名决策（2026-09-14）：**不提供 BytePet → Petsona 数据迁移**，开发验证阶段接受从零开始，
   不读取旧 config/personas/memory/pets。
 - CI：`pull_request` → main、`push` tag `v*`、`workflow_dispatch`；直接推 `main` 不跑；
@@ -155,6 +163,20 @@ macOS 的 `macos-smoke.sh` / `package-macos.sh` 已改用 `petsona-macos`。
 
 新增平台能力时的做法：先在 trait 里加一个**带默认实现**的方法（默认行为 = winit/egui 回退），
 再在对应外壳里 override。`petsona-app` 不允许再出现 `#[cfg(target_os = ...)]`。
+
+## GitHub 仓库元数据（2026-09-16）
+
+- 仓库名：`cwwwwy/Petsona`（2026-09-16 由 `bytepet` 改名，旧地址 GitHub 自动重定向；
+  各机器仍应 `git remote set-url origin https://github.com/cwwwwy/Petsona.git`）。
+- About 描述（建议，英文，GitHub 上限 350 字符）：
+  `Rust-only desktop pet for Windows & macOS — Codex pet packs, native menus, persona + light memory. No Node/WebView.`
+- Topics（建议）：`rust` `desktop-pet` `egui` `eframe` `windows` `macos` `codex` `tray-icon`
+- 主页：暂时留空，有官网/演示页再填。
+- 修改方式（两种都行）：GitHub 网页仓库首页 About 区域 → 齿轮 → 填描述/主页/Topics → Save；
+  或命令行 `gh repo edit --description "..." --add-topic rust --add-topic desktop-pet ...`。
+- 已核对与 Petsona 口径一致、无需改动的地方：README 标题与首段、各 crate 包名（`petsona-*`）、
+  数据目录（`%APPDATA%\Petsona` / `~/Library/Application Support/Petsona`）、macOS bundle id
+  （`com.petsona.desktop`）。`legacy/` 里保留旧 BytePet 代码作为参考，不做改名。
 
 ## Windows 开发计划（2026-09-14，修订 2）
 
