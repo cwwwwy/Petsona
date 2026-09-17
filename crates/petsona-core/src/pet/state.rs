@@ -239,78 +239,37 @@ impl Animation {
     }
 }
 
-/// The strongest side-facing pose is the middle frame of the shipped look
-/// rows.  Keep the calculation relative to the resolved animation so pets
-/// with a different number of drawn frames remain supported.
-#[cfg(test)]
-fn gaze_hold_frame(animation: &Animation) -> usize {
-    animation
-        .sprites
-        .len()
-        .saturating_sub(1)
-        .min(animation.sprites.len() / 2)
+/// Look rows are pose tables, not turn/return timelines. The middle frame is
+/// the neutral, front-facing pose for the row; cursor gaze animates directly
+/// between this pose and the requested pose.
+const GAZE_FRAME_MS: f32 = 70.0;
+
+fn gaze_neutral_frame(animation: &Animation) -> usize {
+    animation.sprites.len().saturating_sub(1) / 2
 }
 
-fn segment_total_ms(animation: &Animation, start: usize, end: usize) -> f32 {
-    animation
-        .durations_ms
-        .get(start..end)
-        .unwrap_or_default()
-        .iter()
-        .map(|duration| duration.max(1.0))
-        .sum()
+/// Return the discrete pose for a transition and whether it has reached its
+/// destination. Index direction is preserved, so up/down gaze moves through
+/// the row in the correct visual order.
+fn gaze_segment_frame(from: usize, to: usize, elapsed_ms: f32) -> (usize, bool) {
+    let distance = from.abs_diff(to);
+    if distance == 0 {
+        return (to, true);
+    }
+    let step = ((elapsed_ms.max(0.0) / GAZE_FRAME_MS).floor() as usize).min(distance);
+    let frame = if to >= from { from + step } else { from - step };
+    (frame, step >= distance)
 }
 
-/// Return a sprite from a non-looping slice of an animation.
-fn segment_sprite_at(
-    animation: &Animation,
-    start: usize,
-    end: usize,
-    elapsed_ms: f32,
-) -> Option<u32> {
-    if start >= end || end > animation.sprites.len() {
-        return None;
-    }
-    let mut elapsed = elapsed_ms.max(0.0);
-    for index in start..end {
-        let duration = animation
-            .durations_ms
-            .get(index)
-            .copied()
-            .unwrap_or(1.0)
-            .max(1.0);
-        if elapsed < duration {
-            return animation.sprites.get(index).copied();
-        }
-        elapsed -= duration;
-    }
-    animation.sprites.get(end - 1).copied()
-}
-
-/// Time until the next frame boundary in a non-looping animation slice.
-fn segment_next_frame_after(
-    animation: &Animation,
-    start: usize,
-    end: usize,
-    elapsed_ms: f32,
-) -> Duration {
-    if start >= end || end > animation.sprites.len() {
-        return Duration::from_secs(1);
-    }
-    let mut elapsed = elapsed_ms.max(0.0);
-    for index in start..end {
-        let duration = animation
-            .durations_ms
-            .get(index)
-            .copied()
-            .unwrap_or(1.0)
-            .max(1.0);
-        if elapsed < duration {
-            return Duration::from_millis((duration - elapsed).ceil().max(1.0) as u64);
-        }
-        elapsed -= duration;
-    }
-    Duration::from_millis(1)
+fn gaze_next_frame_after(elapsed_ms: f32) -> Duration {
+    let elapsed = elapsed_ms.max(0.0);
+    let remainder = elapsed % GAZE_FRAME_MS;
+    let wait = if remainder <= f32::EPSILON {
+        GAZE_FRAME_MS
+    } else {
+        GAZE_FRAME_MS - remainder
+    };
+    Duration::from_millis(wait.ceil().max(1.0) as u64)
 }
 
 /// Official Codex per-row frame durations (milliseconds).
@@ -545,7 +504,10 @@ struct ActiveOverride {
 struct GazeOverride {
     state: PetState,
     phase: GazePhase,
+    from_frame: usize,
     target_frame: usize,
+    neutral_frame: usize,
+    current_frame: usize,
 }
 
 /// Priority state machine.
@@ -608,7 +570,8 @@ impl PetEngine {
     /// path while exposing all sixteen look-related cells as target poses.
     pub fn glance_towards(&mut self, dx: f32, dy: f32, now: Instant) -> Option<PetState> {
         let (state, target_frame) = self.gaze_target(dx, dy)?;
-        self.animations.get(&state)?;
+        let animation = self.animations.get(&state)?;
+        let neutral_frame = gaze_neutral_frame(animation);
 
         if let Some(active) = &self.active {
             let expired = active.expires_at.is_some_and(|at| now >= at);
@@ -616,17 +579,13 @@ impl PetEngine {
                 return None;
             }
         }
-        if self.gaze.is_some() {
-            // The app only starts a new gaze after the previous one has
-            // returned to the front. This prevents a fast cursor crossing
-            // from cutting the return segment in half.
-            return None;
-        }
-
         self.gaze = Some(GazeOverride {
             state,
             phase: GazePhase::Turning,
+            from_frame: neutral_frame,
             target_frame,
+            neutral_frame,
+            current_frame: neutral_frame,
         });
         Some(state)
     }
@@ -668,16 +627,28 @@ impl PetEngine {
         let Some((state, target_frame)) = self.gaze_target(dx, dy) else {
             return false;
         };
+        let Some(animation) = self.animations.get(&state) else {
+            return false;
+        };
+        let neutral_frame = gaze_neutral_frame(animation);
         let Some(gaze) = &mut self.gaze else {
             return false;
         };
-        if gaze.state != state {
-            return false;
-        }
-        let changed = gaze.target_frame != target_frame || gaze.phase == GazePhase::Returning;
+        let same_row = gaze.state == state;
+        let changed =
+            !same_row || gaze.target_frame != target_frame || gaze.phase == GazePhase::Returning;
         if changed {
-            gaze.target_frame = target_frame;
+            let from_frame = if same_row {
+                gaze.current_frame
+            } else {
+                neutral_frame
+            };
+            gaze.state = state;
             gaze.phase = GazePhase::Turning;
+            gaze.from_frame = from_frame;
+            gaze.target_frame = target_frame;
+            gaze.neutral_frame = neutral_frame;
+            gaze.current_frame = from_frame;
         }
         changed
     }
@@ -690,6 +661,8 @@ impl PetEngine {
         if gaze.phase == GazePhase::Returning {
             return false;
         }
+        gaze.from_frame = gaze.current_frame;
+        gaze.target_frame = gaze.neutral_frame;
         gaze.phase = GazePhase::Returning;
         true
     }
@@ -733,45 +706,34 @@ impl PetEngine {
     /// has completed and the engine has already fallen back to its base/event
     /// state.
     pub fn gaze_sprite_at(&mut self, elapsed_ms: f32) -> Option<u32> {
-        let gaze = self.gaze?;
-        if self.current() != gaze.state {
+        let current = self.current();
+        let gaze = self.gaze.as_mut()?;
+        if current != gaze.state {
             return None;
         }
         let animation = self.animations.get(&gaze.state)?;
-        let hold = gaze
-            .target_frame
-            .min(animation.sprites.len().saturating_sub(1));
-        let len = animation.sprites.len();
-        let turn_end = hold + 1;
-        let return_start = turn_end;
-
-        match gaze.phase {
-            GazePhase::Turning => {
-                let turn_total = segment_total_ms(animation, 0, turn_end);
-                if elapsed_ms >= turn_total {
-                    if let Some(active) = &mut self.gaze {
-                        active.phase = GazePhase::Holding;
-                    }
-                    animation.sprites.get(hold).copied()
-                } else {
-                    segment_sprite_at(animation, 0, turn_end, elapsed_ms)
-                }
-            }
-            GazePhase::Holding => animation.sprites.get(hold).copied(),
-            GazePhase::Returning => {
-                if return_start >= len {
+        if animation.sprites.is_empty() {
+            self.gaze = None;
+            return None;
+        }
+        let (from_frame, to_frame) = match gaze.phase {
+            GazePhase::Turning => (gaze.from_frame, gaze.target_frame),
+            GazePhase::Holding => (gaze.target_frame, gaze.target_frame),
+            GazePhase::Returning => (gaze.from_frame, gaze.neutral_frame),
+        };
+        let (frame, done) = gaze_segment_frame(from_frame, to_frame, elapsed_ms);
+        gaze.current_frame = frame.min(animation.sprites.len().saturating_sub(1));
+        if done {
+            match gaze.phase {
+                GazePhase::Turning => gaze.phase = GazePhase::Holding,
+                GazePhase::Returning => {
                     self.gaze = None;
                     return None;
                 }
-                let return_total = segment_total_ms(animation, return_start, len);
-                if elapsed_ms >= return_total {
-                    self.gaze = None;
-                    None
-                } else {
-                    segment_sprite_at(animation, return_start, len, elapsed_ms)
-                }
+                GazePhase::Holding => {}
             }
         }
+        animation.sprites.get(gaze.current_frame).copied()
     }
 
     /// Time until the next visible gaze frame changes. Holding has no frame
@@ -782,28 +744,18 @@ impl PetEngine {
         if self.current() != gaze.state {
             return None;
         }
-        let animation = self.animations.get(&gaze.state)?;
-        let hold = gaze
-            .target_frame
-            .min(animation.sprites.len().saturating_sub(1));
-        let turn_end = hold + 1;
-        match gaze.phase {
-            GazePhase::Turning => {
-                Some(segment_next_frame_after(animation, 0, turn_end, elapsed_ms))
-            }
-            GazePhase::Holding => Some(Duration::from_secs(1)),
-            GazePhase::Returning => {
-                if turn_end >= animation.sprites.len() {
-                    Some(Duration::from_millis(1))
-                } else {
-                    Some(segment_next_frame_after(
-                        animation,
-                        turn_end,
-                        animation.sprites.len(),
-                        elapsed_ms,
-                    ))
-                }
-            }
+        let (from_frame, to_frame) = match gaze.phase {
+            GazePhase::Turning => (gaze.from_frame, gaze.target_frame),
+            GazePhase::Holding => (gaze.target_frame, gaze.target_frame),
+            GazePhase::Returning => (gaze.from_frame, gaze.neutral_frame),
+        };
+        let (_, done) = gaze_segment_frame(from_frame, to_frame, elapsed_ms);
+        if gaze.phase == GazePhase::Holding {
+            Some(Duration::from_secs(1))
+        } else if done {
+            Some(Duration::from_millis(1))
+        } else {
+            Some(gaze_next_frame_after(elapsed_ms))
         }
     }
 
@@ -1082,24 +1034,25 @@ mod tests {
         let mut e = engine(11);
         let now = Instant::now();
         let animation = e.animation(PetState::LookRow9).unwrap().clone();
-        let hold = gaze_hold_frame(&animation);
-        let turn_total = segment_total_ms(&animation, 0, hold + 1);
-        let return_total = segment_total_ms(&animation, hold + 1, animation.sprites.len());
+        let neutral = gaze_neutral_frame(&animation);
+        let (_, target) = e.gaze_target(10.0, -40.0).expect("upper-right pose");
+        let distance = neutral.abs_diff(target) as f32;
+        let transition_ms = distance * GAZE_FRAME_MS;
 
-        assert_eq!(e.glance(40.0, now), Some(PetState::LookRow9));
+        assert_eq!(e.glance_towards(10.0, -40.0, now), Some(PetState::LookRow9));
         assert_eq!(e.gaze_phase(), Some(GazePhase::Turning));
-        assert_eq!(e.gaze_sprite_at(0.0), Some(animation.sprites[0]));
-        assert_eq!(e.gaze_sprite_at(turn_total), Some(animation.sprites[hold]));
-        assert_eq!(e.gaze_phase(), Some(GazePhase::Holding));
+        assert_eq!(e.gaze_sprite_at(0.0), Some(animation.sprites[neutral]));
         assert_eq!(
-            e.gaze_sprite_at(turn_total + return_total + 10_000.0),
-            Some(animation.sprites[hold])
+            e.gaze_sprite_at(transition_ms + 1.0),
+            Some(animation.sprites[target])
         );
+        assert_eq!(e.gaze_phase(), Some(GazePhase::Holding));
+        assert_eq!(e.gaze_sprite_at(10_000.0), Some(animation.sprites[target]));
 
         assert!(e.release_gaze(now));
         assert_eq!(e.gaze_phase(), Some(GazePhase::Returning));
-        assert_eq!(e.gaze_sprite_at(0.0), Some(animation.sprites[hold + 1]));
-        assert_eq!(e.gaze_sprite_at(return_total), None);
+        assert_eq!(e.gaze_sprite_at(0.0), Some(animation.sprites[target]));
+        assert_eq!(e.gaze_sprite_at(transition_ms + 1.0), None);
         assert_eq!(e.current(), PetState::Idle);
         assert_eq!(e.gaze_phase(), None);
     }

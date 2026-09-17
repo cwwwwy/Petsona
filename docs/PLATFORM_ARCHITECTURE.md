@@ -17,7 +17,7 @@ crates/
   petsona-runtime/       配置、宠物会话、日志、实例锁、问候
   petsona-app/           共享 egui UI + PlatformHost 边界（纯库，无二进制）
     src/app.rs           应用生命周期与 eframe 协调
-    src/app/             bubble / conversation / settings / interaction / menus / pets / test_hooks / geometry
+    src/app/             bubble / shadow / conversation / settings / interaction / menus / pets / test_hooks / geometry
   petsona-shell-windows/ Win32 外壳（bin petsona-windows；autostart / no_activate 已拆出）
   petsona-shell-macos/   AppKit 外壳（bin petsona-macos）
 ```

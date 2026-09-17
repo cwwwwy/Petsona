@@ -65,12 +65,14 @@ MSVC 缺 `link.exe` 的 GNU 回退写在 `docs/WINDOWS_VERIFICATION.md`。
 
 - 仓库：`C:\Users\happyddz\Desktop\Petsona`；分支 `main`，与 `origin/main` 同步，工作区干净。
 - 最新提交：`1af1a80` `refactor: remove legacy tree and split app UI modules`。
-- 2026-09-17 已完成并推送：设置焦点回跳修复；输入框改为单行输入 + ↑；Esc 关闭和宠物影子开关动画；
+- 2026-09-17 已完成并推送：设置焦点回跳修复；输入框改为极简输入 + ↑；Esc 关闭和宠物影子开关动画；
   气泡本体点击回复；删除 `legacy/`；`petsona-app` 按功能拆成 `app/` 子模块。
 - Rust 门禁（fmt / clippy / test）与 Windows `verify-windows.ps1 -Full` 已通过。
 - 清理第二批（2026-09-17，未提交）：CJK 字体候选路径改由 `PlatformHost::cjk_font_candidates` 提供；
   Windows 外壳拆出 `autostart.rs` 和 `no_activate.rs`；移除 smoke 的 `~/.unipet/pets` 回退；
   CI 保持只在 PR / tag / 手动触发时运行，不因 `main` push 触发；macOS release 打包前跑 Rust 门禁。
+- 交互修复（2026-09-17，未提交）：注视改为方向姿势表 + 中性帧返回；宠物下方增加固定小影子和
+  悬停编辑按钮；输入框缩小到约 300pt、支持自动换行增高、Enter 发送、Shift+Enter 换行、Esc 关闭。
 - GitHub 仓库：`https://github.com/cwwwwy/Petsona.git`（2026-09-16 由 bytepet 改名；
   旧地址自动重定向，其他机器仍需 `git remote set-url origin ...` 更新一次）。
 - 测试基线：`cargo test --workspace` 全绿（core / app / runtime / shell-windows；
@@ -122,8 +124,9 @@ MSVC 缺 `link.exe` 的 GNU 回退写在 `docs/WINDOWS_VERIFICATION.md`。
 - 开机自启（Windows）：`HKCU\Software\Microsoft\Windows\CurrentVersion\Run` 的 `Petsona` =
   `"<exe 路径>"`；测试可用 `PETSONA_AUTOSTART_VALUE_NAME` 换一个值名。
 - 状态协议：`127.0.0.1:17872`，`POST /state`、`GET /health`、`GET /pets`；`ttlMs: 0` 表示不过期。
-- 宠物帧数按图集实际绘制推断（发行版 V2 的 idle 实际画 7 帧，官方表写 6）；row9 = 右转、
-  row10 = 左转（依据与测量方法见 `pet/state.rs` 注释和 `pet_inspect`）。
+- 宠物帧数按图集实际绘制推断（发行版 V2 的 idle 实际画 7 帧，官方表写 6）；row9 = 右侧方向
+  姿势表、row10 = 左侧方向姿势表，每行中间帧是中性姿势；依据与测量方法见 `pet/state.rs` 和
+  `pet_inspect`。
 - 日志：数据目录 `logs/petsona.log`；单实例锁：数据目录 `petsona.lock`。
 - release profile：`lto = "thin"`、`codegen-units = 1`、`strip = true`、`panic = "abort"`。
 - Windows 打包产物：`dist\Petsona-windows-x64-<version>.zip`（含 exe、图标、VERSION、README）；
@@ -141,18 +144,19 @@ MSVC 缺 `link.exe` 的 GNU 回退写在 `docs/WINDOWS_VERIFICATION.md`。
 - **气泡 / 输入框“从侧面滑入”是 DWM 显示过渡**：必须在窗口第一次显示前设置
   `DWMWA_TRANSITIONS_FORCEDISABLED`（先隐藏创建 warm-up → 设属性 → 再显示）。该属性读不回来，
   自动化靠探针 + smoke B9。
-- **进场动画是自绘的**：气泡从下往上 8px / 160ms；输入框从宠物脚下的阴影放大，
-  关闭时缩回阴影（240ms / 200ms）。不再通过移动 / 改变窗口几何做输入框动画。
+- **进场动画是自绘的**：气泡从下往上 8px / 160ms；影子悬停 180ms 变为编辑按钮，
+  输入框从按钮位置展开、关闭时缩回（220ms / 180ms）。不再通过移动 / 改变窗口几何做输入框动画。
   气泡底部 `BUBBLE_BOTTOM_PADDING` 与窗口 `BUBBLE_WINDOW_GAP` 是成对常量，改一处必须改另一处。
-- **输入框是单一轻量组件**：只保留单行输入和向上箭头发送按钮；没有标题、历史、关闭按钮或 spinner。
-  Esc 关闭；点击气泡本体（不是额外的“回复”按钮）或双击宠物打开。组件由原生透明窗口承载但仍由 egui
-  自绘，不引入 Win32 `EDIT` / WinUI3 子控件，以保留透明和缩放动画。
+- **输入框是单一轻量组件**：固定小影子始终显示在宠物下方；悬停变为圆形编辑按钮；点击按钮展开
+  小型输入框，只保留输入框和向上箭头发送按钮。输入框宽度约 300pt，文字自动换行并增高；
+  Enter 发送、Shift+Enter 换行、Esc 关闭。组件由原生透明窗口承载但仍由 egui 自绘，不引入 Win32
+  `EDIT` / WinUI3 子控件，以保留透明和缩放动画。
 - **Win32 菜单打开设置时不能恢复旧前台**：菜单线程在 `打开设置` / `更换宠物` 命令后跳过
   `SetForegroundWindow(previous)`；`WindowsHost::confirm_settings_focus` 在设置窗出现后重新确认前台，
   避免“聚焦后立刻失去焦点”。后台脚本会话受 Windows 前台锁限制，焦点观感仍需实机确认。
-- **V2 注视优先于 locomotion**：look-row-9/10 优先级 20 > running-left/right 的 10，且“光标不离开就不放”。
-  鼠标停在宠物上时，协议发的 `running-left/right` 会被注视盖住（设计如此，有单测）；
-  smoke A8 先把光标移到对面角落再跑协议状态。
+- **V2 注视是方向姿势表**：look-row-9/10 每帧是目标姿势，不是 turn/return 时间线；
+  同一行内从中性/当前帧沿帧序移动到目标，换方向时直接重定向，离开触发区回到中性帧。
+  优先级 20 > running-left/right 的 10；smoke A8 先把光标移到对面角落再跑协议状态。
 - **转向姿态会让命中像素变透明**：光标移到宠物上 → 它转头 → 当前帧像素变了 → 窗口变穿透 → 点不到。
   修法：`cursor_over_pet` 先测当前帧，再回退 idle 全帧并集掩码；回归测试
   `a_look_pose_still_keeps_the_resting_body_clickable`。

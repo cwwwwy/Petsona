@@ -1,6 +1,7 @@
 use super::geometry::{
     clamp_rect_to_work_area, monitor_for_point, monitor_for_rect, PhysicalMonitor,
 };
+use super::shadow::shadow_hit_rect;
 use super::*;
 
 impl PetsonaApp {
@@ -412,51 +413,38 @@ impl PetsonaApp {
     }
 
     #[cfg(feature = "test-hooks")]
+    #[cfg(feature = "test-hooks")]
     pub(super) fn update_test_glance(&mut self, side: i8) {
         if side == 0 {
             self.release_glance(Instant::now());
             return;
         }
 
-        let existing_direction = self
-            .pet
-            .as_ref()
-            .and_then(|pet| pet.engine.gaze_direction());
-        if existing_direction == Some(side) {
-            self.glance_side = side;
-            return;
-        }
-        if existing_direction.is_some() {
-            self.release_glance(Instant::now());
-            return;
-        }
-        if self
-            .last_glance_at
-            .is_some_and(|last| last.elapsed() < Duration::from_millis(900))
-        {
-            self.glance_side = 0;
-            return;
-        }
-
         let now = Instant::now();
         let dx = if side < 0 { -1.0 } else { 1.0 };
-        let raised = self
-            .pet
-            .as_mut()
-            .is_some_and(|pet| pet.engine.glance(dx, now).is_some());
-        if raised {
-            self.glance_side = side;
-            self.last_glance_at = Some(now);
+        let changed = self.pet.as_mut().is_some_and(|pet| {
+            if pet.engine.gaze_direction().is_some() {
+                pet.engine.retarget_gaze(dx, 0.0)
+            } else {
+                pet.engine.glance(dx, now).is_some()
+            }
+        });
+        if changed {
             if let Some(pet) = &mut self.pet {
                 pet.anim_started = now;
                 pet.last_state = pet.engine.current();
             }
         }
+        self.glance_side = side;
+        if changed {
+            self.last_glance_at = Some(now);
+        }
     }
 
-    /// Let the V2 look rows follow the cursor. The turn stops on the strongest
-    /// side-facing frame while the cursor remains in the trigger region; once
-    /// it leaves, the row's return segment plays back to the base pose.
+    /// Let the V2 look rows follow the cursor. The pose table is addressed
+    /// directly; moving between poses animates along the row, and releasing
+    /// returns to the neutral middle frame before falling back to the base
+    /// animation.
     pub(super) fn update_glance(&mut self, frame: &eframe::Frame) {
         if self.settings_open || !self.pet_visible || self.pet_dragged {
             self.cancel_glance();
@@ -496,7 +484,6 @@ impl PetsonaApp {
         let pet_top = position.y as f64 / scale + (window_height - pet_size.y as f64).max(0.0);
         let dx = cursor_x - (pet_left + pet_size.x as f64 * 0.5);
         let dy = cursor_y - (pet_top + pet_size.y as f64 * 0.5);
-        // Only glance when the cursor is actually near the pet.
         let reach = pet_size.x.max(pet_size.y) as f64 * 2.5;
         if dx.abs() > reach || dy.abs() > reach {
             self.release_glance(Instant::now());
@@ -521,53 +508,24 @@ impl PetsonaApp {
         } else {
             -1
         };
-
-        let existing_direction = self
-            .pet
-            .as_ref()
-            .and_then(|pet| pet.engine.gaze_direction());
-        if existing_direction == Some(side) {
-            let retargeted = self
-                .pet
-                .as_mut()
-                .is_some_and(|pet| pet.engine.retarget_gaze(dx as f32, dy as f32));
-            if retargeted {
-                let now = Instant::now();
-                if let Some(pet) = &mut self.pet {
-                    pet.anim_started = now;
-                    pet.last_state = pet.engine.current();
-                }
-            }
-            self.glance_side = side;
-            return;
-        }
-        if existing_direction.is_some() {
-            // If the cursor crosses directly from one trigger region to the
-            // other, finish the old return segment before starting a new turn.
-            self.release_glance(Instant::now());
-            return;
-        }
-        if self
-            .last_glance_at
-            .is_some_and(|last| last.elapsed() < Duration::from_millis(900))
-        {
-            self.glance_side = 0;
-            return;
-        }
         let now = Instant::now();
-        let raised = self.pet.as_mut().is_some_and(|pet| {
-            pet.engine
-                .glance_towards(dx as f32, dy as f32, now)
-                .is_some()
+        let changed = self.pet.as_mut().is_some_and(|pet| {
+            if pet.engine.gaze_direction().is_some() {
+                pet.engine.retarget_gaze(dx as f32, dy as f32)
+            } else {
+                pet.engine
+                    .glance_towards(dx as f32, dy as f32, now)
+                    .is_some()
+            }
         });
-        if raised {
+        if changed {
             if let Some(pet) = &mut self.pet {
                 pet.anim_started = now;
                 pet.last_state = pet.engine.current();
             }
-            self.glance_side = side;
             self.last_glance_at = Some(now);
         }
+        self.glance_side = side;
     }
 
     /// Rectangle of the scaled pet sprite inside the window.
@@ -711,6 +669,16 @@ impl PetsonaApp {
             (true, Some(position)) => position,
             _ => polled_local,
         };
+        // The shadow is an interactive edit button. Do not let its clicks or
+        // drags leak into the pet underneath it.
+        if shadow_hit_rect(window_size).contains(local) {
+            self.press_origin = None;
+            self.press_started_at = None;
+            self.press_moved = false;
+            self.pet_dragged = false;
+            self.drag_grab = None;
+            return;
+        }
         let over_pet = self.cursor_over_pet(window_size, local);
         let now = Instant::now();
 

@@ -1,17 +1,20 @@
 use super::geometry::{ease_out, entry_progress, lerp, smoothstep};
+use super::shadow::SHADOW_CENTER_OFFSET;
 use super::*;
 
 const CONVERSATION_TITLE: &str = "Petsona 对话";
-pub(super) const CONVERSATION_PILL_WIDTH: f32 = 420.0;
-pub(super) const CONVERSATION_PILL_HEIGHT: f32 = 56.0;
-const CONVERSATION_OVERLAY_PADDING: f32 = 12.0;
-pub(super) const CONVERSATION_GAP: f32 = 10.0;
+pub(super) const CONVERSATION_PILL_WIDTH: f32 = 300.0;
+pub(super) const CONVERSATION_GAP: f32 = 8.0;
+const CONVERSATION_WINDOW_PADDING: f32 = 12.0;
+const CONVERSATION_ANCHOR_Y: f32 = 18.0;
+const CONVERSATION_BUTTON_SIZE: f32 = 34.0;
+const CONVERSATION_MIN_INPUT_HEIGHT: f32 = 36.0;
+const CONVERSATION_MAX_INPUT_HEIGHT: f32 = 104.0;
 /// The conversation window grows out of the shadow under the pet and collapses
 /// back into it when it closes.
-pub(super) const CONVERSATION_ENTRY: Duration = Duration::from_millis(240);
-pub(super) const CONVERSATION_EXIT: Duration = Duration::from_millis(200);
-const CONVERSATION_COLLAPSED_SCALE: f32 = 0.06;
-const CONVERSATION_SHADOW_Y_OFFSET: f32 = 3.0;
+pub(super) const CONVERSATION_ENTRY: Duration = Duration::from_millis(220);
+pub(super) const CONVERSATION_EXIT: Duration = Duration::from_millis(180);
+const CONVERSATION_COLLAPSED_SCALE: f32 = 0.12;
 
 impl PetsonaApp {
     pub(super) fn open_conversation(&mut self) {
@@ -205,22 +208,16 @@ impl PetsonaApp {
         let scale = window.scale_factor().max(0.1) as f32;
         let parent = egui::pos2(position.x as f32 / scale, position.y as f32 / scale);
         let pet_window = self.pet_window_size();
-        // The overlay starts at the pet's top edge and includes the pet plus
-        // the composer below it. Keeping both in one transparent viewport lets
-        // the composer travel to the pet shadow without moving/resizing an OS
-        // window every animation frame.
-        let overlay_size = conversation_overlay_size(pet_window);
-        let conversation_position = egui::pos2(
-            parent.x + pet_window.x * 0.5 - overlay_size.x * 0.5,
-            parent.y,
-        );
-        // First appearance: create the window hidden and let the shell disable
-        // the system's show/hide transition before it is ever visible, so the
-        // only motion is our own entry animation.
+        let window_size = conversation_window_size();
+        let shadow_center =
+            parent + egui::vec2(pet_window.x * 0.5, pet_window.y - SHADOW_CENTER_OFFSET);
+        let conversation_position =
+            shadow_center - egui::vec2(window_size.x * 0.5, CONVERSATION_ANCHOR_Y);
+
         if !self.conversation_window_warmed {
             let builder = egui::ViewportBuilder::default()
                 .with_title(CONVERSATION_TITLE)
-                .with_inner_size([overlay_size.x, overlay_size.y])
+                .with_inner_size([window_size.x, window_size.y])
                 .with_position([conversation_position.x, conversation_position.y])
                 .with_transparent(true)
                 .with_decorations(false)
@@ -231,14 +228,8 @@ impl PetsonaApp {
                 .with_visible(false);
             ctx.show_viewport_immediate(conversation_id, builder, |_ui, _class| {});
             self.conversation_window_warmed = true;
-            let _ = self
-                .platform
-                .prepare_activatable_popup_window(CONVERSATION_TITLE);
             return;
         }
-        // Re-assert this every visible frame: winit can re-apply the decorated
-        // style when it patches a viewport (for example while toggling mouse
-        // passthrough or resizing after a pet-scale change).
         let _ = self
             .platform
             .prepare_activatable_popup_window(CONVERSATION_TITLE);
@@ -263,18 +254,21 @@ impl PetsonaApp {
             return;
         }
 
-        let pill_width = CONVERSATION_PILL_WIDTH.min(overlay_size.x - 24.0);
+        let pill_width =
+            CONVERSATION_PILL_WIDTH.min(window_size.x - CONVERSATION_WINDOW_PADDING * 2.0);
+        let input_width =
+            (pill_width - CONVERSATION_WINDOW_PADDING * 2.0 - CONVERSATION_BUTTON_SIZE - 6.0)
+                .max(80.0);
+        let rows = conversation_input_rows(&self.conversation_draft, input_width);
+        let input_height = (rows as f32 * 20.0 + 12.0)
+            .clamp(CONVERSATION_MIN_INPUT_HEIGHT, CONVERSATION_MAX_INPUT_HEIGHT);
+        let pill_height = input_height + CONVERSATION_WINDOW_PADDING * 2.0;
         let pill_rect = egui::Rect::from_center_size(
             egui::pos2(
-                overlay_size.x * 0.5,
-                pet_window.y + CONVERSATION_GAP + CONVERSATION_PILL_HEIGHT * 0.5,
+                window_size.x * 0.5,
+                CONVERSATION_ANCHOR_Y + CONVERSATION_GAP + pill_height * 0.5,
             ),
-            egui::vec2(pill_width, CONVERSATION_PILL_HEIGHT),
-        );
-        // The pet shadow is the origin/destination of the composer animation.
-        let shadow_center = egui::pos2(
-            overlay_size.x * 0.5,
-            pet_window.y - CONVERSATION_SHADOW_Y_OFFSET,
+            egui::vec2(pill_width, pill_height),
         );
         let visual_scale = if self.conversation_open {
             lerp(CONVERSATION_COLLAPSED_SCALE, 1.0, progress)
@@ -286,10 +280,11 @@ impl PetsonaApp {
         } else {
             1.0 - progress
         };
+        let anchor = egui::pos2(window_size.x * 0.5, CONVERSATION_ANCHOR_Y);
         let animated_center = if self.conversation_open {
-            shadow_center.lerp(pill_rect.center(), progress)
+            anchor.lerp(pill_rect.center(), progress)
         } else {
-            pill_rect.center().lerp(shadow_center, progress)
+            pill_rect.center().lerp(anchor, progress)
         };
         let transform = egui::emath::TSTransform::new(
             animated_center.to_vec2() - pill_rect.center().to_vec2() * visual_scale,
@@ -300,9 +295,10 @@ impl PetsonaApp {
         let pointer_in_pill = self.pointer.position.is_some_and(|(x, y)| {
             global_pill_rect.contains(egui::pos2(x as f32 / scale, y as f32 / scale))
         });
+
         let builder = egui::ViewportBuilder::default()
             .with_title(CONVERSATION_TITLE)
-            .with_inner_size([overlay_size.x, overlay_size.y])
+            .with_inner_size([window_size.x, window_size.y])
             .with_position([conversation_position.x, conversation_position.y])
             .with_transparent(true)
             .with_decorations(false)
@@ -310,35 +306,15 @@ impl PetsonaApp {
             .with_taskbar(false)
             .with_resizable(false)
             .with_active(true)
-            // Outside the resting pill, the transparent overlay must not
-            // intercept clicks meant for the pet. Windows wakes on mouse move,
-            // so this switches back to interactive before a click lands.
             .with_mouse_passthrough(!(interactive && pointer_in_pill))
             .with_visible(true);
         let mut send = false;
         let mut close = false;
         ctx.show_viewport_immediate(conversation_id, builder, |ui, _class| {
-            // Capture these before TextEdit runs: it may consume Enter/Escape
-            // while the input has focus.
             let enter_pressed =
                 ui.input(|input| input.key_pressed(egui::Key::Enter) && !input.modifiers.shift);
             let escape_pressed =
                 self.conversation_open && ui.input(|input| input.key_pressed(egui::Key::Escape));
-            // The shadow fades in as the pill collapses and fades out as the
-            // pill grows, giving the transition a clear point of origin.
-            let shadow_alpha = if self.conversation_open {
-                (1.0 - progress) * 0.55
-            } else {
-                progress * 0.55
-            };
-            if shadow_alpha > 0.001 {
-                ui.painter().add(egui::Shape::ellipse_filled(
-                    shadow_center,
-                    egui::vec2(pill_width * 0.16, 4.0),
-                    egui::Color32::from_rgba_unmultiplied(0, 0, 0, (shadow_alpha * 255.0) as u8),
-                ));
-            }
-
             ui.scope_builder(egui::UiBuilder::new().max_rect(pill_rect), |ui| {
                 ui.set_opacity(opacity);
                 ui.with_visual_transform(transform, |ui| {
@@ -352,68 +328,69 @@ impl PetsonaApp {
                             egui::Color32::from_rgba_unmultiplied(255, 255, 255, 20),
                         ))
                         .corner_radius(18)
-                        .inner_margin(egui::Margin::symmetric(8, 8))
+                        .inner_margin(egui::Margin::symmetric(
+                            CONVERSATION_WINDOW_PADDING as i8,
+                            CONVERSATION_WINDOW_PADDING as i8,
+                        ))
                         .show(ui, |ui| {
-                            ui.set_min_size(egui::vec2(pill_width - 16.0, 40.0));
+                            ui.set_min_size(egui::vec2(
+                                pill_width - CONVERSATION_WINDOW_PADDING * 2.0,
+                                input_height,
+                            ));
                             ui.spacing_mut().item_spacing.x = 6.0;
-                            ui.horizontal_centered(|ui| {
-                                let input_width = (ui.available_width() - 42.0).max(80.0);
-                                ui.allocate_ui_with_layout(
-                                    egui::vec2(input_width, 36.0),
-                                    egui::Layout::left_to_right(egui::Align::Center),
-                                    |ui| {
-                                        ui.set_min_height(36.0);
-                                        let output = egui::TextEdit::singleline(
-                                            &mut self.conversation_draft,
-                                        )
-                                        .id_salt("conversation-input")
-                                        .desired_width(ui.available_width())
-                                        .frame(egui::Frame::NONE)
-                                        .margin(egui::Margin::symmetric(4, 8))
-                                        .text_color(egui::Color32::from_rgb(245, 245, 247))
-                                        .hint_text(
-                                            egui::RichText::new("输入消息…")
-                                                .color(egui::Color32::from_rgb(150, 150, 160)),
-                                        )
-                                        .show(ui);
-                                        if let Some(cursor_range) = output.cursor_range {
-                                            let cursor =
-                                                output.galley.pos_from_cursor(cursor_range.primary);
-                                            self.conversation_cursor = Some(
-                                                conversation_position
-                                                    + output.galley_pos.to_vec2()
-                                                    + cursor.min.to_vec2(),
-                                            );
-                                        } else {
-                                            self.conversation_cursor = Some(
-                                                conversation_position
-                                                    + output
-                                                        .response
-                                                        .response
-                                                        .rect
-                                                        .center()
-                                                        .to_vec2(),
-                                            );
-                                        }
-
-                                        if interactive && self.conversation_input_focus_pending {
-                                            output.response.response.request_focus();
-                                            self.conversation_input_focus_pending = false;
-                                        }
-                                        if interactive
-                                            && output.response.response.has_focus()
-                                            && enter_pressed
-                                        {
-                                            send = true;
-                                        }
-                                    },
-                                );
+                            ui.horizontal(|ui| {
+                                let output = ui
+                                    .allocate_ui_with_layout(
+                                        egui::vec2(input_width, input_height),
+                                        egui::Layout::top_down(egui::Align::Min),
+                                        |ui| {
+                                            ui.set_min_height(input_height);
+                                            egui::TextEdit::multiline(&mut self.conversation_draft)
+                                                .id_salt("conversation-input")
+                                                .desired_width(ui.available_width())
+                                                .desired_rows(rows)
+                                                .frame(egui::Frame::NONE)
+                                                .margin(egui::Margin::symmetric(4, 6))
+                                                .text_color(egui::Color32::from_rgb(245, 245, 247))
+                                                .hint_text(
+                                                    egui::RichText::new("输入消息…").color(
+                                                        egui::Color32::from_rgb(150, 150, 160),
+                                                    ),
+                                                )
+                                                .show(ui)
+                                        },
+                                    )
+                                    .inner;
+                                if let Some(cursor_range) = output.cursor_range {
+                                    let cursor =
+                                        output.galley.pos_from_cursor(cursor_range.primary);
+                                    self.conversation_cursor = Some(
+                                        conversation_position
+                                            + output.galley_pos.to_vec2()
+                                            + cursor.min.to_vec2(),
+                                    );
+                                } else {
+                                    self.conversation_cursor = Some(
+                                        conversation_position
+                                            + output.response.response.rect.center().to_vec2(),
+                                    );
+                                }
+                                if interactive && self.conversation_input_focus_pending {
+                                    output.response.response.request_focus();
+                                    self.conversation_input_focus_pending = false;
+                                }
+                                if interactive
+                                    && output.response.response.has_focus()
+                                    && enter_pressed
+                                {
+                                    send = true;
+                                }
 
                                 let can_send = interactive
                                     && !self.conversation_inflight
                                     && !self.conversation_draft.trim().is_empty();
                                 let arrow = egui::Button::new(
-                                    egui::RichText::new("↑").size(20.0).color(if can_send {
+                                    egui::RichText::new("↑").size(18.0).color(if can_send {
                                         egui::Color32::WHITE
                                     } else {
                                         egui::Color32::from_rgba_unmultiplied(255, 255, 255, 90)
@@ -425,8 +402,11 @@ impl PetsonaApp {
                                     egui::Color32::from_rgba_unmultiplied(255, 255, 255, 16)
                                 })
                                 .stroke(egui::Stroke::NONE)
-                                .corner_radius(18)
-                                .min_size(egui::vec2(36.0, 36.0));
+                                .corner_radius(CONVERSATION_BUTTON_SIZE * 0.5)
+                                .min_size(egui::vec2(
+                                    CONVERSATION_BUTTON_SIZE,
+                                    CONVERSATION_BUTTON_SIZE,
+                                ));
                                 if ui.add_enabled(can_send, arrow).clicked() {
                                     send = true;
                                 }
@@ -438,6 +418,7 @@ impl PetsonaApp {
                 close = true;
             }
         });
+
         self.conversation_window_created = true;
         if self.conversation_focus_pending {
             ctx.send_viewport_cmd_to(conversation_id, egui::ViewportCommand::Focus);
@@ -452,10 +433,21 @@ impl PetsonaApp {
     }
 }
 
-pub(super) fn conversation_overlay_size(pet_window: egui::Vec2) -> egui::Vec2 {
+pub(super) fn conversation_window_size() -> egui::Vec2 {
     egui::vec2(
-        (CONVERSATION_PILL_WIDTH + CONVERSATION_OVERLAY_PADDING * 2.0)
-            .max(pet_window.x + CONVERSATION_OVERLAY_PADDING * 2.0),
-        pet_window.y + CONVERSATION_GAP + CONVERSATION_PILL_HEIGHT + CONVERSATION_OVERLAY_PADDING,
+        CONVERSATION_PILL_WIDTH + CONVERSATION_WINDOW_PADDING * 2.0,
+        CONVERSATION_ANCHOR_Y
+            + CONVERSATION_GAP
+            + CONVERSATION_MAX_INPUT_HEIGHT
+            + CONVERSATION_WINDOW_PADDING * 2.0
+            + 8.0,
     )
+}
+
+pub(super) fn conversation_input_rows(text: &str, input_width: f32) -> usize {
+    let chars_per_line = ((input_width / 8.5).floor() as usize).max(1);
+    text.split('\n')
+        .map(|line| line.chars().count().div_ceil(chars_per_line).max(1))
+        .sum::<usize>()
+        .clamp(1, 5)
 }

@@ -430,7 +430,7 @@ if [[ -n "$PETSONA_V2_PET_DIR" ]]; then
   sleep 0.25
   held_sprite="$(json_value "$(hook_status)" spriteIndex)"
   [[ "$gaze_sprite" == "$held_sprite" ]] || fail "持续注视时帧发生变化（$gaze_sprite -> $held_sprite）"
-  pass '持续注视保持最强方向帧'
+  pass '持续注视保持目标姿势帧'
 
   hook_action '{"action":"set-glance-side","value":0}'
   wait_for_hook gazePhase returning

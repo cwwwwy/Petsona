@@ -1134,6 +1134,11 @@ try {
 
         Invoke-SmokeCheck -Id "B9" -Name "bubble overlay and conversation lifecycle (partial)" {
             $before = Get-PetsonaWindow -ProcessId $first.Process.Id -Title "Petsona" -TimeoutSeconds 5
+            $shadow = Get-PetsonaWindow -ProcessId $first.Process.Id -Title "Petsona 影子" -TimeoutSeconds 5
+            Assert-True ($shadow.Width -le 96 -and $shadow.Height -le 96) "pet shadow window is larger than expected."
+            Assert-True ([PetsonaSmoke.Native]::HasAll($shadow.Style, [PetsonaSmoke.Native]::WS_POPUP)) "pet shadow WS_POPUP is missing."
+            Assert-True (-not [PetsonaSmoke.Native]::HasAny($shadow.Style, [PetsonaSmoke.Native]::WS_FRAME)) "pet shadow still has a native frame."
+            Assert-True ([PetsonaSmoke.Native]::HasAll($shadow.ExStyle, [PetsonaSmoke.Native]::WS_EX_NOACTIVATE)) "pet shadow can steal focus."
             Invoke-TestAction -Action "show-bubble" -Text "windows smoke bubble" -TtlMs 3000
             [void] (Wait-ForTestStatus -Predicate { param($candidate) $candidate.bubbleText -eq "windows smoke bubble" } -Description "bubble text" -TimeoutSeconds 3)
             [void] (Wait-ForTestStatus -Predicate { param($candidate) $candidate.bubbleWindowCreated } -Description "bubble overlay window" -TimeoutSeconds 3)
@@ -1157,7 +1162,7 @@ try {
             Invoke-TestAction -Action "open-conversation"
             [void] (Wait-ForTestStatus -Predicate { param($candidate) $candidate.conversationWindowCreated } -Description "conversation overlay" -TimeoutSeconds 3)
             $conversation = Get-PetsonaWindow -ProcessId $first.Process.Id -Title "Petsona 对话" -TimeoutSeconds 5
-            Assert-True ($conversation.Width -ge 440 -and $conversation.Height -ge 260) "conversation overlay has an unexpected size."
+            Assert-True ($conversation.Width -ge 300 -and $conversation.Width -le 600 -and $conversation.Height -ge 140 -and $conversation.Height -le 400) "conversation overlay has an unexpected size."
             Assert-True ([PetsonaSmoke.Native]::HasAll($conversation.Style, [PetsonaSmoke.Native]::WS_POPUP)) "conversation WS_POPUP is missing."
             Assert-True (-not [PetsonaSmoke.Native]::HasAny($conversation.Style, [PetsonaSmoke.Native]::WS_FRAME)) "conversation still has a native title/frame."
             Assert-True (-not [PetsonaSmoke.Native]::HasAny($conversation.ExStyle, [PetsonaSmoke.Native]::WS_EX_NOACTIVATE)) "conversation cannot accept keyboard focus."

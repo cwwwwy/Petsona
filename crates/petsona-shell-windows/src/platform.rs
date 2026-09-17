@@ -641,7 +641,7 @@ fn style_popup_window(title: &str) -> usize {
         GetWindowLongPtrW, SetWindowLongPtrW, SetWindowPos, GWL_EXSTYLE, GWL_STYLE,
         SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, WS_BORDER,
         WS_CAPTION, WS_DLGFRAME, WS_EX_NOACTIVATE, WS_MAXIMIZEBOX, WS_MINIMIZEBOX, WS_POPUP,
-        WS_SYSMENU,
+        WS_SYSMENU, WS_THICKFRAME,
     };
 
     let windows = windows_with_title(title);
@@ -654,8 +654,13 @@ fn style_popup_window(title: &str) -> usize {
             }
             // The popup windows are undecorated too, so give them the same
             // frame-free style as the pet.
-            let frame =
-                WS_CAPTION | WS_BORDER | WS_DLGFRAME | WS_SYSMENU | WS_MINIMIZEBOX | WS_MAXIMIZEBOX;
+            let frame = WS_CAPTION
+                | WS_BORDER
+                | WS_DLGFRAME
+                | WS_SYSMENU
+                | WS_MINIMIZEBOX
+                | WS_MAXIMIZEBOX
+                | WS_THICKFRAME;
             let window_style = GetWindowLongPtrW(hwnd, GWL_STYLE) as u32;
             let wanted = (window_style & !frame) | WS_POPUP;
             if window_style != wanted {

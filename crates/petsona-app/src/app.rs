@@ -23,6 +23,7 @@ mod interaction;
 mod menus;
 mod pets;
 mod settings;
+mod shadow;
 #[cfg(feature = "test-hooks")]
 mod test_hooks;
 
@@ -91,6 +92,11 @@ pub struct PetsonaApp {
     /// When the current bubble text first appeared; drives the entry animation.
     bubble_shown_at: Option<Instant>,
     bubble_styled: bool,
+    shadow_window_created: bool,
+    shadow_window_warmed: bool,
+    shadow_hovered: bool,
+    shadow_hover_progress: f32,
+    shadow_last_tick: Instant,
     conversation_open: bool,
     conversation_window_created: bool,
     /// Same warm-up as the bubble, for the conversation ("input box") window.
@@ -322,6 +328,11 @@ impl PetsonaApp {
             bubble_window_warmed: false,
             bubble_shown_at: None,
             bubble_styled: false,
+            shadow_window_created: false,
+            shadow_window_warmed: false,
+            shadow_hovered: false,
+            shadow_hover_progress: 0.0,
+            shadow_last_tick: Instant::now(),
             conversation_open: false,
             conversation_window_created: false,
             conversation_window_warmed: false,
@@ -685,6 +696,9 @@ impl PetsonaApp {
             // Keep the fall smooth instead of stepping once per idle tick.
             sooner(ACTIVE_REPAINT);
         }
+        if self.shadow_hover_progress > 0.0 && self.shadow_hover_progress < 1.0 {
+            sooner(ACTIVE_REPAINT);
+        }
 
         if self.pet_visible {
             if let Some(pet) = &self.pet {
@@ -858,6 +872,7 @@ impl eframe::App for PetsonaApp {
             self.draw_pet(ui, window_size);
         }
         self.show_bubble_viewport(ui.ctx(), _frame);
+        self.show_shadow_viewport(ui.ctx(), _frame);
         self.show_conversation_viewport(ui.ctx(), _frame);
 
         if self.settings_open {
@@ -890,15 +905,17 @@ mod tests {
     use crate::app::geometry::{clamp_to_monitor, monitor_for_point, PhysicalMonitor};
 
     #[test]
-    fn conversation_overlay_has_room_for_the_pill_and_shadow() {
-        let pet_window = egui::vec2(220.0, 208.0);
-        let overlay = conversation::conversation_overlay_size(pet_window);
-        assert!(overlay.x >= conversation::CONVERSATION_PILL_WIDTH);
+    fn conversation_window_is_small_and_wraps_long_text() {
+        let size = conversation::conversation_window_size();
+        assert!(size.x <= 340.0);
+        assert_eq!(
+            conversation::conversation_input_rows("", 240.0),
+            1,
+            "empty input keeps one row"
+        );
         assert!(
-            overlay.y
-                > pet_window.y
-                    + conversation::CONVERSATION_GAP
-                    + conversation::CONVERSATION_PILL_HEIGHT
+            conversation::conversation_input_rows(&"很长".repeat(120), 240.0) > 1,
+            "long text grows the input"
         );
     }
 
