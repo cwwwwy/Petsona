@@ -1,5 +1,8 @@
 # 桌宠 · BytePet
 
+> 历史归档，非当前 Petsona 应用。本文及本目录的 `scripts/`、`docs/` 只适用于旧版 Tauri + Preact 项目，
+> 不参与当前 workspace 的构建、验收或发布；当前说明请看仓库根目录 `README.md` 与 `AGENTS.md`。
+
 [![CI](https://github.com/cwwwwy/bytepet/actions/workflows/ci.yml/badge.svg)](https://github.com/cwwwwy/bytepet/actions/workflows/ci.yml)
 `https://github.com/cwwwwy/bytepet`
 

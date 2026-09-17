@@ -79,28 +79,22 @@ macOS 侧是 `dist\Petsona.app` 与 `Petsona-macos-<arch>.zip`。
 
 ## 分支策略
 
-- `codex/cross` / 后续共享主分支：共享集成主线。
-- `codex/win-*`：Windows 短期功能分支。
-- `codex/mac-*`：macOS 短期功能分支。
-- 不长期维护 `windows` / `macos` 两套开发主线。
-- 如确需独立发布稳定期，可以增加短期的 `release/windows` / `release/macos`
-  分支，但它们不是日常开发分支。
+- `main` 是共享集成主线，日常直接在其上开发。
+- 必要时可创建 `codex/win-*` / `codex/mac-*` 短期分支；不长期维护平台分支。
+- Git 暂存、提交、推送和分支操作由用户执行，详见 `AGENTS.md`。
 
-## 迁移阶段
+## 迁移进度
 
-1. 已完成：建立 `petsona-runtime`，迁移日志、实例锁、问候等平台无关基础设施。
-2. 已完成：建立 `PetsonaRuntime`，迁移配置、人格、记忆、宠物库、气泡和计时状态；`PetSession` 也已迁移。
-3. 已完成：状态协议、问候和对话的共享状态迁入 runtime；`app.rs` 只保留 UI 状态与协调方法。
-4. 已完成：`petsona-app` 变成纯共享 UI 库（`run(host)`），不再有二进制。
-5. 已完成（2026-09-16）：平台后端从 `petsona-app` 搬到外壳：
-   - `petsona-shell-windows/src/platform.rs`（Win32 样式/透明/几何/键鼠/`WH_MOUSE_LL`）
-   - `petsona-shell-windows/src/menu.rs`（专用 Win32 弹菜单线程，实现 `PlatformMenu`）
-   - `petsona-shell-macos/src/platform.rs`（AppKit/NSEvent/CoreGraphics/文件面板/上下文菜单）
-   - `petsona-app/src/platform.rs` 现在只有 trait、共享类型和默认实现
-6. 进行中（2026-09-16）：独立发布工作流已建立——`release-windows.yml`（tag `windows-v*`）和
-   `release-macos.yml`（tag `macos-v*`，兼容旧的 `v*`）；Windows 侧另有
-   `scripts\package-windows.ps1` 出便携 zip 与内嵌图标的 exe。
-   剩余：macOS 实机验证本次后端搬移、Windows 自启开关、真实签名/公证。
+截至 2026-09-17，共享运行时、共享 UI 边界与两端平台外壳拆分均已完成：
+
+- `petsona-runtime` 承担配置、人格、记忆、宠物库、会话和平台无关基础设施。
+- `petsona-app` 是纯共享 UI 库，通过 `run(host)` 接收平台能力，不再包含平台条件编译。
+- 平台后端位于 `petsona-shell-windows` / `petsona-shell-macos`；`petsona-app/src/platform.rs`
+  只保留 trait、共享类型和可移植默认实现。
+- Windows/macOS 独立打包与 release workflows 已建立；Windows 自启、物理像素位置记忆和重力也已实现。
+
+尚未完成的实机/发布验收以 [`MACOS_VERIFICATION.md`](MACOS_VERIFICATION.md) 和
+[`WINDOWS_VERIFICATION.md`](WINDOWS_VERIFICATION.md) 为准；代码结构进度不代表平台人工验收已通过。
 
 ## 非目标
 

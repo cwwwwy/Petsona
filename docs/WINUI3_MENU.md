@@ -113,5 +113,5 @@ WinUI3 shim DLL (same process)
 - 使用 `TPM_RETURNCMD | TPM_WORKAREA`，命令 id 回传 eframe。
 - 不增加运行时、不另起进程，系统自动处理主题、暗色模式、键盘和高 DPI。
 
-该方案是当前架构下更低风险、更容易达到性能目标的路线；WinUI3 方案应作为独立 spike，
-在 B5 和 Phase 2 多屏/位置记忆完成后再决定是否进入主构建。
+该方案仍是当前主线采用的 Windows 菜单实现。WinUI3 仅保留为技术参考；只有菜单需求发生实质变化时，
+才考虑独立 spike，不纳入主构建计划。

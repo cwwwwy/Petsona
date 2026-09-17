@@ -35,17 +35,14 @@ cargo clippy --workspace --all-targets -- -D warnings
 cargo fmt --check
 ```
 
-## scripts 目录约定（2026-09-16 起保持精简）
+## 脚本约定
 
-- 每端只有一个验收入口：`verify-windows.ps1` / `verify-macos-all.sh`。**不要**再新增 `.cmd` / `.command` 包装。
-- 长流程 smoke（`windows-smoke.ps1`、`macos-smoke.sh`）允许独立成文件：它们可以对已构建产物单独重跑，
-  由入口脚本调用。
-- 打包各一份：`package-windows.ps1` / `package-macos.sh`。
-- 资源生成器放资源旁边（如 `packaging\windows\generate-icon.ps1`），不要堆进 `scripts\`。
-- 新增脚本前先问：能不能并进入口脚本或已有脚本？（2026-09-16 已把 macos-package-smoke.sh 并进入口、
-  把 windows-smoke-native.cs 内嵌进 smoke、把图标生成器移到 packaging\windows\。）
+- 每个平台只保留一个验收入口；不要新增 `.cmd` / `.command` 包装。
+- 长流程 smoke 可独立成文件，供入口调用，也便于对已构建产物单独复跑。
+- 打包脚本各保留一份；资源生成脚本放在对应资源目录，不堆进 `scripts/`。
+- 新增脚本前先检查能否并入现有入口或实现文件。
 
-## 两端唯一验收入口（2026-09-16 收束）
+## 两端验收入口
 
 每边只需要记住一个脚本，不再有 `.cmd` / `.command` 双击包装：
 
@@ -90,91 +87,41 @@ cargo +stable-x86_64-pc-windows-gnu test --workspace
   macOS 没有等价的自省脚本。涉及窗口、托盘、菜单的改动，交付时写清“需要用户实机确认什么”。
 - 改动较大时先说清思路再动手；改完至少跑 `fmt` / `clippy` / `test`。
 
-## 当前状态（2026-09-16）
+## 当前状态（2026-09-17）
 
-- 项目已从 BytePet 改名为 **Petsona**；本机仓库目录为 `C:\Users\happyddz\Desktop\Petsona`
-  （原 `Desktop\bytepet` 已不存在）。**GitHub 仓库已于 2026-09-16 重命名为
-  `https://github.com/cwwwwy/Petsona.git`**（旧 `bytepet` 地址由 GitHub 自动重定向，但每台机器都要
-  `git remote set-url origin https://github.com/cwwwwy/Petsona.git` 或 `gh repo rename` 更新一次）。
-- 当前分支 `codex/cross`（已推送 origin），比 `main` 多 7 个提交；最新提交是
-  `5619f84` `feat: add pet scale presets and conversation UI`。`main` 在 `af99831`（跨平台 verify 脚本）。
-- 平台架构决策（2026-09-16）：采用「共享 `petsona-core` / `petsona-runtime` + 独立平台 UI 外壳」；Windows 和 macOS 可以独立发布和独立规划，但不拆仓库、不维护长期平台开发分支。目标见 `docs/PLATFORM_ARCHITECTURE.md`。
-- 最近一次工作区测试（Windows，2026-09-16）：core 56 + app 8（`test-hooks` 下 10）+ runtime 1 通过；
-  macOS 外壳自带 3 个几何/坐标换算单测（从 app 搬过去），mac 上跑 workspace 测试时会执行。
-  历史记录：Mac smoke 曾通过 31 项（Key Window、低频指针采样、idle 重绘、固定缩放几何、位置保存、
-  对话流程、CPU 采样）；bundle/zip/Info.plist/LaunchAgent 静态检查已内联在 `scripts/verify-macos-all.sh`。
-- 平台验收：macOS A3、B1–B4、B6–B7 曾实测通过；触控板右键、设置聚焦已修复；固定缩放档位、位置记忆、对话输入/发送、记忆事件和输入框光标驱动注视已实现并由 smoke 覆盖。当前宠物图集的 row9/row10 是 16 个转向目标帧，不是独立的 16 个静态方向；真实注视方向视觉、气泡回复按钮、对话窗口观感和输入时注视仍需实机复验。CPU 仍需 Activity Monitor 复测；多屏/Retina 暂缓；B9、B12/B13、A1/A2/A4–A11、真实签名/公证仍待实测。
-- 菜单决策（2026-09-14）：不引入 WinUI3/Windows App Runtime；macOS 托盘/宠物右键继续使用 AppKit 原生菜单，Windows 改用同进程专用 Win32 原生菜单线程，优先保证性能、主题一致性和零额外运行时。
-- Windows 自动门禁：`scripts\verify-windows.ps1 -Full` 已接入 20 项 smoke（2026-09-16 阶段 7 后：
-  fmt / clippy / workspace test / release 链接 / test-hooks clippy+test / release 构建 / smoke）。
-  smoke 覆盖 T1–T4（含开机自启注册表）、A1/A4/A8/A9/A11/A13、B7–B9/B11–B14
-  （含屏幕外位置回落）、C3/C6/C7（位置记忆物理像素、Win32 样式、重力落地）。
-  受限会话无法写 HKCU 时 T4 会明确跳过。
-- Windows 实机状态（用户 2026-09-14 更新，详见 `docs/WINDOWS_VERIFICATION.md`）：
-  A1–A7、A10–A12 通过，A8/A9 的协议层已由 smoke 自动通过，A13 属长测；B1–B6、B9、B10、B12–B14 通过，
-  B5 的持续注视共享状态机已实现，Windows 实机仍需验证；B7 已加入 `WM_MOUSEACTIVATE -> MA_NOACTIVATE` 守卫，B8 已加入 `WM_STYLECHANGING` 守卫，并修复缩放底部中心锚点与命中掩码缩放；B11 已改为低层鼠标事件唤醒并缓存坐标，真实桌面 CPU/GPU 仍需实机确认；B7/B8 的肉眼/真实输入仍需实机确认；
-  C1 通过，C2/C3 已实现并接入 smoke（T3/C3/B14 自动通过），C4–C5 待实测，
-  C6 的宠物窗口与菜单样式已自动化通过；D5 开机自启已实现并由 T4 自动验证（真实登录后行为待实测）；
-  Phase 3 重力开关已实现并由 C7 自动验证（手感待实测）。
-- 分支策略（2026-09-16 更新）：`codex/cross` 已快进合并进 `main`，本地和远程分支都已删除；
-  现在**直接在 `main` 上开发**（见文末「Git 工作流」）。需要试验性改动时开短期分支，
-  合并后立即删除，不长期保留平台分支。
+- 项目已从 BytePet 改名为 **Petsona**；规范仓库地址为 `https://github.com/cwwwwy/Petsona.git`。
+  旧 `bytepet` 地址由 GitHub 重定向；本机 `origin` 若仍是旧地址，应由用户手动更新。
+- 当前共享开发分支为 `main`；不要在本文固定记录 commit hash，确切版本用 `git log -1 --oneline` 查询。
+- 平台架构为共享 `petsona-core` / `petsona-runtime` 加独立平台 shell；完整说明见 `docs/PLATFORM_ARCHITECTURE.md`。
+- 历史自动化结果不保证覆盖当前提交；代码改动后须运行对应平台验收入口，人工项目另按验收清单检查。
+- 平台实测状态见两端验收清单；不要仅凭 smoke 或历史记录推断窗口、菜单、注视动画和功耗已经通过。
+- 菜单决策：macOS 使用 AppKit 原生菜单，Windows 使用专用 Win32 菜单线程；不引入 WinUI3 / Windows App Runtime。方案背景见 `docs/WINUI3_MENU.md`。
+- Windows 自动化覆盖与逐项人工状态统一记在 [`docs/WINDOWS_VERIFICATION.md`](docs/WINDOWS_VERIFICATION.md)。
+- 用户暂时没有 Windows 实体机；需真实桌面、输入、多屏或发布环境的条目先保持待验收，不以自动化代签。
+- macOS 自动化覆盖与逐项人工状态统一记在 [`docs/MACOS_VERIFICATION.md`](docs/MACOS_VERIFICATION.md)。
+- 分支策略：日常直接在 `main` 开发；如需试验，使用短期 `codex/*` 分支，合并与清理由用户决定。
 - 改名决策（2026-09-14）：**不提供 BytePet → Petsona 数据迁移**，开发验证阶段接受从零开始，
   不读取旧 config/personas/memory/pets。
 - CI：`pull_request` → main、`push` tag `v*`、`workflow_dispatch`；直接推 `main` 不跑；
   同一 ref 的旧运行会被 concurrency 取消。
 
-## 平台架构决策（2026-09-16）
+## 平台架构决策
 
-用户已确认：Windows 与 macOS 可以采用独立 UI 外壳，发布节奏也允许不同步；开发精力约为
-Windows 70% / macOS 30%。因此项目采用：
+用户确认两端可独立规划和发布（Windows 约 70% / macOS 约 30%）：一个仓库、一个 workspace、共享
+`petsona-core` / `petsona-runtime`，平台窗口、菜单、输入和打包分别放在 Windows / macOS shell。
+`petsona-app` 通过 `PlatformHost` 接收平台能力，不新增平台 `#[cfg(target_os)]`。
 
-- 一个仓库、一个 workspace、共享 `petsona-core` 和 `petsona-runtime`；
-- Windows/macOS 各自拥有窗口、菜单、输入、渲染和打包外壳；
-- 平台功能可以使用 `codex/win-*` / `codex/mac-*` 短期分支，但不长期维护两套开发主线；
-- Windows 和 macOS 使用独立发布 tag / workflow，允许一边领先；
-- 共享核心变更仍需保证两边编译和核心测试通过，触及平台能力时跑对应平台 smoke。
+- 日常共享主线是 `main`；确有需要时只开短期 `codex/*` 分支。
+- 发布轨道：`windows-v*` 与 `macos-v*`；CI / release workflows 已建立。
+- Windows 菜单使用 Win32 专用菜单线程，macOS 使用 AppKit；不引入 WinUI3 / Windows App Runtime。
+- 新增平台能力优先给 `PlatformHost` 提供可移植默认实现，再由外壳 override。
 
-当前迁移阶段（2026-09-16）：共享 `petsona-runtime` 已接管核心状态；`petsona-app` 已经成为纯共享
-UI 库（不存在任何 `#[cfg(target_os)]`，也不再提供二进制），平台后端全部通过
-`petsona_app::platform::PlatformHost` 注入：
+架构细节和迁移状态见 [`docs/PLATFORM_ARCHITECTURE.md`](docs/PLATFORM_ARCHITECTURE.md)。
 
-- `petsona-shell-windows`：Win32 无边框/不激活样式、`WM_STYLECHANGING` 守卫、
-  `WH_MOUSE_LL` 低层鼠标钩子、`SetWindowPos` 几何、explorer 打开目录、Win32 弹菜单线程。
-- `petsona-shell-macos`：AppKit 非激活面板、NSEvent/CoreGraphics 全局光标与 Escape、
-  NSOpenPanel/NSSavePanel、AppKit 托盘菜单（`show_context_menu_for_nsview`）。
+## GitHub 仓库元数据（2026-09-17）
 
-Windows 验收（smoke + `verify-windows.ps1 -Full`）已全部改用 `target\release\petsona-windows.exe`；
-macOS 的 `macos-smoke.sh` / `package-macos.sh` 已改用 `petsona-macos`。
-
-发布轨道（2026-09-16 建立）：
-
-- Windows：tag `windows-v<version>` → `.github/workflows/release-windows.yml`（快速门禁 + `scripts\package-windows.ps1` + artifact）。
-- macOS：tag `macos-v<version>`（旧的裸 `v<version>` 仍支持）→ `.github/workflows/release-macos.yml`。
-- 手动触发两个 workflow 也可以；`ci.yml` 在 `v*` / `windows-v*` / `macos-v*` tag 上跑双平台 fmt/clippy/test。
-- 剩余：macOS 实机验证本次搬移、真实签名/公证；Windows 侧剩下人工确认包和首次发布。
-
-搬移后的平台接口一览（都在 `petsona_app::platform`）：
-
-- `PlatformHost`：`present_window` / `notify_window_resize` / `set_window_geometry` /
-  `set_window_geometry_physical` / `monitor_work_area`（物理像素工作区）/ `autostart_supported` /
-  `autostart_enabled` / `set_autostart` / `set_no_activate_for_title` / `confirm_settings_focus` /
-  `show_context_menu_for_window` / `install_event_waker` / `event_driven_mouse` /
-  `throttle_pointer_sampling` / `pointer_snapshot` / `escape_pressed` / `create_menu` /
-  `uses_native_tray_menu` / `supports_native_file_dialogs` / `choose_pet_import_path` /
-  `choose_pet_export_path` / `open_in_file_manager` + `test-hooks` 探针（`cursor_poll_count` /
-  `mouse_event_count` / `mouse_position_valid` / `is_window_key_for_title`）。
-- `PhysicalRect`：物理像素矩形（窗口/工作区/重力地面），跨混合 DPI 的唯一几何单位。
-- `PlatformMenu`：`show` / `poll`，返回 `MenuCommand`（OpenSettings / ChangePet / TogglePet / Quit）。
-- `PortableHost`：全默认实现，供 `petsona-app` 自己的单元测试使用。
-
-新增平台能力时的做法：先在 trait 里加一个**带默认实现**的方法（默认行为 = winit/egui 回退），
-再在对应外壳里 override。`petsona-app` 不允许再出现 `#[cfg(target_os = ...)]`。
-
-## GitHub 仓库元数据（2026-09-16）
-
-- 仓库名：`cwwwwy/Petsona`（2026-09-16 由 `bytepet` 改名，旧地址 GitHub 自动重定向；
-  各机器仍应 `git remote set-url origin https://github.com/cwwwwy/Petsona.git`）。
+- 规范仓库地址：`https://github.com/cwwwwy/Petsona.git`（旧 `bytepet` 地址由 GitHub 自动重定向；
+  如本机 `origin` 仍指向旧地址，由用户手动执行 `git remote set-url origin https://github.com/cwwwwy/Petsona.git` 更新）。
 - About 描述（建议，英文，GitHub 上限 350 字符）：
   `Rust-only desktop pet for Windows & macOS — Codex pet packs, native menus, persona + light memory. No Node/WebView.`
 - Topics（建议）：`rust` `desktop-pet` `egui` `eframe` `windows` `macos` `codex` `tray-icon`
@@ -185,156 +132,39 @@ macOS 的 `macos-smoke.sh` / `package-macos.sh` 已改用 `petsona-macos`。
   数据目录（`%APPDATA%\Petsona` / `~/Library/Application Support/Petsona`）、macOS bundle id
   （`com.petsona.desktop`）。`legacy/` 里保留旧 BytePet 代码作为参考，不做改名。
 
-## Windows 开发计划（2026-09-14，修订 2）
+## Windows 实施与验收
 
-当前实机状态以 `docs/WINDOWS_VERIFICATION.md` 为准。下一步先在 `codex/cross` 上做自动化骨架
-和基线修复，不提交 PR、不合并 `main`；合并时机由用户决定。
+功能实现与自动化状态见 `docs/WINDOWS_VERIFICATION.md`。验收分为可脚本重复的门禁 / smoke
+和必须在真实桌面观察的窗口、输入、DPI、多屏与发布行为；不要把历史计划当作当前待办。
 
-### Phase 0.5 — 自动化验收骨架（第一版已完成）
+### 自动化入口
 
-目标是让日常改动不再逐条手点：
+Windows 快速门禁与完整 smoke 使用同一脚本：`scripts\verify-windows.ps1`，完整模式增加 `-Full`。
+覆盖范围和未自动化的人工验收以 `docs/WINDOWS_VERIFICATION.md` 为准；这里不再复制检查项清单。
 
-- `scripts\verify-windows.ps1` 快速门禁和 `-Full` 完整门禁均已实现：fmt / clippy / test /
-  release build 不启动 GUI；`-Full` 额外调用 `scripts\windows-smoke.ps1`。
-- `scripts\windows-smoke.ps1` 已实现，用临时 `PETSONA_HOME` 启动 release，当前自动通过基础检查，另含原生菜单线程就绪检查：
-  T1、A1、A4（设置，部分）、A8、A9、A11（部分）、A13（加速，部分）、B9（几何，部分）、
-  B12–B14、C6（宠物窗口与菜单样式）。
-- `test-hooks` 已实现并默认关闭：本机控制端口提供窗口/独立气泡/注视/重绘/指针轮询/样式重应用快照，
- 以及打开菜单和设置、隐藏/显示、独立气泡、缩放、穿透、自动行走、保存、退出等确定性动作。
-- 自动行走已改为浮点逻辑坐标累加，避免步长小于 1px 时停住。
-- 自动化分三层：快速门禁每次改动跑；`-Full` 在窗口/输入/配置变更后跑；视觉、真实托盘点击、
-  多屏、DPI、全屏/虚拟桌面和发布环境只做最终人工验收。
-- 不新增第三方依赖，Win32 交互继续使用现有 `windows-sys`，脚本用 PowerShell。
+Windows 窗口、焦点、缩放、功耗、注视、位置记忆和重力的实现 / 实测细节均由
+`docs/WINDOWS_VERIFICATION.md` 维护；平台特有的根因与修复经验集中在下方「已踩过的坑」。
 
-预计自动化覆盖 A1/A4 内部动作/A8–A11/A13、B1–B4/B6 样式/B7/B9–B14、C6、D1/D3/D4；
-托盘图标外观与真实点击、B6 实际桌面落点、B8 肉眼闪烁、C1–C5、D2/D5/D6 仍保留人工。
+Windows 打包、图标、自启和 release workflow 已实现；仍需目标机器确认的项目见
+`docs/WINDOWS_VERIFICATION.md`。原生菜单方案与 WinUI3 取舍见 `docs/WINUI3_MENU.md`。
 
-### Phase 0.6 — Windows 基线缺陷（修复顺序固定）
+## 阶段 7 已实现功能（2026-09-16）
 
-1. **B7 不抢焦点（代码与自动守卫已完成）**：宠物和菜单已子类化窗口过程，对
-   `WM_MOUSEACTIVATE` 返回 `MA_NOACTIVATE`；smoke 直接验证返回值，并要求鼠标进入宠物前后
-   前台窗口不变。当前会话禁止 SendInput，真实点击仍需实机确认。
-2. **B8 无边框闪（代码与自动守卫已完成）**：确认 winit 在尺寸/标志变化时会重设
-   `GWL_STYLE/GWL_EXSTYLE`。现在通过 `WM_STYLECHANGING` 在应用前恢复 `WS_POPUP` 并保留
-   `WS_EX_NOACTIVATE`；smoke 已验证缩放、菜单、设置和穿透切换不再触发 frame-style 重建。
-   缩放时窗口会延后补偿外框位置，保持宠物底部中心锚点；命中掩码坐标按 `window.scale`
-   还原到未缩放图集空间，单元测试覆盖 0.75/1.0/1.5 三档。肉眼闪烁仍需最终确认。
-3. **B11 空闲功耗（代码已完成，实机功耗待确认）**：Windows 已改用 `WH_MOUSE_LL` 低层鼠标事件
-   唤醒，并缓存最近光标位置；空闲时不再用 100ms 全局 `GetCursorPos` 轮询。smoke 在交互桌面
-   可用时执行 CPU/轮询门槛，无交互桌面时明确跳过。下一步是实机 Activity Monitor/任务管理器确认。
-4. **B5 持续注视（共享代码已完成）**：row9/row10 现在拆为转向、保持最强方向帧、返回三个阶段。
-   光标进入左右触发区后停在最强方向帧，未离开触发区时保持；离开或回到死区后播放返回段并回 base。
-   核心状态机单测已补，下一步用 macOS 实机和 Windows smoke 分别验证全局光标路径。
+以下功能已落地；逐项自动化与人工验收状态以两端验收清单为准，不在这里重复维护。
 
-### Phase 1 — 窗口 + 气泡（代码已完成）
+- Superintendent 内置宠物与 Codex 宠物显式导入已完成；实现细节见 `docs/PET_NATIVE.md` 与对应代码测试。
 
-气泡已独立成透明、点击穿透、`with_active(false)`、无边框、置顶的窗口，固定在宠物上方并跟随移动，
-无气泡时完全隐藏；宠物窗口已去掉气泡预留高度并收缩到精灵精确尺寸；保持 `WS_POPUP` +
-DWM 透明 + `WS_EX_NOACTIVATE`，不在像素级切换穿透路径中重新引入 frame 重算。
+- Windows 开机自启、物理像素位置保存 / 屏幕外回落、菜单工作区夹取和可选重力已实现；
+  自动化 / 人工状态见 `docs/WINDOWS_VERIFICATION.md`。
+- 人工验收只在 `docs/WINDOWS_VERIFICATION.md` 的 A–D 表中维护，避免另建状态清单。
+- 首次正式 Windows 发布仍待执行；macOS Developer ID 签名 / 公证需要相应凭据。
 
-### Phase 2 — 多屏 + 位置记忆
-
-菜单用 `GetCursorPos` + `MonitorFromPoint` + `GetMonitorInfoW(rcWork)` + `SetWindowPos`
-物理像素落位；拖动结束把物理坐标写入 `window.startPosition`；启动精确还原，保存的显示器不存在时
-回落；首次/重置位置放主屏工作区右下角（约 32px）。C2/C3 完成后必须由 smoke 自动检查坐标。
-
-### Phase 3 — 重力开关
-
-设置 → 宠物行为，默认关；约 2600 px/s²、上限约 1800 px/s；落到当前显示器工作区底部并播放
-一次 `jumping`；拖动或自动行走时不生效。
-
-### Phase 4 — Windows 发布形态（2026-09-16 大部分已完成）
-
-- ✅ `packaging/windows/Petsona.ico`（16/24/32/48/64/128/256，PNG 条目），由
-  `packaging\windows\generate-icon.ps1` 从 `packaging\macos\Petsona.icns` 的 PNG 分块生成，
-  两边图标同源；改图标只改 icns 再重跑生成脚本。
-- ✅ exe 图标嵌入：`crates\petsona-shell-windows\build.rs` 直接调用 `rc.exe`（MSVC）或
-  `windres.exe`（GNU），**不新增 crate**；两者都找不到时只打印 warning 并跳过。
-  MSVC 与 GNU 两条工具链均已实测 exe 带图标。
-- ✅ `scripts\package-windows.ps1`：出 `dist\Petsona-windows-<arch>-<version>.zip`
-  （含 `Petsona.exe`、`Petsona.ico`、`VERSION.txt`、`README.txt`），支持 `-Architecture arm64`、
-  `-SkipBuild`、`-OutputDirectory`；zip 由 .NET `ZipFile::CreateFromDirectory` 生成。
-  `verify-windows.ps1 -Full` 末尾会自动跑一次打包结构检查（D3）。
-- ✅ `.github/workflows/release-windows.yml`：tag `windows-v*` 或手动触发 → 快速门禁 + 打包 + artifact。
-- ⏳ 未做：HKCU Run / Startup 自启开关（设置里目前没有开关项）。
-
-### 菜单方案决策：同进程 Win32 系统原生菜单（2026-09-14）
-
-用户目标是兼顾性能与美观，不强制 WinUI3。WinUI3 同进程 XAML Islands 需要 Windows App
-Runtime、常驻 XAML dispatcher、DesktopWindowXamlSource 和同进程 C++/WinRT shim，对四项菜单
-来说复杂度和运行时代价过高，因此不作为当前实现方案；研究资料保留在 `docs/WINUI3_MENU.md`。
-
-采用方案：
-
-- 在 Petsona 进程内创建专用 Win32 菜单线程和隐藏 owner window。
-- 使用 `CreatePopupMenu` / `AppendMenuW`。
-- 使用 `TrackPopupMenuEx(TPM_RETURNCMD | TPM_NONOTIFY | TPM_WORKAREA)`。
-- 菜单命令 id 通过 channel/PostMessage 返回 eframe 主线程。
-- `TrackPopupMenuEx` 不运行在 eframe 事件循环线程，因此不会冻结宠物动画。
-- 使用系统原生主题、键盘导航、暗色模式、DPI 和显示器工作区行为。
-
-性能边界：
-
-- 空闲时菜单线程只等待消息，不参与重绘和输入轮询。
-- 菜单对象一次创建并复用；关闭后只隐藏，不销毁线程。
-- 不引入 Windows App SDK、.NET、CLR、XAML 或额外运行时。
-- 继续使用现有 `windows-sys`，不新增 crate。
-
-当前实现：
-
-- macOS 托盘菜单增加了可动态刷新的“选择宠物”子菜单，并使用原生文件面板。
-- Windows 托盘菜单和宠物右键菜单已切换到专用 Win32 菜单线程；egui 菜单仅作为线程启动失败时的回退。
-- WinUI3 仅作为未来独立 spike，不进入主构建。
-### Phase 5 — 发布质量
-
-Fast + Full 验证全绿；手工清单只剩视觉/真实桌面/多屏/DPI/登录自启/Defender；菜单工作区夹取
-和位置回退写成纯函数并加单测；Windows 不重写现有 Win32 后端，只做增量。
-
-## 阶段 7 计划（2026-09-16，1/2/3 已完成）
-
-平台拆分（阶段 5）和 Windows 发布形态（Phase 4）已基本收口，剩下的都是「功能补齐」或
-「必须人工确认」的项。按优先级：
-
-0-a. ✅ **内置宠物换成 Superintendent（2026-09-16 完成）**：`crates/petsona-core/assets/default-pet/`
-   现在是 Renner Campos 的 V2 包（id `Superintendent_Petdex`，1536×2288），`default_pet.rs` 的
-   `DEFAULT_PET_ID` 同步；实测全新 `PETSONA_HOME` 启动后 `/health` 返回 `pet=superintendent`。
-   旧 ByteBot 资源已删除（用户本地残留副本不动）。
-0-b. ✅ **宠物来源改为显式导入（2026-09-16 完成）**：`PetLibrary::discover()` 只返回本地可写根；
-   新增 `codex_pets_dir()` + `PetLibrary::scan_dir()`（只读列目录）与 core 单测
-   `discover_only_scans_the_app_library` / `scan_dir_lists_pets_without_copying_them`；
-   设置 →「宠物」新增「从 Codex 导入」面板（逐只「导入」/「全部导入」/「重新扫描」）。
-   macos-smoke 的 V2 夹具改为先复制进临时 `PETSONA_HOME`。
-
-1. ✅ **D5 开机自启开关（2026-09-16 完成）**：设置 →「启动」新增「开机自启动」复选框，启动时
-   从注册表真实状态回填；Windows 外壳用 `RegCreateKeyW` / `RegSetValueExW` / `RegDeleteValueW`
-   写删 `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`（`windows-sys` 只加
-   `Win32_System_Registry` feature）。smoke 的 T4 用 `PETSONA_AUTOSTART_VALUE_NAME` 覆盖成一次性
-   值名，验证写入、路径、删除，并在 finally 里清理，绝不碰用户真实的 `Petsona` 启动项。
-   受限会话（CI/沙箱）无法写 HKCU 时 T4 会明确 `[SKIP]` 而不是误报。
-2. ✅ **Phase 2 多屏 + 位置记忆（2026-09-16 完成）**：`WindowPosition` 改为保存**物理像素**；
-   还原时用 winit 的 monitor 列表 + shell 的 `monitor_work_area`（Windows =
-   `MonitorFromPoint` + `GetMonitorInfoW(rcWork)`），按保存点选显示器并夹进工作区，显示器不存在
-   则回落到最近的可见工作区；菜单锚点也在菜单线程里用同一份 `rcWork` 夹取。
-   纯函数 `clamp_rect_to_work_area` / `monitor_for_point` + 单测；smoke 的 C3 校验
-   config.json 里存的是窗口物理原点，B14 校验屏幕外坐标重启后回落到工作区，T3 校验菜单不越界。
-3. ✅ **Phase 3 重力开关（2026-09-16 完成）**：设置 → 宠物行为「重力（松手后掉到工作区底部）」，
-   默认关；物理像素物理：2600 px/s²、上限 1800 px/s、单步最多 50ms；落到当前显示器工作区
-   底部时播放一次 `jumping`（1.2s）；拖动期间和活动提醒行走期间挂起，落地前不开始新的行走。
-   smoke 的 C7 自动验证下落、落点、落地动画和 `gravityLandings` 计数。
-4. **人工确认包（一次真实桌面会话，10 分钟）**：B5 持续注视、B7 真实点击不抢前台、
-   B8 无边框闪（肉眼）、B10 菜单打开时宠物不冻结且退出立即生效、C4 DPI、
-   C5 全屏/虚拟桌面、D1 release 无控制台、D6 干净用户环境；阶段 7 新增的 H1–H5
-   （`docs/WINDOWS_VERIFICATION.md` H 节：登录自启、副屏位置、副屏菜单、拔屏回落、重力手感）。
-5. **首次发布**：定版本号（当前 0.1.0）→ 打 `windows-v*` tag 跑
-   `release-windows.yml`（D4 首次执行）；macOS 拿到 Developer ID 后走 `sign-macos.sh` /
-   `notarize-macos.sh`。
-
-macOS 侧（需要用户在 mac 上）：`bash scripts/verify-macos-all.sh` 验证本次平台后端搬移，
-再补 B10 多屏、B11 Activity Monitor、A11 keychain、C 节 Retina/Spaces。
+- macOS 侧先运行 `bash scripts/verify-macos-all.sh`；注视、气泡与对话视觉、缩放闪动和 Activity Monitor 仍需确认。
+  多显示器 / Retina 按用户决定暂缓；验收状态只维护在 `docs/MACOS_VERIFICATION.md`。
 
 ## 关键缺口（按优先级）
 
-### 1. macOS 交互后端（核心交互已通过；当前剩余是多屏与功耗实测）
+### 1. macOS 实机验收（状态以专用清单为准）
 
 `crates/petsona-shell-macos/src/platform.rs` 是 macOS 原生后端（2026-09-16 从 `petsona-app` 搬出，
 逻辑未改）：
@@ -348,9 +178,8 @@ macOS 侧（需要用户在 mac 上）：`bash scripts/verify-macos-all.sh` 验�
 - AppKit 非激活窗口样式：宠物和菜单不抢前台焦点；
 - `winit::Window::set_cursor_hittest`：继续由现有 `MousePassthrough` 路径切换点击穿透。
 
-代码已经通过编译、clippy、workspace 测试和 release 构建；smoke 已确认原生菜单可创建、当前宠物 checked 状态、设置窗口为 Key Window、低频指针采样、idle 重绘、固定缩放几何、位置保存、对话输入/发送流程和 CPU 采样。
-`scripts/macos-smoke.sh` 可自动检查协议、TTL、设置、Key Window、当前宠物 checked 状态、低频指针采样、idle 重绘、固定缩放几何/底部中心锚点、位置保存、CPU 趋势、持久化、独立气泡、对话流程、隐藏/显示和 V2 注视生命周期；app/zip/Info.plist/LaunchAgent 静态结构检查已内联进 `scripts/verify-macos-all.sh`；仍需按
-`docs/MACOS_VERIFICATION.md` 实测 B10 多显示器坐标、B11 空闲 CPU，以及 C 节的 Retina/Spaces 行为。
+旧版本的编译 / smoke 结果不代表后端迁移后的当前提交已验证。先运行 `bash scripts/verify-macos-all.sh`；脚本自动覆盖范围及
+仍需人工观察的事项见 [`docs/MACOS_VERIFICATION.md`](docs/MACOS_VERIFICATION.md)。
 
 平台差异仍保持如下：
 
@@ -360,15 +189,7 @@ macOS 侧（需要用户在 mac 上）：`bash scripts/verify-macos-all.sh` 验�
 - `NSEvent::mouseLocation` 是屏幕坐标，原点/Y 方向与 winit 的坐标约定不同；多显示器下要通过
   winit 的 monitor 几何做映射，别直接混用。
 
-验收：按 `docs/MACOS_VERIFICATION.md` 的 B 节逐条过。这次搬移是逐行搬运（逻辑未改），但
-**Windows 机器无法对 macOS 后端做类型检查**，原因如下：
-
-- `rustup target add aarch64-apple-darwin` 可以装，`cargo check --target aarch64-apple-darwin`
-  却会在 `ring`（`ureq` 的 TLS 后端）处失败：它的 C 代码需要 macOS 的 C 工具链，
-  Windows 上没有 clang/macOS SDK，`cc` 会直接报 `unrecognized command-line option '-arch'`。
-- 所以在 Windows 上只能保证「语法正确 + rustfmt 通过」；macOS 后端改动必须在 mac 上
-  `bash scripts/verify-macos-all.sh`（它包含 workspace 的 fmt/clippy/test/release 构建，
-覆盖 `cargo check -p petsona-shell-macos`）才算验证。
+验收结论以 Mac 上的完整门禁和人工清单为准；Windows 交叉编译不能替代 Apple SDK 下的实际检查。
 
 ### 2. 日常可用性（发布形态）
 

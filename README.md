@@ -8,8 +8,10 @@ The new application keeps the parts that made the original Codex pet useful:
 - ships with a bundled Codex pet (**Superintendent** by Renner Campos) and keeps
   a local pet library the user owns
 - renders the 8x9 / 8x11 spritesheet animation state machine
-- supports a transparent, always-on-top pet window
-- supports click, double-click, drag, right-click menu, gaze and a speech bubble
+- supports a transparent, always-on-top pet window and fixed size presets
+- supports click, double-click, drag, native context menus, gaze and a speech bubble
+- opens a conversation composer from the bubble's reply button or a pet double-click;
+  replies use DeepSeek when configured and can draw on remembered preferences
 - imports pets explicitly from Codex (`~/.codex/pets`) or from a folder / `.zip`
 - exposes the local state protocol so Codex hooks can drive the animation
 - stores a simplified persona and lightweight pet memory
@@ -77,11 +79,13 @@ produced by the matching script with the icon, `Info.plist` and `LSUIElement`.
 | Input | Behaviour |
 |---|---|
 | Left click | wave + a greeting bubble (DeepSeek when a key is configured, else the persona's fallback greeting) |
-| Double click | jump |
+| Double click | jump + open the conversation composer |
 | Drag | move the pet |
-| Right click | menu: open settings / close pet |
+| Right click | open the native pet context menu |
+| Hover over a bubble | reveal a reply button that opens the conversation composer |
 | Cursor at either side | the V2 look row turns and holds its gaze while the cursor stays there |
-| Tray icon | open settings / show-hide pet / quit |
+| Conversation input | the pet follows the text caret |
+| Tray icon | open the native menu for settings, pet actions, visibility and quit (menu items vary by platform) |
 | Every 45 min | activity reminder: the pet walks a short distance and asks you to stand up |
 
 ## Inspecting a pet
