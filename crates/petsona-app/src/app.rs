@@ -606,7 +606,9 @@ impl PetsonaApp {
         let pet_rect = self.pet_rect(window_size);
         let scale = self.effective_scale();
         let total = window_size;
-        let pet = self.runtime.pet.as_mut().expect("checked above");
+        let Some(pet) = self.runtime.pet.as_mut() else {
+            return;
+        };
         let cell = egui::vec2(pet.cell_width, pet.cell_height) * scale;
 
         egui::CentralPanel::default()
@@ -822,7 +824,7 @@ impl eframe::App for PetsonaApp {
         }
 
         if !self.fonts_installed {
-            crate::fonts::install_cjk_font(ui.ctx());
+            crate::fonts::install_cjk_font(ui.ctx(), &self.platform.cjk_font_candidates());
             self.fonts_installed = true;
             ui.ctx().request_repaint();
         }

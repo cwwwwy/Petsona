@@ -157,7 +157,7 @@ find_v2_pet() {
     printf '%s\n' "$PETSONA_SMOKE_V2_PET_DIR"
     return 0
   fi
-  for root in "$HOME/.codex/pets" "$HOME/.unipet/pets"; do
+  for root in "$HOME/.codex/pets"; do
     [[ -d "$root" ]] || continue
     while IFS= read -r -d '' manifest; do
       version="$(json_value "$(<"$manifest")" spriteVersionNumber)"

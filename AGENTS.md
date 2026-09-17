@@ -63,17 +63,14 @@ MSVC 缺 `link.exe` 的 GNU 回退写在 `docs/WINDOWS_VERIFICATION.md`。
 
 ## 当前状态（2026-09-17）
 
-- 仓库：`C:\Users\happyddz\Desktop\Petsona`；分支 `main`。当前工作区包含本轮 UI 修复与项目清理改动，
-  提交 / 推送仍由用户手动执行。
-- 最新提交：`67f839d` `docs: trim redundancy, drop PET_NATIVE/WINUI3 notes`；此前功能提交为
-  `81a3fe4`（阶段 7 的 1/2/3 已完成并推送；`codex/cross` 已合并删除）。
-- 工作区进行中（2026-09-17，未提交）：修复 Win32 菜单打开设置后焦点回跳；输入框改为单行输入 + ↑，
-  去掉标题 / 历史 / 关闭按钮 / spinner，Esc 关闭；输入框从宠物影子放大、关闭缩回影子；气泡去掉独立
-  “回复”按钮，改为点击气泡本体。Rust 门禁与 Windows 20 项 smoke 已通过。
-- 项目清理已完成（2026-09-17，未提交）：`legacy/` 旧 Tauri 工程已从工作区删除，历史仍保留在 Git 中；
-  `dist/` 与 `target/` 本地产物已清理。`petsona-app` 完成纯移动式模块化：`app.rs` 4,704 → 1,143 行；
-  功能拆到 `app/{bubble,conversation,settings,interaction,menus,pets,test_hooks,geometry}.rs`。
-  清理后 Rust 门禁与 Windows 20 项 smoke 均通过。
+- 仓库：`C:\Users\happyddz\Desktop\Petsona`；分支 `main`，与 `origin/main` 同步，工作区干净。
+- 最新提交：`1af1a80` `refactor: remove legacy tree and split app UI modules`。
+- 2026-09-17 已完成并推送：设置焦点回跳修复；输入框改为单行输入 + ↑；Esc 关闭和宠物影子开关动画；
+  气泡本体点击回复；删除 `legacy/`；`petsona-app` 按功能拆成 `app/` 子模块。
+- Rust 门禁（fmt / clippy / test）与 Windows `verify-windows.ps1 -Full` 已通过。
+- 清理第二批（2026-09-17，未提交）：CJK 字体候选路径改由 `PlatformHost::cjk_font_candidates` 提供；
+  Windows 外壳拆出 `autostart.rs` 和 `no_activate.rs`；移除 smoke 的 `~/.unipet/pets` 回退；
+  CI 保持只在 PR / tag / 手动触发时运行，不因 `main` push 触发；macOS release 打包前跑 Rust 门禁。
 - GitHub 仓库：`https://github.com/cwwwwy/Petsona.git`（2026-09-16 由 bytepet 改名；
   旧地址自动重定向，其他机器仍需 `git remote set-url origin ...` 更新一次）。
 - 测试基线：`cargo test --workspace` 全绿（core / app / runtime / shell-windows；
@@ -101,6 +98,7 @@ MSVC 缺 `link.exe` 的 GNU 回退写在 `docs/WINDOWS_VERIFICATION.md`。
 - `petsona-app` 是纯共享库：不允许 `#[cfg(target_os = ...)]`，也不提供二进制。
 - 平台能力全部经 `PlatformHost` 注入，每个方法都有可移植默认实现（winit / egui 回退）。
   新增能力 = 在 trait 加带默认实现的方法 + 在对应外壳 override。
+- 字体候选路径经 `PlatformHost::cjk_font_candidates` 注入，`petsona-app` 不直接判断操作系统。
 - `PhysicalRect` 是跨混合 DPI 的唯一几何单位（物理像素）；逻辑点只在 winit 边界换算。
 - Windows 菜单用进程内 Win32 菜单线程，macOS 用 AppKit 原生菜单；不接受 WinUI3 /
   Windows App SDK 依赖（决策见 `docs/PLATFORM_ARCHITECTURE.md`）。

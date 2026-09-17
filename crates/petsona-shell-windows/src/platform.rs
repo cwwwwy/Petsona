@@ -4,7 +4,8 @@
 //! `petsona-app`. The notes below each block are kept because they record why
 //! the current implementation looks the way it does.
 
-use std::path::Path;
+use crate::autostart;
+use std::path::{Path, PathBuf};
 #[cfg(feature = "test-hooks")]
 use std::sync::atomic::AtomicU64;
 use std::sync::atomic::{AtomicBool, AtomicI32, AtomicIsize, Ordering};
@@ -50,11 +51,28 @@ impl PlatformHost for WindowsHost {
         "windows"
     }
 
+    fn cjk_font_candidates(&self) -> Vec<PathBuf> {
+        [
+            r"C:\Windows\Fonts\SourceHanSansCN.ttf",
+            r"C:\Windows\Fonts\msyh.ttc",
+            r"C:\Windows\Fonts\msyh.ttf",
+            r"C:\Windows\Fonts\Deng.ttf",
+            r"C:\Windows\Fonts\simhei.ttf",
+            r"C:\Windows\Fonts\simsun.ttc",
+        ]
+        .into_iter()
+        .map(PathBuf::from)
+        .collect()
+    }
+
     fn present_window(&self, window: &winit::window::Window) -> bool {
         use winit::platform::windows::{CornerPreference, WindowExtWindows as _};
 
         let (first_apply, settled) = {
-            let mut state = self.chrome.lock().expect("window chrome state");
+            let mut state = self
+                .chrome
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
             if !state.ready {
                 (true, false)
             } else if state
@@ -83,7 +101,10 @@ impl PlatformHost for WindowsHost {
             // Never activate: activation repaints the frame state and would
             // also steal focus from the user's editor.
             set_no_activate(window);
-            self.chrome.lock().expect("window chrome state").ready = true;
+            self.chrome
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .ready = true;
             return changed;
         }
 
@@ -104,7 +125,10 @@ impl PlatformHost for WindowsHost {
     }
 
     fn notify_window_resize(&self) {
-        self.chrome.lock().expect("window chrome state").resize_at = Some(Instant::now());
+        self.chrome
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .resize_at = Some(Instant::now());
     }
 
     fn set_window_geometry(
@@ -285,89 +309,6 @@ impl PlatformHost for WindowsHost {
 /// The window procedure also repairs `WM_STYLECHANGING`: winit resets
 /// `GWL_STYLE`/`GWL_EXSTYLE` on some state changes, which is what made the
 /// decorated frame flash back in.
-mod no_activate_proc {
-    use std::cell::RefCell;
-    use std::collections::HashMap;
-    use windows_sys::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
-    use windows_sys::Win32::UI::WindowsAndMessaging::{
-        CallWindowProcW, DefWindowProcW, SetWindowLongPtrW, GWLP_WNDPROC, GWL_EXSTYLE, GWL_STYLE,
-        MA_NOACTIVATE, STYLESTRUCT, WM_MOUSEACTIVATE, WM_NCDESTROY, WM_STYLECHANGING, WNDPROC,
-        WS_BORDER, WS_CAPTION, WS_DLGFRAME, WS_EX_NOACTIVATE, WS_MAXIMIZEBOX, WS_MINIMIZEBOX,
-        WS_POPUP, WS_SYSMENU,
-    };
-
-    thread_local! {
-        static PREVIOUS: RefCell<HashMap<isize, isize>> = RefCell::new(HashMap::new());
-    }
-
-    pub fn install(hwnd: HWND) {
-        let key = hwnd as isize;
-        if PREVIOUS.with(|previous| previous.borrow().contains_key(&key)) {
-            return;
-        }
-        let previous = unsafe {
-            SetWindowLongPtrW(
-                hwnd,
-                GWLP_WNDPROC,
-                no_activate_wndproc as *const () as isize,
-            )
-        };
-        if previous != 0 {
-            PREVIOUS.with(|previous_procs| {
-                previous_procs.borrow_mut().insert(key, previous);
-            });
-        }
-    }
-
-    unsafe extern "system" fn no_activate_wndproc(
-        hwnd: HWND,
-        message: u32,
-        wparam: WPARAM,
-        lparam: LPARAM,
-    ) -> LRESULT {
-        if message == WM_MOUSEACTIVATE {
-            return MA_NOACTIVATE as LRESULT;
-        }
-        if message == WM_STYLECHANGING && lparam != 0 {
-            let styles = unsafe { &mut *(lparam as *mut STYLESTRUCT) };
-            let index = wparam as i32;
-            if index == GWL_STYLE {
-                let frame = WS_CAPTION
-                    | WS_BORDER
-                    | WS_DLGFRAME
-                    | WS_SYSMENU
-                    | WS_MINIMIZEBOX
-                    | WS_MAXIMIZEBOX;
-                styles.styleNew = (styles.styleNew & !frame) | WS_POPUP;
-            } else if index == GWL_EXSTYLE {
-                styles.styleNew |= WS_EX_NOACTIVATE;
-            }
-        }
-
-        let key = hwnd as isize;
-        let previous = PREVIOUS.with(|previous_procs| {
-            previous_procs
-                .borrow()
-                .get(&key)
-                .copied()
-                .unwrap_or_default()
-        });
-        let result = if previous == 0 {
-            unsafe { DefWindowProcW(hwnd, message, wparam, lparam) }
-        } else {
-            let previous: WNDPROC = unsafe { std::mem::transmute(previous) };
-            unsafe { CallWindowProcW(previous, hwnd, message, wparam, lparam) }
-        };
-
-        if message == WM_NCDESTROY {
-            PREVIOUS.with(|previous_procs| {
-                previous_procs.borrow_mut().remove(&key);
-            });
-        }
-        result
-    }
-}
-
 #[cfg(feature = "test-hooks")]
 static CURSOR_POLL_COUNT: AtomicU64 = AtomicU64::new(0);
 /// Set once a popup window (bubble / menu) had its DWM show transition
@@ -632,7 +573,7 @@ fn set_no_activate(window: &winit::window::Window) {
         if style & WS_EX_NOACTIVATE == 0 {
             SetWindowLongPtrW(hwnd, GWL_EXSTYLE, (style | WS_EX_NOACTIVATE) as isize);
         }
-        no_activate_proc::install(hwnd);
+        crate::no_activate::install(hwnd);
         let _ = disable_window_transitions(hwnd);
     }
 }
@@ -739,7 +680,7 @@ fn style_popup_window(title: &str) -> usize {
                 DwmEnableBlurBehindWindow(hwnd, &blur);
                 DeleteObject(region);
             }
-            no_activate_proc::install(hwnd);
+            crate::no_activate::install(hwnd);
             if disable_window_transitions(hwnd) {
                 #[cfg(feature = "test-hooks")]
                 POPUP_TRANSITIONS_DISABLED.store(true, Ordering::Relaxed);
@@ -854,120 +795,6 @@ fn clamp_point_to_rect(x: i32, y: i32, work: PhysicalRect, inset: i32) -> (i32, 
     let min_y = work.y.saturating_add(inset);
     let max_y = work.bottom().saturating_sub(inset).max(min_y);
     (x.clamp(min_x, max_x), y.clamp(min_y, max_y))
-}
-
-/// Login item (`HKCU\...\Run`) used by the settings toggle.
-///
-/// The value name can be overridden with `PETSONA_AUTOSTART_VALUE_NAME`; the
-/// smoke harness uses that to test the toggle without touching the user's real
-/// `Petsona` entry.
-mod autostart {
-    use windows_sys::Win32::Foundation::{ERROR_FILE_NOT_FOUND, ERROR_SUCCESS};
-    use windows_sys::Win32::System::Registry::{
-        RegCloseKey, RegCreateKeyW, RegDeleteValueW, RegOpenKeyExW, RegQueryValueExW,
-        RegSetValueExW, HKEY, HKEY_CURRENT_USER, KEY_READ, KEY_SET_VALUE, REG_SZ,
-    };
-
-    const RUN_KEY: &str = r"Software\Microsoft\Windows\CurrentVersion\Run";
-    const VALUE_NAME_ENV: &str = "PETSONA_AUTOSTART_VALUE_NAME";
-
-    fn value_name() -> String {
-        std::env::var(VALUE_NAME_ENV)
-            .ok()
-            .map(|name| name.trim().to_string())
-            .filter(|name| !name.is_empty())
-            .unwrap_or_else(|| "Petsona".to_string())
-    }
-
-    fn wide(text: &str) -> Vec<u16> {
-        text.encode_utf16().chain(std::iter::once(0)).collect()
-    }
-
-    /// Read the login item straight from the registry: the settings checkbox
-    /// shows the real OS state, not a cached config copy.
-    pub fn is_enabled() -> bool {
-        let subkey = wide(RUN_KEY);
-        let name = wide(&value_name());
-        unsafe {
-            let mut key: HKEY = std::ptr::null_mut();
-            if RegOpenKeyExW(HKEY_CURRENT_USER, subkey.as_ptr(), 0, KEY_READ, &mut key)
-                != ERROR_SUCCESS
-            {
-                return false;
-            }
-            let mut kind = 0u32;
-            let mut size = 0u32;
-            let status = RegQueryValueExW(
-                key,
-                name.as_ptr(),
-                std::ptr::null(),
-                &mut kind,
-                std::ptr::null_mut(),
-                &mut size,
-            );
-            RegCloseKey(key);
-            status == ERROR_SUCCESS
-        }
-    }
-
-    pub fn enable() -> Result<(), String> {
-        let command = command_line()?;
-        let subkey = wide(RUN_KEY);
-        let name = wide(&value_name());
-        let data: Vec<u16> = command.encode_utf16().chain(std::iter::once(0)).collect();
-        unsafe {
-            let mut key: HKEY = std::ptr::null_mut();
-            let status = RegCreateKeyW(HKEY_CURRENT_USER, subkey.as_ptr(), &mut key);
-            if status != ERROR_SUCCESS {
-                return Err(format!("无法创建开机自启注册表项（错误码 {status}）"));
-            }
-            let status = RegSetValueExW(
-                key,
-                name.as_ptr(),
-                0,
-                REG_SZ,
-                data.as_ptr() as *const u8,
-                (data.len() * std::mem::size_of::<u16>()) as u32,
-            );
-            RegCloseKey(key);
-            if status != ERROR_SUCCESS {
-                return Err(format!("无法写入开机自启注册表项（错误码 {status}）"));
-            }
-        }
-        Ok(())
-    }
-
-    pub fn disable() -> Result<(), String> {
-        let subkey = wide(RUN_KEY);
-        let name = wide(&value_name());
-        unsafe {
-            let mut key: HKEY = std::ptr::null_mut();
-            if RegOpenKeyExW(
-                HKEY_CURRENT_USER,
-                subkey.as_ptr(),
-                0,
-                KEY_SET_VALUE,
-                &mut key,
-            ) != ERROR_SUCCESS
-            {
-                // No Run key means there is nothing to remove.
-                return Ok(());
-            }
-            let status = RegDeleteValueW(key, name.as_ptr());
-            RegCloseKey(key);
-            if status == ERROR_SUCCESS || status == ERROR_FILE_NOT_FOUND {
-                Ok(())
-            } else {
-                Err(format!("无法删除开机自启注册表项（错误码 {status}）"))
-            }
-        }
-    }
-
-    fn command_line() -> Result<String, String> {
-        let exe = std::env::current_exe()
-            .map_err(|error| format!("无法读取当前可执行文件路径：{error}"))?;
-        Ok(format!("\"{}\"", exe.display()))
-    }
 }
 
 fn clear_dwm_frame(window: &winit::window::Window) {

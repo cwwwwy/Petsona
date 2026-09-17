@@ -23,6 +23,9 @@ jobs:
           toolchain: 1.98.0
           components: rustfmt, clippy
 
+      - name: Fast gates
+        run: bash scripts/verify-macos-all.sh --gates-only
+
       - name: Package app bundle
         run: |
           version="${GITHUB_REF_NAME:-}"

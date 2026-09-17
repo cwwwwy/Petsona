@@ -22,8 +22,6 @@ pub enum RootKind {
     AppData,
     /// `~/.codex/pets` (Codex compatibility).
     Codex,
-    /// `~/.unipet/pets` (UniPet compatibility).
-    UniPet,
     /// A user-provided extra directory.
     Custom,
 }
@@ -33,7 +31,6 @@ impl RootKind {
         match self {
             RootKind::AppData => "local",
             RootKind::Codex => "codex",
-            RootKind::UniPet => "unipet",
             RootKind::Custom => "custom",
         }
     }
@@ -67,7 +64,7 @@ pub struct PetEntry {
     pub spritesheet: PathBuf,
     pub frame: FrameSpec,
     pub sprite_version_number: Option<u32>,
-    /// True when the pet is used in place (Codex/UniPet roots) instead of copied.
+    /// True when the pet is used in place (Codex roots) instead of copied.
     pub linked: bool,
     pub animations: BTreeMap<PetState, Animation>,
     #[serde(skip)]
@@ -113,9 +110,9 @@ impl PetLibrary {
     /// The library the app runs with: the writable app-local root and nothing
     /// else.
     ///
-    /// Codex / UniPet folders used to be scanned automatically. They are now
-    /// import sources only: the settings window lists them on demand and copies
-    /// the pets the user picks (see [`codex_pets_dir`] and [`Self::scan_dir`]).
+    /// The Codex folder used to be scanned automatically. It is now an import
+    /// source only: the settings window lists it on demand and copies the pets
+    /// the user picks (see [`codex_pets_dir`] and [`Self::scan_dir`]).
     pub fn discover(app_pets_dir: PathBuf) -> Self {
         Self::single_root(app_pets_dir)
     }

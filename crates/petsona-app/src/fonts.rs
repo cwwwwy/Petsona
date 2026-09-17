@@ -6,8 +6,8 @@
 
 use std::sync::Arc;
 
-pub fn install_cjk_font(ctx: &egui::Context) {
-    let Some((bytes, index)) = load_cjk_font() else {
+pub fn install_cjk_font(ctx: &egui::Context, candidates: &[std::path::PathBuf]) {
+    let Some((bytes, index)) = load_cjk_font(candidates) else {
         tracing::warn!("no CJK font found; Chinese text may render as boxes");
         return;
     };
@@ -27,58 +27,17 @@ pub fn install_cjk_font(ctx: &egui::Context) {
     ctx.set_fonts(fonts);
 }
 
-fn load_cjk_font() -> Option<(Vec<u8>, u32)> {
+fn load_cjk_font(candidates: &[std::path::PathBuf]) -> Option<(Vec<u8>, u32)> {
     if let Some(path) = std::env::var_os("PETSONA_FONT") {
         if let Some(font) = read_font(std::path::PathBuf::from(path)) {
             return Some((font, 0));
         }
     }
 
-    #[cfg(target_os = "windows")]
-    {
-        const CANDIDATES: &[(&str, u32)] = &[
-            ("C:\\Windows\\Fonts\\SourceHanSansCN.ttf", 0),
-            ("C:\\Windows\\Fonts\\msyh.ttc", 0),
-            ("C:\\Windows\\Fonts\\msyh.ttf", 0),
-            ("C:\\Windows\\Fonts\\Deng.ttf", 0),
-            ("C:\\Windows\\Fonts\\simhei.ttf", 0),
-            ("C:\\Windows\\Fonts\\simsun.ttc", 0),
-        ];
-        for &(path, index) in CANDIDATES {
-            if let Some(font) = read_font(path) {
-                tracing::info!("loaded CJK font: {path}");
-                return Some((font, index));
-            }
-        }
-    }
-
-    #[cfg(target_os = "macos")]
-    {
-        const CANDIDATES: &[(&str, u32)] = &[
-            ("/System/Library/Fonts/PingFang.ttc", 0),
-            ("/System/Library/Fonts/STHeiti Light.ttc", 0),
-            ("/System/Library/Fonts/Hiragino Sans GB.ttc", 0),
-        ];
-        for &(path, index) in CANDIDATES {
-            if let Some(font) = read_font(path) {
-                tracing::info!("loaded CJK font: {path}");
-                return Some((font, index));
-            }
-        }
-    }
-
-    #[cfg(all(unix, not(target_os = "macos")))]
-    {
-        const CANDIDATES: &[(&str, u32)] = &[
-            ("/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc", 0),
-            ("/usr/share/fonts/truetype/wqy/wqy-microhei.ttc", 0),
-            ("/usr/share/fonts/truetype/arphic/uming.ttc", 0),
-        ];
-        for &(path, index) in CANDIDATES {
-            if let Some(font) = read_font(path) {
-                tracing::info!("loaded CJK font: {path}");
-                return Some((font, index));
-            }
+    for path in candidates {
+        if let Some(font) = read_font(path) {
+            tracing::info!(path = %path.display(), "loaded CJK font");
+            return Some((font, 0));
         }
     }
 

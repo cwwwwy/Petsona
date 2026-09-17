@@ -493,7 +493,7 @@ pub fn adapt_durations(patterns: Vec<f32>, count: usize) -> Vec<f32> {
     if count == patterns.len() {
         return patterns;
     }
-    let last = *patterns.last().expect("patterns is not empty");
+    let last = patterns[patterns.len() - 1];
     let middle = median_duration(&patterns[..patterns.len() - 1]).unwrap_or(last);
     let mut out = Vec::with_capacity(count);
     if count == 1 {

@@ -58,6 +58,17 @@ impl PlatformHost for MacHost {
         "macos"
     }
 
+    fn cjk_font_candidates(&self) -> Vec<PathBuf> {
+        [
+            "/System/Library/Fonts/PingFang.ttc",
+            "/System/Library/Fonts/STHeiti Light.ttc",
+            "/System/Library/Fonts/Hiragino Sans GB.ttc",
+        ]
+        .into_iter()
+        .map(PathBuf::from)
+        .collect()
+    }
+
     fn present_window(&self, window: &winit::window::Window) -> bool {
         // AppKit needs the non-activating panel mask; winit's
         // `with_active(false)` only affects initial creation.

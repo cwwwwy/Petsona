@@ -6,7 +6,7 @@ members = ["crates/petsona-core", "crates/petsona-runtime", "crates/petsona-app"
 version = "0.1.0"
 edition = "2021"
 license = "MIT"
-authors = ["book"]
+authors = ["cwwwwy"]
 
 [workspace.dependencies]
 serde = { version = "1", features = ["derive"] }

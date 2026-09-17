@@ -18,7 +18,7 @@ crates/
   petsona-app/           共享 egui UI + PlatformHost 边界（纯库，无二进制）
     src/app.rs           应用生命周期与 eframe 协调
     src/app/             bubble / conversation / settings / interaction / menus / pets / test_hooks / geometry
-  petsona-shell-windows/ Win32 外壳（bin petsona-windows）
+  petsona-shell-windows/ Win32 外壳（bin petsona-windows；autostart / no_activate 已拆出）
   petsona-shell-macos/   AppKit 外壳（bin petsona-macos）
 ```
 
@@ -49,6 +49,7 @@ fn main() -> petsona_app::RunResult {
 - 系统集成：菜单（`create_menu`、`PlatformMenu`）、自启（`autostart_*`）、
   文件面板与文件管理器、设置窗口聚焦。
 - 输入：事件唤醒、指针快照、Escape、指针采样节流。
+- 字体：CJK 系统字体候选路径（`cjk_font_candidates`），共享层只负责读取和安装。
 - 测试探针（`test-hooks`）：轮询 / 事件计数、`popup_transitions_disabled` 等。
 
 新增平台能力 = trait 加带默认实现的方法 → 对应外壳 override → 共享层只调用 trait。
@@ -60,7 +61,7 @@ fn main() -> petsona_app::RunResult {
 - macOS：AppKit 原生菜单（含“选择宠物”checked 子菜单）。
 - 不采用 WinUI3 / Windows App SDK：同进程 XAML Island 需要常驻 STA dispatcher 和 C++/WinRT shim，
   对四项菜单来说依赖、包体和首次弹出成本都高于收益。被否决方案的研究资料在 git 历史里
-  （`docs/WINUI3_MENU.md`，2026-09-17 删除）。
+  （`docs/WINUI3_MENU.md` 已删除）。
 
 ## 发布轨道
 

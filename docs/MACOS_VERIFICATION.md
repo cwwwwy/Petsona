@@ -110,7 +110,7 @@ V2 注视生命周期（`turning → holding → returning → idle`）。
 **不覆盖**：缩放闪动观感、真实触控板 / 托盘点击、菜单外观、Activity Monitor 最终 CPU、
 Retina / Spaces、多显示器。
 
-V2 夹具默认从 `~/.codex/pets`、`~/.unipet/pets` 搜索并复制进临时 `PETSONA_HOME`
+V2 夹具默认从 `~/.codex/pets` 搜索并复制进临时 `PETSONA_HOME`
 （应用只加载本地库）；也可以显式指定：
 
 ```bash

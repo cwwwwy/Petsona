@@ -98,6 +98,12 @@ pub trait PlatformHost: Send + Sync + 'static {
         "portable"
     }
 
+    /// Preferred CJK font files, in priority order. Shells provide the system
+    /// paths; the shared UI only reads and installs the first usable file.
+    fn cjk_font_candidates(&self) -> Vec<PathBuf> {
+        Vec::new()
+    }
+
     /// Called with the pet window once per painted frame.
     ///
     /// Windows keeps the frameless `WS_POPUP` style and the `WS_EX_NOACTIVATE`

@@ -5,7 +5,11 @@
 //! and `petsona-core`.
 
 #[cfg(target_os = "windows")]
+mod autostart;
+#[cfg(target_os = "windows")]
 mod menu;
+#[cfg(target_os = "windows")]
+mod no_activate;
 #[cfg(target_os = "windows")]
 mod platform;
 
