@@ -1,67 +1,57 @@
 # Petsona
 
-Petsona is a lightweight, Rust-only desktop pet that uses AI to cultivate a
-personality and keep the user company.
+A lightweight, Rust-only desktop pet for Windows and macOS. No Node, no WebView,
+no Tauri — native windows, a Codex-compatible pet engine and an optional
+DeepSeek greeting.
 
-The new application keeps the parts that made the original Codex pet useful:
+## Features
 
-- ships with a bundled Codex pet (**Superintendent** by Renner Campos) and keeps
-  a local pet library the user owns
-- renders the 8x9 / 8x11 spritesheet animation state machine
-- supports a transparent, always-on-top pet window and fixed size presets
-- supports click, double-click, drag, native context menus, gaze and a speech bubble
-- opens a conversation composer from the bubble's reply button or a pet double-click;
-  replies use DeepSeek when configured and can draw on remembered preferences
-- imports pets explicitly from Codex (`~/.codex/pets`) or from a folder / `.zip`
-- exposes the local state protocol so Codex hooks can drive the animation
-- stores a simplified persona and lightweight pet memory
-- uses one DeepSeek API transport for short, intelligent greetings
-
-The exact frame inventory of the shipped Codex pet and every replicated
-behaviour is documented in [docs/PET_NATIVE.md](docs/PET_NATIVE.md).
-
-The previous Tauri + WebView application is kept under `legacy/` as a reference
-and is no longer part of the workspace.
+- Bundled Codex pet (**Superintendent** by Renner Campos) plus a local,
+  user-owned pet library
+- 8×9 / 8×11 Codex pet packs, animation state machine, pixel-accurate click-through
+- Click / double-click / drag / native context menu / cursor gaze / speech bubble
+- Explicit import from Codex (`~/.codex/pets`), a folder or a `.zip`
+- Local state protocol (`127.0.0.1:17872`) so Codex hooks can drive the pet
+- Persona plus lightweight JSON memory (facts, recent events, last seen)
+- Windows: tray, native Win32 menu, login autostart, multi-monitor position
+  memory, gravity
+- macOS: AppKit shell, tray menu, LaunchAgent autostart script
 
 ## Workspace
 
-```text
-crates/petsona-core/          Pet format, animation engine, persona, memory, DeepSeek client
-crates/petsona-runtime/       Platform-independent runtime: config, memory, protocol, locks, logs
-crates/petsona-app/           Shared egui UI and the platform::PlatformHost boundary (library)
-crates/petsona-shell-windows/ Win32 shell (binary: petsona-windows)
-crates/petsona-shell-macos/   AppKit shell (binary: petsona-macos)
-legacy/                       Previous Tauri app and frontend, reference only
-```
+| Crate | Contents |
+|---|---|
+| `crates/petsona-core/` | Pet format, animation engine, persona, memory, DeepSeek, state protocol |
+| `crates/petsona-runtime/` | Platform-independent runtime: config, sessions, locks, logs, greetings |
+| `crates/petsona-app/` | Shared egui UI + `PlatformHost` boundary (library, no binary) |
+| `crates/petsona-shell-windows/` | Win32 shell → `petsona-windows.exe` |
+| `crates/petsona-shell-macos/` | AppKit shell → `petsona-macos` |
+| `legacy/` | Old Tauri app, reference only |
 
-Platform code no longer lives in `petsona-app`: each shell implements
+Platform code lives in the shells, not in `petsona-app`: each shell implements
 `petsona_app::platform::PlatformHost` and calls `petsona_app::run(host)`.
 
-## Build
+## Run
 
 ```powershell
 cargo run -p petsona-shell-windows   # Windows
 cargo run -p petsona-shell-macos     # macOS
 ```
 
-The Windows MSVC target still requires the MSVC linker. Install Visual Studio
-Build Tools with the "Desktop development with C++" workload before building.
+Windows needs VS Build Tools ("Desktop development with C++") for the MSVC
+linker. A GNU toolchain fallback is documented in `docs/WINDOWS_VERIFICATION.md`.
 
 ## Verify
 
-One entry point per platform, run from the repository root:
-
 ```text
-macOS:   bash scripts/verify-macos-all.sh               # gates + runtime smoke + package smoke
-         bash scripts/verify-macos-all.sh --gates-only  # fmt / clippy / test / release build
-Windows: powershell -ExecutionPolicy Bypass -File scripts\verify-windows.ps1        # gates
+macOS    bash scripts/verify-macos-all.sh               # gates + runtime smoke + package smoke
+         bash scripts/verify-macos-all.sh --gates-only  # fmt / clippy / test / release
+Windows  powershell -ExecutionPolicy Bypass -File scripts\verify-windows.ps1        # gates
          powershell -ExecutionPolicy Bypass -File scripts\verify-windows.ps1 -Full  # gates + smoke
 ```
 
-`scripts/macos-smoke.sh` is the runtime smoke implementation; it stays a separate
-file because it is long and can be rerun against an already-built bundle. The
-package-structure check runs inline in the macOS entry point. Native window interactions still require the manual checks in
-`docs/MACOS_VERIFICATION.md`.
+Window, tray, menu and click-through behaviour still needs the manual checklists
+in `docs/WINDOWS_VERIFICATION.md` / `docs/MACOS_VERIFICATION.md`.
 
 ## Package
 
@@ -70,90 +60,59 @@ powershell -ExecutionPolicy Bypass -File scripts\package-windows.ps1   # dist\Pe
 bash scripts/package-macos.sh                                          # dist/Petsona.app + zip
 ```
 
-The Windows executable embeds `packaging/windows/Petsona.ico` (built from the
-macOS artwork by `packaging/windows/generate-icon.ps1`); the macOS bundle is
-produced by the matching script with the icon, `Info.plist` and `LSUIElement`.
+The Windows exe embeds `packaging/windows/Petsona.ico`, generated from the macOS
+artwork by `packaging/windows/generate-icon.ps1`.
 
-## Interactions
+## State protocol
 
-| Input | Behaviour |
-|---|---|
-| Left click | wave + a greeting bubble (DeepSeek when a key is configured, else the persona's fallback greeting) |
-| Double click | jump + open the conversation composer |
-| Drag | move the pet |
-| Right click | open the native pet context menu |
-| Hover over a bubble | reveal a reply button that opens the conversation composer |
-| Cursor at either side | the V2 look row turns and holds its gaze while the cursor stays there |
-| Conversation input | the pet follows the text caret |
-| Tray icon | open the native menu for settings, pet actions, visibility and quit (menu items vary by platform) |
-| Every 45 min | activity reminder: the pet walks a short distance and asks you to stand up |
+```bash
+curl -XPOST http://127.0.0.1:17872/state \
+  -H 'content-type: application/json' \
+  -d '{"source":"codex","state":"running","message":"running tests","ttlMs":120000}'
+```
 
-## Inspecting a pet
+`GET /health` returns the current pet/persona/state snapshot, `GET /pets` lists the
+pet ids. Available states: `idle`, `running`, `waiting`, `failed`, `review`,
+`waving`, `jumping`, `running-left`, `running-right`, `look-row-9`, `look-row-10`.
+`ttlMs: 0` means "never expires".
+
+## Pets
+
+The app loads only its own library (`<config>/Petsona/pets`). Codex pets are
+copied there explicitly via Settings → 宠物 → 「从 Codex 导入」; importing a
+folder or `.zip` (or dropping it on the window) works too. Packages are
+validated before import, exports use the Codex upload format, and deleting a
+local copy asks for confirmation. The bundled Superintendent is installed on
+every start unless you delete it in Settings.
+
+> The bundled pet has no license field in `pet.json`; confirm the author's terms
+> before distributing a release.
+
+Inspect any pet package:
 
 ```powershell
 cargo run -p petsona-core --example pet_inspect -- "$env:USERPROFILE\.codex\pets\boba" .scratch\boba
 ```
 
-Prints the resolved grid, how many frames each row actually draws and the
-animation table the engine builds; the optional output directory receives one
-PNG per animation row.
-
-## State protocol
-
-Petsona listens on `127.0.0.1:17872` (settings -> 状态协议) so hooks and scripts
-can drive the pet:
-
-```bash
-curl -XPOST http://127.0.0.1:17872/state \
-  -H 'content-type: application/json' \
-  -d '{"source":"codex","state":"running","message":"正在跑测试","ttlMs":120000}'
-```
-
-`GET /health` returns the current pet/persona/state snapshot and `GET /pets`
-lists the discovered pets.
-
-## Pet library
-
-The application keeps its own writable library next to the config file
-(`<config>/Petsona/pets` on every platform). Nothing outside that folder is
-loaded automatically any more: the settings window lists what `~/.codex/pets`
-contains and imports the pets you pick.
-
-The bundled Superintendent is installed into the local library on every start, so it
-is always available to switch back to; deleting it in the settings opts out for
-good. Settings -> 宠物 imports a pet folder or `.zip` (also by dropping it onto
-the window), exports the Codex upload format, and deletes local copies with a
-confirmation. Packages are validated before import: manifest, geometry,
-decoding, path traversal, size and entry limits.
-
-## DeepSeek
-
-The first version uses the OpenAI-compatible Chat Completions endpoint:
+## DeepSeek (optional)
 
 ```text
 base URL: https://api.deepseek.com/v1
 model:    deepseek-v4-flash
 ```
 
-Set the API key in the environment:
-
 ```powershell
 $env:DEEPSEEK_API_KEY = "sk-..."
-cargo run -p petsona-shell-windows
 ```
 
-The settings window can also save the key to the operating system keychain.
-Greeting requests are non-streaming and use a small token budget; if the API is
-unavailable, Petsona falls back to the persona's fixed or time-based greeting.
+The settings window can also save the key to the OS keychain. Greetings are
+non-streaming and use a small token budget; without a key Petsona falls back to
+the persona's fixed or time-based greeting.
 
-## Memory
+## Docs
 
-Memory is stored in `memory.json` under the platform config directory. It is
-not a chat transcript. It contains only:
-
-- long-term facts
-- recent interaction events
-- last-seen and last-greeting state
-
-This keeps the rebuilt application small while still allowing greetings to
-refer to stable preferences and recent context.
+| File | Contents |
+|---|---|
+| `docs/PLATFORM_ARCHITECTURE.md` | Shared core + platform shells, menu decision, release tracks |
+| `docs/WINDOWS_VERIFICATION.md` | Windows manual checklist (includes autostart, multi-monitor, gravity) |
+| `docs/MACOS_VERIFICATION.md` | macOS manual checklist |

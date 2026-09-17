@@ -459,6 +459,12 @@ fn resolve_one(
 
 /// Number of cells drawn from column 0 of `row` (contiguous run of opaque or
 /// partially opaque cells). Returns `None` when the row is completely empty.
+///
+/// Occupancy is authoritative because the shipped packs disagree with the
+/// official timing table: measured on the V2 Codex pet with
+/// `cargo run -p petsona-core --example pet_inspect`, `idle` draws 7 cells
+/// while the official table lists 6. `adapt_durations` stretches the official
+/// pattern to whatever this returns.
 fn drawn_frames(row: u32, frame: FrameSpec, occupancy: &[bool]) -> Option<usize> {
     if row >= frame.rows || frame.columns == 0 {
         return None;

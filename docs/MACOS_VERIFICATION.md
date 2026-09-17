@@ -1,66 +1,44 @@
-# Petsona macOS 实机验证清单
+# Petsona macOS 实机验收清单
 
-这份清单用来在 macOS 上人工验收 Petsona。CI 的 macOS job 只跑 `fmt` / `clippy` / `test`，
-只能证明“能编译”，不能证明“能用”；真正的结论以这份清单为准。
+CI 只能证明“能编译”，不能证明“能用”；**真实结论以本清单为准**。
+最小可用判定：**B1（左键）、B3（拖拽）、B5（转头）、B6（穿透）、B11（空闲 CPU）全部通过**。
 
-当前已知状态（2026-09-17）：
+## 已知状态（2026-09-17）
 
-- macOS 原生后端已迁入独立 shell，但本清单尚未记录迁移后的完整实机回归；第一次验收先运行 E.2 的统一入口。
-- 用户此前实测通过托盘菜单、设置聚焦、透明像素穿透、全屏切换和当前 Space 稳定性；B1–B3、B6–B7 也曾通过。
-  这些旧结果不替代后端搬移后的针对性复验。
-- 固定缩放档位、位置保存、对话流程和 caret gaze 已有代码 / smoke 覆盖；缩放闪动、注视方向与返回动画、
-  气泡回复按钮、对话窗口观感和真实光标注视仍需肉眼确认。注视验收重点是顺时针与逆时针方向是否一致。
-- 空闲采样已降频，但用户此前实测 CPU 为 8–10%；Activity Monitor 尚待复测。
-- 多显示器 / Retina 按用户决定暂缓；当前 Space 行为稳定，不跨所有 Space，暂接受。
-- `.app`、LaunchAgent、签名和公证脚本已提供；真实 Developer ID 签名 / 公证仍需用户凭据。
-- macOS 开机自启继续使用 `scripts/install-macos-launch-agent.sh`；Windows 的注册表开关不适用于 macOS。
-
-最小可用判定：**B1（左键）、B3（拖拽）、B5（转头）、B6（穿透）、B11（空闲 CPU）全部通过**，
-macOS 才算真正可用。
+- ✅ 已通过：A3、B1–B4、B6–B7；透明穿透、托盘菜单、设置聚焦、当前 Space 稳定。
+- ⚠️ 待复测：B5 真实光标、B8 缩放视觉、B9 回复按钮 / 注视、B11 Activity Monitor（修复前 8–10%）。
+- ⏳ 待实机：B10 多屏、B12/B13、C 节 Retina / Spaces、D 节真实签名 / 公证。
+- ℹ️ 位置记忆存**物理像素**；macOS 工作区暂用 winit 整块显示器边界（Dock / 菜单栏未排除），
+  多屏 / Retina 复验时重点看还原位置；重力落点同理，等 `NSScreen.visibleFrame` 后再精确。
+- ℹ️ 开机自启走 `scripts/install-macos-launch-agent.sh`（设置里显示“不支持”），有意保留的差异。
 
 ## 0. 准备
 
 ```bash
-# 只需一次
-xcode-select --install
-
-# 在仓库根目录
+xcode-select --install            # 只需一次
 cargo test --workspace
-cargo run -p petsona-shell-macos
-```
-
-- 用独立数据目录，避免污染真实数据：
-
-```bash
 PETSONA_HOME="$HOME/.petsona-mac-test" cargo run -p petsona-shell-macos
 ```
 
-- 不设置 `PETSONA_HOME` 时，数据在 `~/Library/Application Support/Petsona/`。
-- 日志同时写入 `logs/petsona.log` 和终端；Finder/LaunchAgent 启动时也可直接查看文件日志：
+- 默认数据目录：`~/Library/Application Support/Petsona/`；日志写入 `logs/petsona.log` 和终端
+  （`RUST_LOG=debug` 可调级别）。
+- 单实例锁在数据目录的 `petsona.lock`；换 `PETSONA_HOME` 才能起隔离实例。
 
-```bash
-RUST_LOG=debug cargo run -p petsona-shell-macos
-```
-
-- 单实例锁位于数据目录的 `petsona.lock`；使用不同的 `PETSONA_HOME` 才会启动隔离实例。
-
-## A. 基础回归（逐项状态见表）
+## A. 基础回归
 
 | # | 操作 | 预期结果 | 状态 |
 |---|---|---|---|
-| A1 | 启动 | 宠物窗口出现、无边框、透明背景（不是黑底/白底）、置顶 | 待实测 |
+| A1 | 启动 | 宠物窗口出现、无边框、透明背景、置顶 | 待实测 |
 | A2 | 看菜单栏 | 出现 Petsona 托盘图标 | 待实测 |
-| A3 | 点击托盘图标 | 弹出 macOS 原生菜单：打开设置 / 选择宠物（V2 有标记）/ 宠物大小 / 显示隐藏宠物 / 退出 | 代码已完成；实机待重新确认 |
-| A4 | 打开设置 | 能打开、滚动；缩放、穿透、状态协议端口、自动行走等控件可操作 | 待实测 |
-| A5 | 切换宠物 | 本地库能列出（含内置 Superintendent）；「从 Codex 导入」能列出并导入 `~/.codex/pets`；切换后动画和窗口/托盘图标更新 | 导入面板为 2026-09-16 新增，待实测 |
-| A6 | 导入/导出 | 原生文件面板或拖放可导入文件夹/`.zip`；原生保存面板导出 Codex 格式；删除本地副本需确认 | 待实测 |
-| A7 | 状态协议 POST | `waiting` / `failed` / `review` / `running` 能切换动画；带 `message` 时显示气泡；`ttlMs` 到期回 base | 待实测 |
-| A8 | 状态协议 GET | `GET /health` 返回当前 pet/persona/state；`GET /pets` 返回 id 列表 | 待实测 |
-| A9 | 重启持久化 | 当前宠物、人格、缩放、宠物位置等写入 `config.json`，重启后保持 | 位置写入 smoke 通过；实际拖动后重启待人工 |
-| A10 | 托盘隐藏/显示/退出 | 隐藏后窗口消失，托盘可恢复；退出后进程真的结束 | 待实测 |
-| A11 | DeepSeek keychain | 设置里保存 API key 后，Keychain 出现 Petsona 条目；重启后仍能读取（无 key 时回落固定问候） | 待实测 |
-
-状态协议命令：
+| A3 | 点击托盘图标 | macOS 原生菜单：打开设置 / 选择宠物（V2 有勾选）/ 显示隐藏 / 退出 | 代码完成；实机已通过一次，可复测 |
+| A4 | 打开设置 | 能打开、滚动；缩放、穿透、协议端口、自动行走可操作 | 待实测 |
+| A5 | 切换宠物 | 本地库 +「从 Codex 导入」可用；切换后动画与窗口 / 托盘图标更新 | 导入面板 2026-09-16 新增，待实测 |
+| A6 | 导入 / 导出 | 原生文件面板或拖放导入；原生保存面板导出；删除需确认 | 待实测 |
+| A7 | 状态协议 POST | `waiting`/`failed`/`review`/`running` 切换动画；message 显示气泡；TTL 回 base | 待实测 |
+| A8 | 状态协议 GET | `/health`、`/pets` 返回正确 | 待实测 |
+| A9 | 重启持久化 | 宠物、人格、缩放、位置写入 `config.json` 并保持 | 位置写入 smoke 通过；真实拖动重启待人工 |
+| A10 | 托盘隐藏 / 显示 / 退出 | 隐藏后窗口消失、可恢复；退出后进程真的结束 | 待实测 |
+| A11 | DeepSeek keychain | 保存后 Keychain 出现 Petsona 条目，重启仍可读；无 key 回落固定问候 | 待实测 |
 
 ```bash
 curl -s http://127.0.0.1:17872/health
@@ -70,116 +48,75 @@ curl -XPOST http://127.0.0.1:17872/state \
   -d '{"source":"mac-verify","state":"waiting","message":"macOS 验证","ttlMs":10000}'
 ```
 
-## B. 交互后端验收（代码已接入，需在 macOS 实机逐条打勾）
-
-| # | 操作 | 预期结果 | 当前状态 |
-|---|---|---|---|
-| B1 | 左键单击宠物 | 挥手 + 气泡；320ms 内的第二次点击不应先触发单击 | ✅ 已验证 |
-| B2 | 快速双击 | 跳一下；不先触发单击 | ✅ 已验证 |
-| B3 | 按住拖动 | 宠物跟手移动；左右移动时播放 running-left/right；松手停下且不触发单击 | ✅ 已验证 |
-| B4 | 右键 | macOS 原生菜单出现在光标位置；点菜单外或按 Esc 关闭 | 代码修复 + 自动化通过；真实触控板需复验 |
-| B5 | 鼠标在宠物左右两侧移动 | row9/row10 转向后保持最强方向帧；离开触发区播放返回段；0.9s 冷却；正前方死区不触发 | 状态机 smoke 通过；用户曾报告顺/逆时针方向与返回动画异常，最新视觉结果待实机确认 |
-| B6 | 开启 `click_through` | 透明像素点击落到桌面；不透明精灵像素仍能点击；关闭时整个窗口可交互 | ✅ 已验证 |
-| B7 | 在 TextEdit/浏览器输入时点宠物 | 前台焦点不被打断，输入继续进入原应用 | ✅ 已验证 |
-| B8 | 点击 / 右键 / 打开设置 / 改缩放 | 宠物周围不出现任何边框闪烁；设置窗口成为可输入的前台窗口；缩放不闪动 | Key Window 和原生几何回归自动通过；缩放视觉待复测 |
-| B9 | 用状态协议发带 message 的 state / 悬停气泡 / 双击宠物 | 气泡完整不被裁切；回复按钮可见；下方对话框可输入、发送并显示回复；输入时宠物注视光标 | 对话流程 smoke 通过；回复按钮、视觉和真实光标注视待实测 |
-| B10 | 在副屏右键 | 菜单出现在光标所在显示器，且被夹在工作区内 | 待实测（当前无副屏条件） |
-| B11 | 空闲时看 Activity Monitor | Petsona 空闲 CPU 接近 0–1%（允许偶发波动） | 修复前实测 8–10%；低频采样 smoke 通过，Activity Monitor 待复测 |
-| B12 | 启动第二个实例 | 不出现第二只宠物；要么退出，要么唤起已有实例 | 待实测（已实现锁） |
-| B13 | 注销再登录 / 重启 | 宠物自动出现 | 待实测（已提供 LaunchAgent 脚本） |
-
-## C. 多显示器 / Spaces / 窗口系统
+## B. 交互后端
 
 | # | 操作 | 预期结果 | 状态 |
 |---|---|---|---|
-| C1 | 把宠物拖到副屏 | 位置正确，缩放正确，不跳回主屏 | 暂缓；多屏优先级后置 |
-| C2 | Retina + 非 Retina（或不同缩放）混用 | 精灵清晰、尺寸不跳、点击命中位置不漂 | 暂缓；多屏优先级后置 |
-| C3 | 切换 Space / 进入全屏 App | 置顶行为符合预期；明确宠物是只在当前 Space 还是所有 Space | 当前 Space 稳定；不跨所有 Space，暂接受 |
-| C4 | Mission Control / Stage Manager | 宠物不干扰窗口管理，托盘菜单仍可用 | 待实测 |
-| C5 | 深色 / 浅色菜单栏 | 托盘图标在两种模式下都清晰可见 | 待实测 |
-| C6 | 隐藏/显示后 | 窗口位置、层级、穿透状态保持一致 | 待实测 |
+| B1 | 左键单击 | 挥手 + 气泡；320ms 内不误判双击 | ✅ 已验证 |
+| B2 | 快速双击 | 跳一下，不先挥手 | ✅ 已验证 |
+| B3 | 按住拖动 | 跟手；左右播放 running-left/right；松手停下不触发单击 | ✅ 已验证 |
+| B4 | 右键 | 原生菜单出现在光标处；点外 / Esc 关闭 | 代码修复 + 自动化通过；真实触控板待复验 |
+| B5 | 光标在宠物两侧 | row9/row10 保持最强方向帧；离开播放返回段；0.9s 冷却；死区不触发 | 状态机 smoke 通过；真实方向 / 返回动画待复验 |
+| B6 | 开启 `click_through` | 透明像素点落到桌面；不透明像素仍可点；关闭后整窗可交互 | ✅ 已验证 |
+| B7 | 在 TextEdit / 浏览器输入时点宠物 | 前台焦点不被打断 | ✅ 已验证 |
+| B8 | 点击 / 右键 / 设置 / 改缩放 | 无边框闪；设置成为可输入前台窗口；`0.5 / 0.75 / 1.0 / 1.25 / 1.5 / 2.0` 缩放不闪 | Key Window 与几何回归自动通过；缩放视觉待复测 |
+| B9 | 状态 message / 悬停气泡 / 双击 | 气泡完整；回复按钮可见；对话框可输入发送；输入时注视光标 | 对话流程 smoke 通过；视觉与真实注视待实测 |
+| B10 | 在副屏右键 | 菜单出现在该屏并夹在工作区内 | 待实测（当前无副屏条件） |
+| B11 | 空闲看 Activity Monitor | CPU 接近 0–1%（允许偶发波动） | 修复前 8–10%；低频采样 smoke 通过，待复测 |
+| B12 | 启动第二个实例 | 不出现第二只宠物 | 待实测（锁已实现） |
+| B13 | 注销 / 重启后登录 | 宠物自动出现 | 待实测（LaunchAgent 脚本已提供） |
+
+## C. 多屏 / Spaces / 窗口系统
+
+| # | 操作 | 预期结果 | 状态 |
+|---|---|---|---|
+| C1 | 拖到副屏 | 位置 / 缩放正确，不跳回主屏 | 暂缓；多屏优先级后置 |
+| C2 | Retina + 非 Retina 混用 | 精灵清晰、尺寸不跳、命中不漂 | 暂缓；多屏优先级后置 |
+| C3 | 切换 Space / 全屏 App | 置顶行为符合预期（当前 Space 内稳定；不跨所有 Space，暂接受） | 部分通过 |
+| C4 | Mission Control / Stage Manager | 不干扰窗口管理，托盘菜单可用 | 待实测 |
+| C5 | 深色 / 浅色菜单栏 | 托盘图标两种模式都清晰 | 待实测 |
+| C6 | 隐藏 / 显示后 | 位置、层级、穿透状态一致 | 待实测 |
 
 ## D. 打包 / 发布
 
-- [x] `cargo build --release` 编译通过；bundle 产物已完成结构检查
-- [x] `scripts/package-macos.sh` 生成 `.app` bundle、Info.plist、bundle id、图标和 zip
+- [x] `cargo build --release` 通过；bundle 结构检查完成
+- [x] `scripts/package-macos.sh` 生成 `.app`（Info.plist、bundle id、图标、zip）
 - [x] `LSUIElement = true`，默认不显示 Dock 图标
-- [x] `scripts/install-macos-launch-agent.sh` 安装/卸载 LaunchAgent
-- [x] `scripts/sign-macos.sh` 提供签名和验证流程，并已用 ad-hoc 身份验证
-- [x] `scripts/notarize-macos.sh` 提供 notarytool、stapler、spctl 流程
-- [ ] 使用真实 Developer ID 证书和 Apple 凭据完成签名、公证，并在目标 Mac 实机验证
-- [x] `.github/workflows/release-macos.yml` 在 tag / 手动触发时生成 macOS 架构包
-- [x] 单实例保护（macOS 与 Windows 共用文件锁实现）
-
-打包和开机启动命令：
+- [x] `scripts/install-macos-launch-agent.sh` 安装 / 卸载 LaunchAgent
+- [x] `scripts/sign-macos.sh`、`scripts/notarize-macos.sh` 流程就绪（ad-hoc 签名验证过）
+- [x] `.github/workflows/release-macos.yml` tag / 手动触发生成架构包
+- [ ] 真实 Developer ID 签名 + 公证 + 目标 Mac 实机验证
 
 ```bash
 ./scripts/package-macos.sh
 ./scripts/install-macos-launch-agent.sh install dist/Petsona.app
 ./scripts/install-macos-launch-agent.sh uninstall
-```
 
-签名和公证需要用户配置证书身份与钥匙串 profile：
-
-```bash
 CODESIGN_IDENTITY="Developer ID Application: ..." ./scripts/sign-macos.sh
 NOTARYTOOL_PROFILE="petsona-notary" ./scripts/notarize-macos.sh
 ```
 
 ## E. 自动化验收
 
-运行完整自动验收链：
-
 ```bash
-bash scripts/verify-macos-all.sh
+bash scripts/verify-macos-all.sh               # 门禁 + runtime smoke + 打包结构检查
+bash scripts/verify-macos-all.sh --gates-only  # 只跑 fmt / clippy / test / release
 ```
 
-只需要 Rust 门禁（跳过两个 smoke）时：
+入口脚本 = workspace 门禁（等价 `cargo check -p petsona-shell-macos`）+ `macos-smoke.sh` +
+打包结构检查（可执行文件、图标、Bundle ID、`LSUIElement`、Retina 字段、LaunchAgent 模板）。
+smoke 覆盖协议 / TTL、设置、Key Window、缩放锚点、位置保存、低频指针、idle 重绘、CPU 趋势、
+V2 注视生命周期（`turning → holding → returning → idle`）。
+**不覆盖**：缩放闪动观感、真实触控板 / 托盘点击、菜单外观、Activity Monitor 最终 CPU、
+Retina / Spaces、多显示器。
 
-```bash
-bash scripts/verify-macos-all.sh --gates-only
-```
-
-入口脚本内部只调用 `scripts/macos-smoke.sh`（较长，保留独立文件便于单独复现）；
-打包结构检查已经内联在入口脚本里，不再单独提供脚本。
-
-该脚本使用临时 `PETSONA_HOME` 和 `test-hooks` release，自动检查：
-
-- 进程启动、test-hooks PID、默认可见/置顶/穿透状态；
-- `GET /health`、`GET /pets`、状态协议和 TTL 回落；
-- 设置开关、缩放、气泡、隐藏/显示和配置保存；
-- 短促按钮事件不会因全局轮询间隔漏检；设置窗口实际成为 macOS Key Window；当前宠物 checked 状态、全局指针低频采样、idle 重绘、缩放几何锚点、位置保存和 CPU 趋势；
-- 找到 V2 宠物时，持续注视的 `turning → holding → returning → idle` 生命周期和保持帧。
-
-脚本不替代缩放闪动的肉眼观感、真实触控板/托盘点击、菜单勾选外观、Activity Monitor 最终 CPU、Retina/Spaces 和多显示器验收。
-
-### E.2 平台后端搬移后的首次验证（2026-09-16）
-
-2026-09-16 把 macOS 后端从 `petsona-app` 搬到了 `crates/petsona-shell-macos/src/platform.rs`
-（逐行搬运，逻辑未改），`petsona-app` 现在是纯共享 UI 库。这次搬移**只在 Windows 上做过
-`cargo fmt` 与静态审阅**（macOS 目标无法在 Windows 上链接检查：`ring` 需要 macOS C 工具链），
-所以回到 mac 后请先跑：
-
-```bash
-bash scripts/verify-macos-all.sh
-```
-
-一个脚本就够：它先跑 workspace 的 fmt / clippy / test / release 构建（等价于
-`cargo check -p petsona-shell-macos`，并覆盖新外壳），再跑 runtime smoke（内部会构建
-`petsona-macos --features test-hooks`）和打包结构 smoke。
-
-重点回归：托盘菜单（打开设置 / 选择宠物 / 宠物大小 / 隐藏显示 / 退出）、右键宠物菜单、
-设置窗口成为 Key Window、宠物与菜单不抢焦点、缩放几何与底部中心锚点、Escape 关闭菜单、
-导入/导出文件面板、打开宠物库目录。
-
-默认从 `~/.codex/pets`、`~/.unipet/pets` 搜索 V2 宠物作为**测试夹具**（找到后会复制进临时 `PETSONA_HOME`，因为应用只加载本地库）；也可以显式指定：
+V2 夹具默认从 `~/.codex/pets`、`~/.unipet/pets` 搜索并复制进临时 `PETSONA_HOME`
+（应用只加载本地库）；也可以显式指定：
 
 ```bash
 PETSONA_SMOKE_V2_PET_DIR="$HOME/.codex/pets/<pet>" bash scripts/macos-smoke.sh
 ```
 
-## F. 记录模板
+> 2026-09-16 的平台后端搬移只在 Windows 上做过 fmt + 静态审阅（macOS 目标无法在 Windows 上
+> 链接检查：`ring` 需要 macOS C 工具链），所以回 mac 后请先跑一次完整脚本。
 
-| 日期 | macOS 版本 | 芯片 | 构建方式 | 结论 | 备注 / 日志 |
-|---|---|---|---|---|---|
-|  |  |  | `cargo run -p petsona-shell-macos` |  |  |
