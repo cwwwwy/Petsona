@@ -26,7 +26,6 @@ DeepSeek greeting.
 | `crates/petsona-app/` | Shared egui UI + `PlatformHost` boundary (library, no binary) |
 | `crates/petsona-shell-windows/` | Win32 shell → `petsona-windows.exe` |
 | `crates/petsona-shell-macos/` | AppKit shell → `petsona-macos` |
-| `legacy/` | Old Tauri app, reference only |
 
 Platform code lives in the shells, not in `petsona-app`: each shell implements
 `petsona_app::platform::PlatformHost` and calls `petsona_app::run(host)`.

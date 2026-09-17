@@ -12,7 +12,9 @@
 //! - `WS_EX_NOACTIVATE` would block `SetForegroundWindow` for the same reason.
 //!
 //! Focus is handed back to the previously active window as soon as the menu
-//! closes, so opening a menu does not steal the user's editor focus (B7).
+//! closes, so opening a menu does not steal the user's editor focus (B7). The
+//! exception is a command that opens a new foreground window (settings): the
+//! old owner must not take focus back after that window has just activated.
 
 use std::ptr;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -295,7 +297,8 @@ fn run_menu_thread(
                 );
                 // Hand the foreground to our own hidden owner so the menu is
                 // dismissible (Escape, click outside) and keyboard navigable.
-                // The window that lost the foreground gets it back below.
+                // Most commands hand it back below; commands that open a new
+                // window leave it for that window instead.
                 let previous = GetForegroundWindow();
                 SetForegroundWindow(owner);
                 open.store(true, Ordering::SeqCst);
@@ -309,7 +312,14 @@ fn run_menu_thread(
                 );
                 open.store(false, Ordering::SeqCst);
                 let _ = PostMessageW(owner, WM_NULL, 0, 0);
-                if !previous.is_null() && previous != owner {
+                // `打开设置` / `更换宠物` creates the settings window right
+                // after this command reaches the UI thread. Restoring the old
+                // foreground here makes that window focus and immediately lose
+                // focus again, which showed up as a visible flicker. Leave the
+                // foreground to the new window for those commands.
+                let opens_new_window =
+                    command == COMMAND_OPEN_SETTINGS as i32 || command == COMMAND_CHANGE_PET as i32;
+                if !opens_new_window && !previous.is_null() && previous != owner {
                     SetForegroundWindow(previous);
                 }
                 command

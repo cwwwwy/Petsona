@@ -15,11 +15,10 @@ Petsona 是 Windows / macOS 桌宠：**Rust-only**（eframe/egui + winit + tray-
 |---|---|
 | `crates/petsona-core/` | 宠物格式与动画引擎、人格、记忆、DeepSeek、状态协议 |
 | `crates/petsona-runtime/` | 平台无关运行时：配置、宠物会话、实例锁、日志、问候 |
-| `crates/petsona-app/` | 共享 egui UI + `platform::PlatformHost` 边界（纯库，无二进制） |
+| `crates/petsona-app/` | 共享 egui UI + `PlatformHost` 边界；UI 已拆入 `src/app/` 子模块 |
 | `crates/petsona-shell-windows/` | Win32 外壳（bin `petsona-windows`） |
 | `crates/petsona-shell-macos/` | AppKit 外壳（bin `petsona-macos`） |
-| `docs/` | 宠物格式实测、平台架构、两端验收清单、WinUI3 研究 |
-| `legacy/` | 旧 Tauri 应用，仅参考，不参与构建 |
+| `docs/` | 平台架构与两端实机验收清单 |
 
 ## 常用命令
 
@@ -64,9 +63,17 @@ MSVC 缺 `link.exe` 的 GNU 回退写在 `docs/WINDOWS_VERIFICATION.md`。
 
 ## 当前状态（2026-09-17）
 
-- 仓库：`C:\Users\happyddz\Desktop\Petsona`；分支 `main` 与 `origin/main` 同步，工作区干净。
-- 最新提交：`81a3fe4` `feat: add login autostart, multi-monitor position memory and gravity`
-  （阶段 7 的 1/2/3 已完成并推送；`codex/cross` 已合并删除）。
+- 仓库：`C:\Users\happyddz\Desktop\Petsona`；分支 `main`。当前工作区包含本轮 UI 修复与项目清理改动，
+  提交 / 推送仍由用户手动执行。
+- 最新提交：`67f839d` `docs: trim redundancy, drop PET_NATIVE/WINUI3 notes`；此前功能提交为
+  `81a3fe4`（阶段 7 的 1/2/3 已完成并推送；`codex/cross` 已合并删除）。
+- 工作区进行中（2026-09-17，未提交）：修复 Win32 菜单打开设置后焦点回跳；输入框改为单行输入 + ↑，
+  去掉标题 / 历史 / 关闭按钮 / spinner，Esc 关闭；输入框从宠物影子放大、关闭缩回影子；气泡去掉独立
+  “回复”按钮，改为点击气泡本体。Rust 门禁与 Windows 20 项 smoke 已通过。
+- 项目清理已完成（2026-09-17，未提交）：`legacy/` 旧 Tauri 工程已从工作区删除，历史仍保留在 Git 中；
+  `dist/` 与 `target/` 本地产物已清理。`petsona-app` 完成纯移动式模块化：`app.rs` 4,704 → 1,143 行；
+  功能拆到 `app/{bubble,conversation,settings,interaction,menus,pets,test_hooks,geometry}.rs`。
+  清理后 Rust 门禁与 Windows 20 项 smoke 均通过。
 - GitHub 仓库：`https://github.com/cwwwwy/Petsona.git`（2026-09-16 由 bytepet 改名；
   旧地址自动重定向，其他机器仍需 `git remote set-url origin ...` 更新一次）。
 - 测试基线：`cargo test --workspace` 全绿（core / app / runtime / shell-windows；
@@ -103,7 +110,7 @@ MSVC 缺 `link.exe` 的 GNU 回退写在 `docs/WINDOWS_VERIFICATION.md`。
 
 - 仓库：`cwwwwy/Petsona`（About / Topics 已于 2026-09-16 设置）。
 - 改名 / 改定位后同步：GitHub About + Topics、README 首段、crate 包名、数据目录、
-  macOS bundle id（`com.petsona.desktop`）。`legacy/` 保留旧 BytePet 代码，不改名。
+  macOS bundle id（`com.petsona.desktop`）。
 
 ## 关键事实速查
 
@@ -136,8 +143,15 @@ MSVC 缺 `link.exe` 的 GNU 回退写在 `docs/WINDOWS_VERIFICATION.md`。
 - **气泡 / 输入框“从侧面滑入”是 DWM 显示过渡**：必须在窗口第一次显示前设置
   `DWMWA_TRANSITIONS_FORCEDISABLED`（先隐藏创建 warm-up → 设属性 → 再显示）。该属性读不回来，
   自动化靠探针 + smoke B9。
-- **进场动画是自绘的**：气泡从下往上 8px / 160ms，对话窗口从上往下 8px / 180ms；
+- **进场动画是自绘的**：气泡从下往上 8px / 160ms；输入框从宠物脚下的阴影放大，
+  关闭时缩回阴影（240ms / 200ms）。不再通过移动 / 改变窗口几何做输入框动画。
   气泡底部 `BUBBLE_BOTTOM_PADDING` 与窗口 `BUBBLE_WINDOW_GAP` 是成对常量，改一处必须改另一处。
+- **输入框是单一轻量组件**：只保留单行输入和向上箭头发送按钮；没有标题、历史、关闭按钮或 spinner。
+  Esc 关闭；点击气泡本体（不是额外的“回复”按钮）或双击宠物打开。组件由原生透明窗口承载但仍由 egui
+  自绘，不引入 Win32 `EDIT` / WinUI3 子控件，以保留透明和缩放动画。
+- **Win32 菜单打开设置时不能恢复旧前台**：菜单线程在 `打开设置` / `更换宠物` 命令后跳过
+  `SetForegroundWindow(previous)`；`WindowsHost::confirm_settings_focus` 在设置窗出现后重新确认前台，
+  避免“聚焦后立刻失去焦点”。后台脚本会话受 Windows 前台锁限制，焦点观感仍需实机确认。
 - **V2 注视优先于 locomotion**：look-row-9/10 优先级 20 > running-left/right 的 10，且“光标不离开就不放”。
   鼠标停在宠物上时，协议发的 `running-left/right` 会被注视盖住（设计如此，有单测）；
   smoke A8 先把光标移到对面角落再跑协议状态。
@@ -153,6 +167,9 @@ MSVC 缺 `link.exe` 的 GNU 回退写在 `docs/WINDOWS_VERIFICATION.md`。
   WS_SYSMENU | WS_MINIMIZEBOX | WS_MAXIMIZEBOX`，任何状态变化都会画出边框（就是“闪现”）。
   修法：去掉这些位 + `WS_POPUP` + `SetWindowPos(SWP_FRAMECHANGED)`，再重新
   `DwmEnableBlurBehindWindow` 恢复透明。实测 `style=0x96000000`。
+- **子 viewport 不会经过根窗口的 `present_window`**：气泡 / 对话窗要各自处理 Win32 风格。
+  对话窗需要键盘焦点，所以用 `prepare_activatable_popup_window` 去边框但保留可激活；
+  每帧重新确认，避免 winit patch 鼠标穿透 / 尺寸时把标题栏加回来。smoke B9 已验证。
 - **不要每帧重复发 `InnerSize` / `WindowLevel`**：会反复 `SetWindowPos` 导致闪；
   用 `applied_window_size` / `applied_always_on_top` 缓存。
 - **`tray-icon` 原生菜单在 Windows 事件循环上会卡死**：Windows 用专用 Win32 菜单线程，

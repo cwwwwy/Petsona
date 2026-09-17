@@ -181,12 +181,12 @@ pub trait PlatformHost: Send + Sync + 'static {
         true
     }
 
-    /// Disable the OS show/hide transition for one of our own windows that keeps
-    /// its normal activation behaviour (the conversation window has to accept
-    /// keyboard focus, so it cannot use the non-activating popup styling).
-    /// Returns how many windows were touched.
-    fn disable_window_animation_for_title(&self, _title: &str) -> usize {
-        0
+    /// Prepare an activatable popup (the conversation window) before it is
+    /// shown: remove native decorations, keep it activatable, and disable the
+    /// OS show/hide transition. Hosts without native window styling simply
+    /// report success. The app retries until this returns true.
+    fn prepare_activatable_popup_window(&self, _title: &str) -> bool {
+        true
     }
 
     /// Show a tray-icon menu next to the cursor over one of our own views.

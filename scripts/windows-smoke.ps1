@@ -1132,7 +1132,7 @@ try {
             [void] (Wait-ForTestStatus -Predicate { param($candidate) $candidate.petVisible } -Description "pet visible" -TimeoutSeconds 3)
         }
 
-        Invoke-SmokeCheck -Id "B9" -Name "bubble keeps the pet window geometry (partial)" {
+        Invoke-SmokeCheck -Id "B9" -Name "bubble overlay and conversation lifecycle (partial)" {
             $before = Get-PetsonaWindow -ProcessId $first.Process.Id -Title "Petsona" -TimeoutSeconds 5
             Invoke-TestAction -Action "show-bubble" -Text "windows smoke bubble" -TtlMs 3000
             [void] (Wait-ForTestStatus -Predicate { param($candidate) $candidate.bubbleText -eq "windows smoke bubble" } -Description "bubble text" -TimeoutSeconds 3)
@@ -1150,6 +1150,19 @@ try {
             Invoke-TestAction -Action "clear-bubble"
             [void] (Wait-ForTestStatus -Predicate { param($candidate) $null -eq $candidate.bubbleText } -Description "bubble cleared" -TimeoutSeconds 3)
             [void] (Wait-ForTestStatus -Predicate { param($candidate) -not $candidate.bubbleWindowCreated } -Description "bubble overlay hidden" -TimeoutSeconds 3)
+
+            # The composer is a separate transparent overlay window. It must
+            # exist long enough to play the shadow entry animation and then
+            # disappear after the close animation, not on the first frame.
+            Invoke-TestAction -Action "open-conversation"
+            [void] (Wait-ForTestStatus -Predicate { param($candidate) $candidate.conversationWindowCreated } -Description "conversation overlay" -TimeoutSeconds 3)
+            $conversation = Get-PetsonaWindow -ProcessId $first.Process.Id -Title "Petsona 对话" -TimeoutSeconds 5
+            Assert-True ($conversation.Width -ge 440 -and $conversation.Height -ge 260) "conversation overlay has an unexpected size."
+            Assert-True ([PetsonaSmoke.Native]::HasAll($conversation.Style, [PetsonaSmoke.Native]::WS_POPUP)) "conversation WS_POPUP is missing."
+            Assert-True (-not [PetsonaSmoke.Native]::HasAny($conversation.Style, [PetsonaSmoke.Native]::WS_FRAME)) "conversation still has a native title/frame."
+            Assert-True (-not [PetsonaSmoke.Native]::HasAny($conversation.ExStyle, [PetsonaSmoke.Native]::WS_EX_NOACTIVATE)) "conversation cannot accept keyboard focus."
+            Invoke-TestAction -Action "close-conversation"
+            Wait-WindowGone -ProcessId $first.Process.Id -Title "Petsona 对话" -TimeoutSeconds 5
         }
 
         Invoke-SmokeCheck -Id "B11" -Name "idle uses event-driven mouse wakeups" {

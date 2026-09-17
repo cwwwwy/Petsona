@@ -16,6 +16,8 @@ crates/
   petsona-core/          宠物格式、动画引擎、人格、记忆、状态协议
   petsona-runtime/       配置、宠物会话、日志、实例锁、问候
   petsona-app/           共享 egui UI + PlatformHost 边界（纯库，无二进制）
+    src/app.rs           应用生命周期与 eframe 协调
+    src/app/             bubble / conversation / settings / interaction / menus / pets / test_hooks / geometry
   petsona-shell-windows/ Win32 外壳（bin petsona-windows）
   petsona-shell-macos/   AppKit 外壳（bin petsona-macos）
 ```

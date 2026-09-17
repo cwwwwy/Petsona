@@ -191,6 +191,27 @@ impl PlatformHost for WindowsHost {
         style_popup_window(title)
     }
 
+    fn confirm_settings_focus(&self, title: &str) -> bool {
+        use windows_sys::Win32::UI::Input::KeyboardAndMouse::SetFocus;
+        use windows_sys::Win32::UI::WindowsAndMessaging::{
+            GetForegroundWindow, SetForegroundWindow,
+        };
+
+        let Some(hwnd) = windows_with_title(title).first().copied() else {
+            return false;
+        };
+        unsafe {
+            if GetForegroundWindow() != hwnd {
+                let _ = SetForegroundWindow(hwnd);
+            }
+            // The call runs on the window thread, so this also puts the
+            // keyboard focus on the egui child surface once the window is
+            // active. The app retries until this returns true (or times out).
+            let _ = SetFocus(hwnd);
+            GetForegroundWindow() == hwnd
+        }
+    }
+
     fn install_event_waker(&self, ctx: &egui::Context) -> bool {
         install_mouse_waker(ctx)
     }
@@ -249,8 +270,8 @@ impl PlatformHost for WindowsHost {
         MOUSE_POSITION_VALID.load(Ordering::Relaxed)
     }
 
-    fn disable_window_animation_for_title(&self, title: &str) -> usize {
-        disable_window_animation_by_title(title)
+    fn prepare_activatable_popup_window(&self, title: &str) -> bool {
+        prepare_activatable_popup_window_by_title(title) > 0
     }
 
     #[cfg(feature = "test-hooks")]
@@ -498,25 +519,33 @@ fn disable_window_transitions(hwnd: *mut core::ffi::c_void) -> bool {
     }
 }
 
+fn window_hwnd(window: &winit::window::Window) -> Option<*mut core::ffi::c_void> {
+    use raw_window_handle::{HasWindowHandle as _, RawWindowHandle};
+
+    let handle = window.window_handle().ok()?;
+    let RawWindowHandle::Win32(handle) = handle.as_raw() else {
+        return None;
+    };
+    Some(handle.hwnd.get() as *mut core::ffi::c_void)
+}
+
 /// Re-establish per-pixel transparency.
 ///
 /// winit creates transparent windows by giving DWM an empty blur region, and
 /// that is per-window state which a forced frame recompute can drop, so it is
 /// re-applied after changing the window styles.
 fn enable_transparency(window: &winit::window::Window) {
-    use raw_window_handle::{HasWindowHandle as _, RawWindowHandle};
+    if let Some(hwnd) = window_hwnd(window) {
+        enable_transparency_hwnd(hwnd);
+    }
+}
+
+fn enable_transparency_hwnd(hwnd: *mut core::ffi::c_void) {
     use windows_sys::Win32::Graphics::Dwm::{
         DwmEnableBlurBehindWindow, DWM_BB_BLURREGION, DWM_BB_ENABLE, DWM_BLURBEHIND,
     };
     use windows_sys::Win32::Graphics::Gdi::{CreateRectRgn, DeleteObject};
 
-    let Ok(handle) = window.window_handle() else {
-        return;
-    };
-    let RawWindowHandle::Win32(handle) = handle.as_raw() else {
-        return;
-    };
-    let hwnd = handle.hwnd.get() as *mut core::ffi::c_void;
     unsafe {
         let region = CreateRectRgn(0, 0, -1, -1);
         let blur = DWM_BLURBEHIND {
@@ -539,21 +568,23 @@ fn enable_transparency(window: &winit::window::Window) {
 /// border that flashed around the pet. A pure `WS_POPUP` window has no frame
 /// to draw at all.
 fn strip_frame_styles(window: &winit::window::Window) -> bool {
-    use raw_window_handle::{HasWindowHandle as _, RawWindowHandle};
+    window_hwnd(window).is_some_and(strip_frame_styles_hwnd)
+}
+
+fn strip_frame_styles_hwnd(hwnd: *mut core::ffi::c_void) -> bool {
     use windows_sys::Win32::UI::WindowsAndMessaging::{
         GetWindowLongPtrW, SetWindowLongPtrW, SetWindowPos, GWL_STYLE, SWP_FRAMECHANGED,
         SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, WS_BORDER, WS_CAPTION, WS_DLGFRAME,
-        WS_MAXIMIZEBOX, WS_MINIMIZEBOX, WS_POPUP, WS_SYSMENU,
+        WS_MAXIMIZEBOX, WS_MINIMIZEBOX, WS_POPUP, WS_SYSMENU, WS_THICKFRAME,
     };
 
-    let Ok(handle) = window.window_handle() else {
-        return false;
-    };
-    let RawWindowHandle::Win32(handle) = handle.as_raw() else {
-        return false;
-    };
-    let hwnd = handle.hwnd.get() as *mut core::ffi::c_void;
-    let frame = WS_CAPTION | WS_BORDER | WS_DLGFRAME | WS_SYSMENU | WS_MINIMIZEBOX | WS_MAXIMIZEBOX;
+    let frame = WS_CAPTION
+        | WS_BORDER
+        | WS_DLGFRAME
+        | WS_SYSMENU
+        | WS_MINIMIZEBOX
+        | WS_MAXIMIZEBOX
+        | WS_THICKFRAME;
     unsafe {
         let style = GetWindowLongPtrW(hwnd, GWL_STYLE) as u32;
         let wanted = (style & !frame) | WS_POPUP;
@@ -718,21 +749,67 @@ fn style_popup_window(title: &str) -> usize {
     windows.len()
 }
 
-/// Disable the OS show/hide transition for our own windows that keep their
-/// normal activation behaviour (the conversation window, which has to accept
-/// keyboard focus). Returns how many windows were touched.
-fn disable_window_animation_by_title(title: &str) -> usize {
+/// Make the conversation window frameless while keeping it activatable.
+///
+/// `winit`'s `decorations(false)` still leaves the classic caption/thick-frame
+/// bits on Windows. The pet window strips them in `present_window`, but child
+/// viewports never receive that callback, so the conversation window kept a
+/// title bar and a white non-client strip around the custom composer.
+fn prepare_activatable_popup_window_by_title(title: &str) -> usize {
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        GetWindowLongPtrW, SetWindowLongPtrW, SetWindowPos, GWL_EXSTYLE, GWL_STYLE,
+        SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, WS_BORDER,
+        WS_CAPTION, WS_DLGFRAME, WS_EX_NOACTIVATE, WS_MAXIMIZEBOX, WS_MINIMIZEBOX, WS_POPUP,
+        WS_SYSMENU, WS_THICKFRAME,
+    };
+
     let windows = windows_with_title(title);
-    let mut disabled = 0;
     for hwnd in &windows {
-        if disable_window_transitions(*hwnd) {
-            disabled += 1;
-            #[cfg(feature = "test-hooks")]
-            POPUP_TRANSITIONS_DISABLED.store(true, Ordering::Relaxed);
+        unsafe {
+            let style = GetWindowLongPtrW(*hwnd, GWL_STYLE) as u32;
+            let frame = WS_CAPTION
+                | WS_BORDER
+                | WS_DLGFRAME
+                | WS_SYSMENU
+                | WS_MINIMIZEBOX
+                | WS_MAXIMIZEBOX
+                | WS_THICKFRAME;
+            let wanted = (style & !frame) | WS_POPUP;
+            let mut changed = style != wanted;
+            if changed {
+                SetWindowLongPtrW(*hwnd, GWL_STYLE, wanted as isize);
+            }
+
+            // The composer must accept keyboard focus, unlike the pet/bubble.
+            let ex_style = GetWindowLongPtrW(*hwnd, GWL_EXSTYLE) as u32;
+            let wanted_ex_style = ex_style & !WS_EX_NOACTIVATE;
+            if ex_style != wanted_ex_style {
+                SetWindowLongPtrW(*hwnd, GWL_EXSTYLE, wanted_ex_style as isize);
+                changed = true;
+            }
+
+            if changed {
+                SetWindowPos(
+                    *hwnd,
+                    std::ptr::null_mut(),
+                    0,
+                    0,
+                    0,
+                    0,
+                    SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED,
+                );
+                clear_dwm_frame_hwnd(*hwnd);
+                enable_transparency_hwnd(*hwnd);
+            }
+            if disable_window_transitions(*hwnd) {
+                #[cfg(feature = "test-hooks")]
+                POPUP_TRANSITIONS_DISABLED.store(true, Ordering::Relaxed);
+            }
         }
     }
-    disabled
+    windows.len()
 }
+
 /// Work area (physical pixels) of the monitor nearest to a physical point.
 fn monitor_work_area_physical(x: i32, y: i32) -> Option<PhysicalRect> {
     use windows_sys::Win32::Foundation::POINT;
@@ -894,18 +971,16 @@ mod autostart {
 }
 
 fn clear_dwm_frame(window: &winit::window::Window) {
-    use raw_window_handle::{HasWindowHandle as _, RawWindowHandle};
+    if let Some(hwnd) = window_hwnd(window) {
+        clear_dwm_frame_hwnd(hwnd);
+    }
+}
+
+fn clear_dwm_frame_hwnd(hwnd: *mut core::ffi::c_void) {
     use windows_sys::Win32::Graphics::Dwm::{
         DwmSetWindowAttribute, DWMNCRP_DISABLED, DWMWA_NCRENDERING_POLICY,
     };
 
-    let Ok(handle) = window.window_handle() else {
-        return;
-    };
-    let RawWindowHandle::Win32(handle) = handle.as_raw() else {
-        return;
-    };
-    let hwnd = handle.hwnd.get() as *mut core::ffi::c_void;
     let policy = DWMNCRP_DISABLED;
     unsafe {
         DwmSetWindowAttribute(
