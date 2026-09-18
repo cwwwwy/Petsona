@@ -17,6 +17,29 @@ pub(super) fn position_for_bottom_center(anchor: egui::Pos2, size: egui::Vec2) -
     anchor - egui::vec2(size.x * 0.5, size.y)
 }
 
+/// Keep gaze local to the pet while adding a small release margin so a cursor
+/// near the trigger edge does not make the pose flicker on and off.
+pub(super) fn cursor_within_gaze_range(
+    dx: f64,
+    dy: f64,
+    pet_size: egui::Vec2,
+    already_gazing: bool,
+) -> bool {
+    const ENTER_MARGIN: f64 = 0.25;
+    const EXIT_MARGIN: f64 = 0.35;
+    let margin = pet_size.x.min(pet_size.y).max(1.0) as f64
+        * if already_gazing {
+            EXIT_MARGIN
+        } else {
+            ENTER_MARGIN
+        };
+    let radius_x = pet_size.x.max(1.0) as f64 * 0.5 + margin;
+    let radius_y = pet_size.y.max(1.0) as f64 * 0.5 + margin;
+    let normalized_x = dx / radius_x;
+    let normalized_y = dy / radius_y;
+    normalized_x * normalized_x + normalized_y * normalized_y <= 1.0
+}
+
 /// Clamp `rect` so it stays inside `work`; a rect larger than the work area is
 /// pinned to its top-left corner instead of being pushed outside.
 pub(super) fn clamp_rect_to_work_area(rect: PhysicalRect, work: PhysicalRect) -> PhysicalRect {
@@ -110,4 +133,21 @@ pub(super) fn smoothstep(progress: f32) -> f32 {
 /// Ease-out cubic: fast start, soft landing.
 pub(super) fn ease_out(progress: f32) -> f32 {
     1.0 - (1.0 - progress).powi(3)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::cursor_within_gaze_range;
+
+    #[test]
+    fn gaze_trigger_is_near_the_pet_with_release_hysteresis() {
+        let pet = egui::vec2(220.0, 318.0);
+
+        assert!(cursor_within_gaze_range(110.0, 159.0, pet, false));
+        assert!(!cursor_within_gaze_range(170.0, 0.0, pet, false));
+        assert!(cursor_within_gaze_range(170.0, 0.0, pet, true));
+        assert!(!cursor_within_gaze_range(190.0, 0.0, pet, true));
+        assert!(!cursor_within_gaze_range(0.0, 220.0, pet, false));
+        assert!(cursor_within_gaze_range(0.0, 220.0, pet, true));
+    }
 }

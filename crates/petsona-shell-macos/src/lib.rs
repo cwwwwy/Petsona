@@ -5,6 +5,9 @@
 //! in `petsona-app`, `petsona-runtime` and `petsona-core`.
 
 #[cfg(target_os = "macos")]
+mod autostart;
+
+#[cfg(target_os = "macos")]
 mod platform;
 
 #[cfg(target_os = "macos")]

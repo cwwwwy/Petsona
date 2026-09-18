@@ -242,10 +242,24 @@ impl Animation {
 /// Look rows are pose tables, not turn/return timelines. The middle frame is
 /// the neutral, front-facing pose for the row; cursor gaze animates directly
 /// between this pose and the requested pose.
-const GAZE_FRAME_MS: f32 = 70.0;
+const GAZE_FRAME_MS: f32 = 40.0;
 
 fn gaze_neutral_frame(animation: &Animation) -> usize {
     animation.sprites.len().saturating_sub(1) / 2
+}
+
+/// The pose nearest the vertical axis is the bridge between the left and
+/// right look rows. Cross-row gaze changes visit this pose before switching
+/// rows so a cursor sweep over the top or bottom does not flip diagonally.
+fn gaze_crossing_frame(state: PetState, animation: &Animation, dy: f32) -> usize {
+    let last = animation.sprites.len().saturating_sub(1);
+    if dy.abs() < f32::EPSILON {
+        gaze_neutral_frame(animation)
+    } else if state.look_towards_right() == (dy > 0.0) {
+        last
+    } else {
+        0
+    }
 }
 
 /// Return the discrete pose for a transition and whether it has reached its
@@ -627,28 +641,61 @@ impl PetEngine {
         let Some((state, target_frame)) = self.gaze_target(dx, dy) else {
             return false;
         };
-        let Some(animation) = self.animations.get(&state) else {
+        let Some(target_animation) = self.animations.get(&state) else {
             return false;
         };
-        let neutral_frame = gaze_neutral_frame(animation);
+        let neutral_frame = gaze_neutral_frame(target_animation);
+        let crossing_frame = gaze_crossing_frame(state, target_animation, dy);
+        let Some(existing) = self.gaze else {
+            return false;
+        };
         let Some(gaze) = &mut self.gaze else {
             return false;
         };
-        let same_row = gaze.state == state;
-        let changed =
-            !same_row || gaze.target_frame != target_frame || gaze.phase == GazePhase::Returning;
-        if changed {
-            let from_frame = if same_row {
-                gaze.current_frame
-            } else {
-                neutral_frame
+
+        if existing.state != state {
+            let Some(current_animation) = self.animations.get(&existing.state) else {
+                return false;
             };
+            let current_crossing = gaze_crossing_frame(existing.state, current_animation, dy);
+
+            // Finish moving to the top/bottom/forward bridge in the current
+            // row first. The next pointer update can then switch rows from
+            // the corresponding edge pose instead of snapping to row center.
+            if existing.phase != GazePhase::Holding
+                || existing.current_frame != current_crossing
+                || existing.target_frame != current_crossing
+            {
+                if existing.phase == GazePhase::Turning && existing.target_frame == current_crossing
+                {
+                    return false;
+                }
+                gaze.phase = GazePhase::Turning;
+                gaze.from_frame = existing.current_frame;
+                gaze.target_frame = current_crossing;
+                gaze.current_frame = existing.current_frame;
+                return true;
+            }
+
+            // The old row is already holding its vertical bridge pose. Begin
+            // the new row at its matching edge, then animate inward to target.
             gaze.state = state;
             gaze.phase = GazePhase::Turning;
-            gaze.from_frame = from_frame;
+            gaze.from_frame = crossing_frame;
             gaze.target_frame = target_frame;
             gaze.neutral_frame = neutral_frame;
-            gaze.current_frame = from_frame;
+            gaze.current_frame = crossing_frame;
+            return true;
+        }
+
+        let changed =
+            existing.target_frame != target_frame || existing.phase == GazePhase::Returning;
+        if changed {
+            gaze.phase = GazePhase::Turning;
+            gaze.from_frame = existing.current_frame;
+            gaze.target_frame = target_frame;
+            gaze.neutral_frame = neutral_frame;
+            gaze.current_frame = existing.current_frame;
         }
         changed
     }
@@ -1055,6 +1102,46 @@ mod tests {
         assert_eq!(e.gaze_sprite_at(transition_ms + 1.0), None);
         assert_eq!(e.current(), PetState::Idle);
         assert_eq!(e.gaze_phase(), None);
+    }
+
+    #[test]
+    fn gaze_crosses_left_and_right_through_the_vertical_edge_pose() {
+        for (dy, left_edge, right_edge) in [(-40.0, 7, 0), (40.0, 0, 7)] {
+            let mut e = engine(11);
+            let now = Instant::now();
+            let left = e.animation(PetState::LookRow10).unwrap().clone();
+            let right = e.animation(PetState::LookRow9).unwrap().clone();
+            let (_, left_target) = e.gaze_target(-100.0, dy).unwrap();
+            let (_, right_target) = e.gaze_target(100.0, dy).unwrap();
+
+            assert_eq!(e.glance_towards(-100.0, dy, now), Some(PetState::LookRow10));
+            let neutral = gaze_neutral_frame(&left);
+            let initial_turn_ms = neutral.abs_diff(left_target) as f32 * GAZE_FRAME_MS;
+            assert_eq!(
+                e.gaze_sprite_at(initial_turn_ms + 1.0),
+                Some(left.sprites[left_target])
+            );
+
+            assert!(e.retarget_gaze(100.0, dy));
+            assert_eq!(e.current(), PetState::LookRow10);
+            assert_eq!(e.gaze_target_frame(), Some(left_edge));
+            let bridge_ms = left_target.abs_diff(left_edge) as f32 * GAZE_FRAME_MS;
+            assert_eq!(
+                e.gaze_sprite_at(bridge_ms + 1.0),
+                Some(left.sprites[left_edge])
+            );
+            assert_eq!(e.gaze_phase(), Some(GazePhase::Holding));
+
+            assert!(e.retarget_gaze(100.0, dy));
+            assert_eq!(e.current(), PetState::LookRow9);
+            assert_eq!(e.gaze_sprite_at(0.0), Some(right.sprites[right_edge]));
+            let target_ms = right_edge.abs_diff(right_target) as f32 * GAZE_FRAME_MS;
+            assert_eq!(
+                e.gaze_sprite_at(target_ms + 1.0),
+                Some(right.sprites[right_target])
+            );
+            assert_eq!(e.gaze_phase(), Some(GazePhase::Holding));
+        }
     }
 
     #[test]

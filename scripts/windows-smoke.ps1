@@ -1136,6 +1136,11 @@ try {
             $before = Get-PetsonaWindow -ProcessId $first.Process.Id -Title "Petsona" -TimeoutSeconds 5
             $shadow = Get-PetsonaWindow -ProcessId $first.Process.Id -Title "Petsona 影子" -TimeoutSeconds 5
             Assert-True ($shadow.Width -le 96 -and $shadow.Height -le 96) "pet shadow window is larger than expected."
+            $petBottom = $before.Top + $before.Height
+            Assert-True ($shadow.Top -ge $petBottom) "pet shadow window overlaps the pet and can be occluded."
+            $petCenterX = $before.Left + [int] ($before.Width / 2)
+            $shadowCenterX = $shadow.Left + [int] ($shadow.Width / 2)
+            Assert-True ([Math]::Abs($shadowCenterX - $petCenterX) -le 3) "pet shadow is not horizontally centered under the pet."
             Assert-True ([PetsonaSmoke.Native]::HasAll($shadow.Style, [PetsonaSmoke.Native]::WS_POPUP)) "pet shadow WS_POPUP is missing."
             Assert-True (-not [PetsonaSmoke.Native]::HasAny($shadow.Style, [PetsonaSmoke.Native]::WS_FRAME)) "pet shadow still has a native frame."
             Assert-True ([PetsonaSmoke.Native]::HasAll($shadow.ExStyle, [PetsonaSmoke.Native]::WS_EX_NOACTIVATE)) "pet shadow can steal focus."

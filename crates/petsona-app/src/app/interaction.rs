@@ -1,5 +1,6 @@
 use super::geometry::{
-    clamp_rect_to_work_area, monitor_for_point, monitor_for_rect, PhysicalMonitor,
+    clamp_rect_to_work_area, cursor_within_gaze_range, monitor_for_point, monitor_for_rect,
+    PhysicalMonitor,
 };
 use super::shadow::shadow_hit_rect;
 use super::*;
@@ -462,6 +463,7 @@ impl PetsonaApp {
             self.cancel_glance();
             return;
         }
+        let gaze_active = pet.engine.gaze_direction().is_some();
         let Some(window) = frame.winit_window() else {
             return;
         };
@@ -484,8 +486,7 @@ impl PetsonaApp {
         let pet_top = position.y as f64 / scale + (window_height - pet_size.y as f64).max(0.0);
         let dx = cursor_x - (pet_left + pet_size.x as f64 * 0.5);
         let dy = cursor_y - (pet_top + pet_size.y as f64 * 0.5);
-        let reach = pet_size.x.max(pet_size.y) as f64 * 2.5;
-        if dx.abs() > reach || dy.abs() > reach {
+        if !cursor_within_gaze_range(dx, dy, pet_size, gaze_active) {
             self.release_glance(Instant::now());
             return;
         }

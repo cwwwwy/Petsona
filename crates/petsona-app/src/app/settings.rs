@@ -450,7 +450,7 @@ impl PetsonaApp {
                 let mut enabled = self.autostart_enabled;
                 if ui
                     .checkbox(&mut enabled, "开机自启动")
-                    .on_hover_text("登录后在后台启动 Petsona（Windows 注册表 Run 项）")
+                    .on_hover_text("登录后在后台启动 Petsona")
                     .changed()
                 {
                     match self.platform.set_autostart(enabled) {
@@ -471,7 +471,7 @@ impl PetsonaApp {
                     }
                 }
             } else {
-                ui.label("当前平台不支持在设置里配置开机自启动（macOS 使用 LaunchAgent 脚本）。");
+                ui.label("当前平台不支持在设置里配置开机自启动。");
             }
         });
 

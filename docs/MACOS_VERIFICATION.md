@@ -3,14 +3,16 @@
 CI 只能证明“能编译”，不能证明“能用”；**真实结论以本清单为准**。
 最小可用判定：**B1（左键）、B3（拖拽）、B5（转头）、B6（穿透）、B11（空闲 CPU）全部通过**。
 
-## 已知状态（2026-09-17）
+## 已知状态（2026-09-18）
 
 - ✅ 已通过：A3、B1–B4、B6–B7；透明穿透、托盘菜单、设置聚焦、当前 Space 稳定。
+- ✅ 2026-09-17 完整 `verify-macos-all.sh` 通过；34 项 runtime smoke 含 LaunchAgent plist 开 / 关。
+- ✅ 2026-09-18 `bash scripts/verify-macos-all.sh` 通过：fmt / clippy / workspace tests（app 19、core 59、runtime 1、macOS shell 7）/ release、33 项 runtime smoke、打包结构检查。
+- ⚠️ 当前会话没有可枚举的 winit 显示器，NSScreen 工作区与设置 Key Window 两项明确 `[SKIP]`；几何单测通过，真实桌面行为待确认。
 - ⚠️ 待复测：B5 真实光标、B8 缩放视觉、B9 输入框动画 / 注视、B11 Activity Monitor（修复前 8–10%）。
 - ⏳ 待实机：B10 多屏、B12/B13、C 节 Retina / Spaces、D 节真实签名 / 公证。
-- ℹ️ 位置记忆存**物理像素**；macOS 工作区暂用 winit 整块显示器边界（Dock / 菜单栏未排除），
-  多屏 / Retina 复验时重点看还原位置；重力落点同理，等 `NSScreen.visibleFrame` 后再精确。
-- ℹ️ 开机自启走 `scripts/install-macos-launch-agent.sh`（设置里显示“不支持”），有意保留的差异。
+- ℹ️ 位置记忆存**物理像素**；工作区由 `NSScreen.visibleFrame` 提供，排除 Dock / 菜单栏后用于位置夹取和重力落点。
+- ℹ️ 设置页现可创建 / 移除当前用户的 LaunchAgent；真实注销后登录启动待实机确认，脚本安装方式仍保留。
 
 ## 0. 准备
 
@@ -39,6 +41,7 @@ PETSONA_HOME="$HOME/.petsona-mac-test" cargo run -p petsona-shell-macos
 | A9 | 重启持久化 | 宠物、人格、缩放、位置写入 `config.json` 并保持 | 位置写入 smoke 通过；真实拖动重启待人工 |
 | A10 | 托盘隐藏 / 显示 / 退出 | 隐藏后窗口消失、可恢复；退出后进程真的结束 | 待实测 |
 | A11 | DeepSeek keychain | 保存后 Keychain 出现 Petsona 条目，重启仍可读；无 key 回落固定问候 | 待实测 |
+| A12 | 设置 → 启动 → 开机自启动 | 勾选 / 取消会创建 / 移除 `~/Library/LaunchAgents/com.petsona.desktop.plist` | plist 后端 smoke 通过；设置控件观感与真实登录启动待实测 |
 
 ```bash
 curl -s http://127.0.0.1:17872/health
@@ -56,15 +59,15 @@ curl -XPOST http://127.0.0.1:17872/state \
 | B2 | 快速双击 | 跳一下，不先挥手 | ✅ 已验证 |
 | B3 | 按住拖动 | 跟手；左右播放 running-left/right；松手停下不触发单击 | ✅ 已验证 |
 | B4 | 右键 | 原生菜单出现在光标处；点外 / Esc 关闭 | 代码修复 + 自动化通过；真实触控板待复验 |
-| B5 | 光标在宠物周围移动 | row9/row10 作为方向姿势表直接寻址；从中性帧平滑移动到目标姿势，离开后回到中性帧；死区不触发 | 状态机自动测试通过；真实方向 / 平滑观感待复验 |
+| B5 | 光标在宠物周围移动 | 只在宠物附近的椭圆区域触发；row9/row10 作为方向姿势表，从中性帧逐帧到目标；左右换行先经过对应的上 / 下中间姿势；离开后回中性帧，死区不触发 | 范围与跨行状态机单测通过；真实方向、跟随延迟和过渡观感待复验 |
 | B6 | 开启 `click_through` | 透明像素点落到桌面；不透明像素仍可点；关闭后整窗可交互 | ✅ 已验证 |
 | B7 | 在 TextEdit / 浏览器输入时点宠物 | 前台焦点不被打断 | ✅ 已验证 |
-| B8 | 点击 / 右键 / 设置 / 改缩放 | 无边框闪；设置成为可输入前台窗口；`0.5 / 0.75 / 1.0 / 1.25 / 1.5 / 2.0` 缩放不闪 | Key Window 与几何回归自动通过；缩放视觉待复测 |
-| B9 | 状态 message / 影子按钮 / 输入框 | 宠物下方固定小影子；悬停变圆形编辑按钮；点击后从按钮展开输入框；输入框只显示输入框 + ↑，文字自动换行并增高；Enter 发送、Shift+Enter 换行、Esc 关闭 | 对话流程 smoke 通过；视觉与真实注视待实测 |
+| B8 | 点击 / 右键 / 设置 / 改缩放 | 无边框闪；设置成为可输入前台窗口；`0.5 / 0.75 / 1.0 / 1.25 / 1.5 / 2.0` 缩放不闪 | 缩放锚点 / 几何 smoke 自动通过；Key Window 需在有显示器的桌面确认，缩放视觉待复测 |
+| B9 | 状态 message / 影子按钮 / 输入框 | 影子与宠物留出间距且不被挡；悬停变圆形编辑按钮；点击后按钮原位横向展开为输入框；单行高与按钮直径一致，多行自动增高；Enter 发送、Shift+Enter 换行、Esc 关闭 | 对话发送 / 关闭 smoke 与锚点 / 高度 / 多行几何单测通过；位置、过渡观感、caret 注视待实测 |
 | B10 | 在副屏右键 | 菜单出现在该屏并夹在工作区内 | 待实测（当前无副屏条件） |
 | B11 | 空闲看 Activity Monitor | CPU 接近 0–1%（允许偶发波动） | 修复前 8–10%；低频采样 smoke 通过，待复测 |
 | B12 | 启动第二个实例 | 不出现第二只宠物 | 待实测（锁已实现） |
-| B13 | 注销 / 重启后登录 | 宠物自动出现 | 待实测（LaunchAgent 脚本已提供） |
+| B13 | 注销 / 重启后登录 | 宠物自动出现 | 设置与 LaunchAgent 脚本均已实现；真实登录后待实测 |
 
 ## C. 多屏 / Spaces / 窗口系统
 
@@ -105,8 +108,9 @@ bash scripts/verify-macos-all.sh --gates-only  # 只跑 fmt / clippy / test / re
 
 入口脚本 = workspace 门禁（等价 `cargo check -p petsona-shell-macos`）+ `macos-smoke.sh` +
 打包结构检查（可执行文件、图标、Bundle ID、`LSUIElement`、Retina 字段、LaunchAgent 模板）。
-smoke 覆盖协议 / TTL、设置、Key Window、缩放锚点、位置保存、低频指针、idle 重绘、CPU 趋势、
-V2 注视生命周期（`turning → holding → returning → idle`）。
+smoke 覆盖协议 / TTL、设置、（有可枚举显示器时）Key Window、缩放锚点、位置保存、低频指针、idle 重绘、CPU 趋势、
+LaunchAgent plist 开关（使用临时目录，不触碰用户真实登录项）、V2 注视生命周期
+（`turning → holding → returning → idle`）。
 **不覆盖**：缩放闪动观感、真实触控板 / 托盘点击、菜单外观、Activity Monitor 最终 CPU、
 Retina / Spaces、多显示器。
 

@@ -61,18 +61,22 @@ MSVC 缺 `link.exe` 的 GNU 回退写在 `docs/WINDOWS_VERIFICATION.md`。
 - 仓库对外元数据（GitHub 名称、About、Topics、README 首段）要和 Petsona 同步，建议值见下文。
 - 涉及窗口 / 托盘 / 菜单的改动，交付时写清“需要用户实机确认什么”。
 
-## 当前状态（2026-09-17）
+## 当前状态（2026-09-18）
 
-- 仓库：`C:\Users\happyddz\Desktop\Petsona`；分支 `main`，与 `origin/main` 同步，工作区干净。
-- 最新提交：`1af1a80` `refactor: remove legacy tree and split app UI modules`。
-- 2026-09-17 已完成并推送：设置焦点回跳修复；输入框改为极简输入 + ↑；Esc 关闭和宠物影子开关动画；
-  气泡本体点击回复；删除 `legacy/`；`petsona-app` 按功能拆成 `app/` 子模块。
-- Rust 门禁（fmt / clippy / test）与 Windows `verify-windows.ps1 -Full` 已通过。
-- 清理第二批（2026-09-17，未提交）：CJK 字体候选路径改由 `PlatformHost::cjk_font_candidates` 提供；
-  Windows 外壳拆出 `autostart.rs` 和 `no_activate.rs`；移除 smoke 的 `~/.unipet/pets` 回退；
-  CI 保持只在 PR / tag / 手动触发时运行，不因 `main` push 触发；macOS release 打包前跑 Rust 门禁。
-- 交互修复（2026-09-17，未提交）：注视改为方向姿势表 + 中性帧返回；宠物下方增加固定小影子和
-  悬停编辑按钮；输入框缩小到约 300pt、支持自动换行增高、Enter 发送、Shift+Enter 换行、Esc 关闭。
+- 本机 checkout：`/Users/book/Desktop/Petsona`，分支 `main`；最新已提交基线 `922614d`，与 `origin/main` 同步；
+  本轮 macOS 改动尚未提交（Git 操作由用户执行）。
+- 已合入：删除旧 `legacy/` 树、`petsona-app` UI 模块化、CJK 字体路径经 `PlatformHost` 注入、
+  Windows `autostart.rs` / `no_activate.rs` 分拆、方向姿势注视与影子 / 对话输入框动画。
+- 2026-09-17 本轮新增：macOS 设置页 LaunchAgent 开关、以 `NSScreen.visibleFrame` 计算工作区，
+  用临时目录 smoke 验证 LaunchAgent plist 开 / 关。
+- 2026-09-17 的完整 `bash scripts/verify-macos-all.sh` 曾通过：fmt / clippy / workspace 测试（app 14、core 58、
+  runtime 1、macOS shell 7）/ release 构建、34 项运行 smoke 和打包结构检查。当前运行会话没有可枚举的
+  winit 显示器，所以 visibleFrame runtime 检查明确 `[SKIP]`；坐标换算单测通过，真实可用区边缘行为与注销后自启仍待实机。
+- 2026-09-18 未提交修复：影子中心位于宠物窗口下方 22pt、40pt 交互窗完全避开宠物；编辑按钮与输入框共享
+  34pt 锚点并原位横向展开；注视改为宠物附近的椭圆触发区（短边额外留白 25%，退出迟滞 35%），左右换行先经过
+  对应的上 / 下边缘姿势；注视姿势间隔与活动采样均为 40ms。fmt / clippy / release 和 workspace 测试通过
+  （app 19、core 59、runtime 1、macOS shell 7）；33 项 macOS runtime smoke 与打包结构检查通过。
+  当前会话没有可枚举的显示器，NSScreen 工作区与设置 Key Window 两项明确 `[SKIP]`；影子 / 输入框过渡和注视观感仍需人工确认。
 - GitHub 仓库：`https://github.com/cwwwwy/Petsona.git`（2026-09-16 由 bytepet 改名；
   旧地址自动重定向，其他机器仍需 `git remote set-url origin ...` 更新一次）。
 - 测试基线：`cargo test --workspace` 全绿（core / app / runtime / shell-windows；
@@ -81,8 +85,8 @@ MSVC 缺 `link.exe` 的 GNU 回退写在 `docs/WINDOWS_VERIFICATION.md`。
   B7–B9/B11–B14、C3/C6/C7；受限会话无法写 HKCU 时 T4 明确 `[SKIP]`。
 - Windows 实机：A1–A7、A10–A12、B1–B6、B9、B12–B14、C1 已通过（B7 自动化 + 真实 SendInput 通过）；
   B5/B8/B10/B15/C4/C5 与 H1–H5 仍需实机确认，细节以 `docs/WINDOWS_VERIFICATION.md` 为准。
-- macOS 实机：A3、B1–B4、B6–B7 已通过；多屏 / Retina、Activity Monitor、签名 / 公证待验收
-  （`docs/MACOS_VERIFICATION.md`）。
+- macOS 实机：A3、B1–B4、B6–B7 曾通过；B5 注视视觉、B8 缩放观感、B9 输入框动画 / caret gaze、
+  B11 Activity Monitor、A12 下一次登录启动仍待确认；多屏 / Retina 按用户决定暂缓，签名 / 公证待凭据。
 
 ### 阶段 7 剩余
 
@@ -90,8 +94,8 @@ MSVC 缺 `link.exe` 的 GNU 回退写在 `docs/WINDOWS_VERIFICATION.md`。
    加上已有的 B5 / B7 / B8 / B10 / C4 / C5 / D1 / D6。
 2. **首次发布**：定版本 → 打 `windows-v*` tag 跑 `release-windows.yml`（D4 首次执行）；
    macOS 拿到 Developer ID 后走 `sign-macos.sh` / `notarize-macos.sh`。
-3. **macOS 补课**（需要在 mac 上）：`bash scripts/verify-macos-all.sh`，再补 B10 多屏、
-   B11 Activity Monitor、A11 keychain、C 节 Retina/Spaces。
+3. **macOS 人工验收**：确认 A12 LaunchAgent 在下一次登录启动、`NSScreen.visibleFrame` 的窗口夹取 / 重力落点、
+   B5 注视视觉、B8 缩放、B9 caret gaze、B11 Activity Monitor、A11 Keychain、真实签名 / 公证；多屏 / Retina 暂缓。
 
 ## 架构约定
 
@@ -123,6 +127,8 @@ MSVC 缺 `link.exe` 的 GNU 回退写在 `docs/WINDOWS_VERIFICATION.md`。
   （重力 2600 px/s²、上限 1800 px/s，落到当前显示器工作区底部并播放一次 `jumping`）。
 - 开机自启（Windows）：`HKCU\Software\Microsoft\Windows\CurrentVersion\Run` 的 `Petsona` =
   `"<exe 路径>"`；测试可用 `PETSONA_AUTOSTART_VALUE_NAME` 换一个值名。
+- 开机自启（macOS）：设置页写入 / 删除 `~/Library/LaunchAgents/com.petsona.desktop.plist`；
+  `scripts/install-macos-launch-agent.sh` 仍用于手动管理打包的 `.app`。
 - 状态协议：`127.0.0.1:17872`，`POST /state`、`GET /health`、`GET /pets`；`ttlMs: 0` 表示不过期。
 - 宠物帧数按图集实际绘制推断（发行版 V2 的 idle 实际画 7 帧，官方表写 6）；row9 = 右侧方向
   姿势表、row10 = 左侧方向姿势表，每行中间帧是中性姿势；依据与测量方法见 `pet/state.rs` 和
@@ -155,7 +161,8 @@ MSVC 缺 `link.exe` 的 GNU 回退写在 `docs/WINDOWS_VERIFICATION.md`。
   `SetForegroundWindow(previous)`；`WindowsHost::confirm_settings_focus` 在设置窗出现后重新确认前台，
   避免“聚焦后立刻失去焦点”。后台脚本会话受 Windows 前台锁限制，焦点观感仍需实机确认。
 - **V2 注视是方向姿势表**：look-row-9/10 每帧是目标姿势，不是 turn/return 时间线；
-  同一行内从中性/当前帧沿帧序移动到目标，换方向时直接重定向，离开触发区回到中性帧。
+  同一行内从中性 / 当前帧沿帧序移动到目标，跨左右行先经过旧行对应的上 / 下边缘姿势，再从新行同侧边缘进入目标；
+  触发区是椭圆，半径为宠物半尺寸 + 短边 25% 留白，退出留白 35%，姿势步进 / 活动指针采样 40ms，离开触发区回中性帧。
   优先级 20 > running-left/right 的 10；smoke A8 先把光标移到对面角落再跑协议状态。
 - **转向姿态会让命中像素变透明**：光标移到宠物上 → 它转头 → 当前帧像素变了 → 窗口变穿透 → 点不到。
   修法：`cursor_over_pet` 先测当前帧，再回退 idle 全帧并集掩码；回归测试
@@ -163,7 +170,7 @@ MSVC 缺 `link.exe` 的 GNU 回退写在 `docs/WINDOWS_VERIFICATION.md`。
 - **位置记忆必须用物理像素**：逻辑点在混合 DPI 桌面会漂。工作区 Windows 用
   `MonitorFromPoint` + `GetMonitorInfoW(rcWork)`（纯函数 `clamp_rect_to_work_area` /
   `monitor_for_point` + 单测），显示器不存在时回落到最近可见工作区；
-  macOS 暂时回落到 winit 整块显示器边界（Dock / 菜单栏未排除）。
+  macOS 通过 `NSScreen.visibleFrame` 排除 Dock / 菜单栏；真实多屏 / Retina 仍待人工验收。
 - **HKCU Run 在受限会话会 ACCESS_DENIED（错误 5）**：smoke T4 此时明确 `[SKIP]`，不误报失败。
 - **winit `decorations(false)` 不是真无边框**：窗口仍带 `WS_CAPTION | WS_BORDER | WS_DLGFRAME |
   WS_SYSMENU | WS_MINIMIZEBOX | WS_MAXIMIZEBOX`，任何状态变化都会画出边框（就是“闪现”）。

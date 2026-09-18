@@ -1,20 +1,19 @@
-use super::geometry::{ease_out, entry_progress, lerp, smoothstep};
-use super::shadow::SHADOW_CENTER_OFFSET;
+use super::geometry::{ease_out, entry_progress, smoothstep};
+use super::shadow::{
+    draw_edit_icon, edit_button_background, edit_button_stroke, shadow_center, SHADOW_BUTTON_SIZE,
+};
 use super::*;
 
 const CONVERSATION_TITLE: &str = "Petsona 对话";
 pub(super) const CONVERSATION_PILL_WIDTH: f32 = 300.0;
-pub(super) const CONVERSATION_GAP: f32 = 8.0;
 const CONVERSATION_WINDOW_PADDING: f32 = 12.0;
 const CONVERSATION_ANCHOR_Y: f32 = 18.0;
-const CONVERSATION_BUTTON_SIZE: f32 = 34.0;
-const CONVERSATION_MIN_INPUT_HEIGHT: f32 = 36.0;
-const CONVERSATION_MAX_INPUT_HEIGHT: f32 = 104.0;
+pub(super) const CONVERSATION_MIN_INPUT_HEIGHT: f32 = SHADOW_BUTTON_SIZE;
+const CONVERSATION_MAX_INPUT_HEIGHT: f32 = 112.0;
 /// The conversation window grows out of the shadow under the pet and collapses
 /// back into it when it closes.
 pub(super) const CONVERSATION_ENTRY: Duration = Duration::from_millis(220);
 pub(super) const CONVERSATION_EXIT: Duration = Duration::from_millis(180);
-const CONVERSATION_COLLAPSED_SCALE: f32 = 0.12;
 
 impl PetsonaApp {
     pub(super) fn open_conversation(&mut self) {
@@ -209,8 +208,7 @@ impl PetsonaApp {
         let parent = egui::pos2(position.x as f32 / scale, position.y as f32 / scale);
         let pet_window = self.pet_window_size();
         let window_size = conversation_window_size();
-        let shadow_center =
-            parent + egui::vec2(pet_window.x * 0.5, pet_window.y - SHADOW_CENTER_OFFSET);
+        let shadow_center = parent + shadow_center(pet_window).to_vec2();
         let conversation_position =
             shadow_center - egui::vec2(window_size.x * 0.5, CONVERSATION_ANCHOR_Y);
 
@@ -234,7 +232,7 @@ impl PetsonaApp {
             .platform
             .prepare_activatable_popup_window(CONVERSATION_TITLE);
 
-        let progress = if self.conversation_open {
+        let phase_progress = if self.conversation_open {
             ease_out(entry_progress(
                 self.conversation_shown_at,
                 CONVERSATION_ENTRY,
@@ -245,7 +243,12 @@ impl PetsonaApp {
                 CONVERSATION_EXIT,
             ))
         };
-        if !self.conversation_open && progress >= 1.0 {
+        let morph_progress = if self.conversation_open {
+            phase_progress
+        } else {
+            1.0 - phase_progress
+        };
+        if !self.conversation_open && morph_progress <= 0.0 {
             ctx.send_viewport_cmd_to(conversation_id, egui::ViewportCommand::Visible(false));
             self.conversation_window_created = false;
             self.conversation_closing_at = None;
@@ -257,44 +260,24 @@ impl PetsonaApp {
         let pill_width =
             CONVERSATION_PILL_WIDTH.min(window_size.x - CONVERSATION_WINDOW_PADDING * 2.0);
         let input_width =
-            (pill_width - CONVERSATION_WINDOW_PADDING * 2.0 - CONVERSATION_BUTTON_SIZE - 6.0)
-                .max(80.0);
+            (pill_width - CONVERSATION_WINDOW_PADDING * 2.0 - SHADOW_BUTTON_SIZE - 6.0).max(80.0);
         let rows = conversation_input_rows(&self.conversation_draft, input_width);
         let input_height = (rows as f32 * 20.0 + 12.0)
             .clamp(CONVERSATION_MIN_INPUT_HEIGHT, CONVERSATION_MAX_INPUT_HEIGHT);
-        let pill_height = input_height + CONVERSATION_WINDOW_PADDING * 2.0;
-        let pill_rect = egui::Rect::from_center_size(
-            egui::pos2(
-                window_size.x * 0.5,
-                CONVERSATION_ANCHOR_Y + CONVERSATION_GAP + pill_height * 0.5,
-            ),
-            egui::vec2(pill_width, pill_height),
-        );
-        let visual_scale = if self.conversation_open {
-            lerp(CONVERSATION_COLLAPSED_SCALE, 1.0, progress)
-        } else {
-            lerp(1.0, CONVERSATION_COLLAPSED_SCALE, progress)
-        };
-        let opacity = if self.conversation_open {
-            progress
-        } else {
-            1.0 - progress
-        };
-        let anchor = egui::pos2(window_size.x * 0.5, CONVERSATION_ANCHOR_Y);
-        let animated_center = if self.conversation_open {
-            anchor.lerp(pill_rect.center(), progress)
-        } else {
-            pill_rect.center().lerp(anchor, progress)
-        };
-        let transform = egui::emath::TSTransform::new(
-            animated_center.to_vec2() - pill_rect.center().to_vec2() * visual_scale,
-            visual_scale,
-        );
-        let interactive = self.conversation_open && progress >= 1.0;
-        let global_pill_rect = pill_rect.translate(conversation_position.to_vec2());
+        let morph_rect =
+            conversation_morph_rect(window_size.x, pill_width, input_height, morph_progress);
+        let expanded_rect = conversation_morph_rect(window_size.x, pill_width, input_height, 1.0);
+        let morph_size = morph_rect.size();
+        let morph_center = morph_rect.center();
+        let content_progress = smoothstep(((morph_progress - 0.35) / 0.65).clamp(0.0, 1.0));
+        let interactive = self.conversation_open && morph_progress >= 1.0;
+        let global_pill_rect = expanded_rect.translate(conversation_position.to_vec2());
         let pointer_in_pill = self.pointer.position.is_some_and(|(x, y)| {
             global_pill_rect.contains(egui::pos2(x as f32 / scale, y as f32 / scale))
         });
+        let corner_radius = (morph_size.y * 0.5).round().clamp(1.0, 255.0) as u8;
+        let edit_icon_alpha = (255.0 * (1.0 - content_progress)).round() as u8;
+        let edit_icon_color = egui::Color32::from_rgba_unmultiplied(255, 255, 255, edit_icon_alpha);
 
         let builder = egui::ViewportBuilder::default()
             .with_title(CONVERSATION_TITLE)
@@ -315,40 +298,39 @@ impl PetsonaApp {
                 ui.input(|input| input.key_pressed(egui::Key::Enter) && !input.modifiers.shift);
             let escape_pressed =
                 self.conversation_open && ui.input(|input| input.key_pressed(egui::Key::Escape));
-            ui.scope_builder(egui::UiBuilder::new().max_rect(pill_rect), |ui| {
-                ui.set_opacity(opacity);
-                ui.with_visual_transform(transform, |ui| {
-                    if !self.conversation_open {
-                        ui.disable();
-                    }
-                    egui::Frame::NONE
-                        .fill(egui::Color32::from_rgb(28, 28, 32))
-                        .stroke(egui::Stroke::new(
-                            1.0,
-                            egui::Color32::from_rgba_unmultiplied(255, 255, 255, 20),
-                        ))
-                        .corner_radius(18)
-                        .inner_margin(egui::Margin::symmetric(
-                            CONVERSATION_WINDOW_PADDING as i8,
-                            CONVERSATION_WINDOW_PADDING as i8,
-                        ))
-                        .show(ui, |ui| {
-                            ui.set_min_size(egui::vec2(
-                                pill_width - CONVERSATION_WINDOW_PADDING * 2.0,
-                                input_height,
-                            ));
+            ui.scope_builder(egui::UiBuilder::new().max_rect(morph_rect), |ui| {
+                ui.set_clip_rect(morph_rect);
+                egui::Frame::NONE
+                    .fill(edit_button_background())
+                    .stroke(edit_button_stroke())
+                    .corner_radius(corner_radius)
+                    .inner_margin(egui::Margin::symmetric(
+                        CONVERSATION_WINDOW_PADDING as i8,
+                        0,
+                    ))
+                    .show(ui, |ui| {
+                        ui.set_opacity(content_progress);
+                        if !interactive {
+                            ui.disable();
+                        }
+                        let inner_width =
+                            (morph_size.x - CONVERSATION_WINDOW_PADDING * 2.0).max(1.0);
+                        ui.set_min_size(egui::vec2(inner_width, morph_size.y.max(1.0)));
+                        if content_progress > 0.0 {
+                            let animated_input_width =
+                                (inner_width - SHADOW_BUTTON_SIZE - 6.0).max(1.0);
                             ui.spacing_mut().item_spacing.x = 6.0;
                             ui.horizontal(|ui| {
                                 let output = ui
                                     .allocate_ui_with_layout(
-                                        egui::vec2(input_width, input_height),
+                                        egui::vec2(animated_input_width, morph_size.y.max(1.0)),
                                         egui::Layout::top_down(egui::Align::Min),
                                         |ui| {
-                                            ui.set_min_height(input_height);
+                                            ui.set_min_height(morph_size.y.max(1.0));
                                             egui::TextEdit::multiline(&mut self.conversation_draft)
                                                 .id_salt("conversation-input")
                                                 .desired_width(ui.available_width())
-                                                .desired_rows(rows)
+                                                .desired_rows(if interactive { rows } else { 1 })
                                                 .frame(egui::Frame::NONE)
                                                 .margin(egui::Margin::symmetric(4, 6))
                                                 .text_color(egui::Color32::from_rgb(245, 245, 247))
@@ -402,17 +384,17 @@ impl PetsonaApp {
                                     egui::Color32::from_rgba_unmultiplied(255, 255, 255, 16)
                                 })
                                 .stroke(egui::Stroke::NONE)
-                                .corner_radius(CONVERSATION_BUTTON_SIZE * 0.5)
-                                .min_size(egui::vec2(
-                                    CONVERSATION_BUTTON_SIZE,
-                                    CONVERSATION_BUTTON_SIZE,
-                                ));
+                                .corner_radius(SHADOW_BUTTON_SIZE * 0.5)
+                                .min_size(egui::vec2(SHADOW_BUTTON_SIZE, SHADOW_BUTTON_SIZE));
                                 if ui.add_enabled(can_send, arrow).clicked() {
                                     send = true;
                                 }
                             });
-                        });
-                });
+                        }
+                    });
+                if content_progress < 1.0 {
+                    draw_edit_icon(ui.painter(), morph_center, edit_icon_color);
+                }
             });
             if escape_pressed {
                 close = true;
@@ -436,12 +418,24 @@ impl PetsonaApp {
 pub(super) fn conversation_window_size() -> egui::Vec2 {
     egui::vec2(
         CONVERSATION_PILL_WIDTH + CONVERSATION_WINDOW_PADDING * 2.0,
-        CONVERSATION_ANCHOR_Y
-            + CONVERSATION_GAP
-            + CONVERSATION_MAX_INPUT_HEIGHT
-            + CONVERSATION_WINDOW_PADDING * 2.0
-            + 8.0,
+        CONVERSATION_ANCHOR_Y + CONVERSATION_MAX_INPUT_HEIGHT + 8.0,
     )
+}
+
+fn conversation_morph_rect(
+    window_width: f32,
+    pill_width: f32,
+    input_height: f32,
+    progress: f32,
+) -> egui::Rect {
+    let progress = progress.clamp(0.0, 1.0);
+    let anchor = egui::pos2(window_width * 0.5, CONVERSATION_ANCHOR_Y);
+    let collapsed_size = egui::vec2(SHADOW_BUTTON_SIZE, SHADOW_BUTTON_SIZE);
+    let expanded_center = anchor + egui::vec2(0.0, (input_height - SHADOW_BUTTON_SIZE) * 0.5);
+    let expanded_size = egui::vec2(pill_width, input_height);
+    let center = anchor + (expanded_center - anchor) * progress;
+    let size = collapsed_size + (expanded_size - collapsed_size) * progress;
+    egui::Rect::from_center_size(center, size)
 }
 
 pub(super) fn conversation_input_rows(text: &str, input_width: f32) -> usize {
@@ -450,4 +444,36 @@ pub(super) fn conversation_input_rows(text: &str, input_width: f32) -> usize {
         .map(|line| line.chars().count().div_ceil(chars_per_line).max(1))
         .sum::<usize>()
         .clamp(1, 5)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{conversation_morph_rect, CONVERSATION_MIN_INPUT_HEIGHT};
+    use crate::app::shadow::SHADOW_BUTTON_SIZE;
+
+    #[test]
+    fn composer_starts_at_the_shadow_button_and_uses_the_same_single_line_height() {
+        let window_width = 324.0;
+        let button = conversation_morph_rect(window_width, 300.0, SHADOW_BUTTON_SIZE, 0.0);
+        let input =
+            conversation_morph_rect(window_width, 300.0, CONVERSATION_MIN_INPUT_HEIGHT, 1.0);
+
+        assert_eq!(CONVERSATION_MIN_INPUT_HEIGHT, SHADOW_BUTTON_SIZE);
+        assert_eq!(
+            button.size(),
+            egui::vec2(SHADOW_BUTTON_SIZE, SHADOW_BUTTON_SIZE)
+        );
+        assert_eq!(button.center(), egui::pos2(window_width * 0.5, 18.0));
+        assert_eq!(input.size(), egui::vec2(300.0, SHADOW_BUTTON_SIZE));
+        assert_eq!(input.min.y, button.min.y);
+    }
+
+    #[test]
+    fn multiline_composer_grows_down_from_the_edit_button_top_edge() {
+        let button = conversation_morph_rect(324.0, 300.0, SHADOW_BUTTON_SIZE, 0.0);
+        let input = conversation_morph_rect(324.0, 300.0, 112.0, 1.0);
+
+        assert_eq!(input.min.y, button.min.y);
+        assert_eq!(input.height(), 112.0);
+    }
 }

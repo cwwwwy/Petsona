@@ -9,6 +9,7 @@ set -euo pipefail
 PETSONA_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 PETSONA_BINARY="$PETSONA_ROOT/target/release/petsona-macos"
 PETSONA_SMOKE_HOME="$(mktemp -d "${TMPDIR:-/tmp}/petsona-macos-smoke.XXXXXX")"
+PETSONA_AUTOSTART_PLIST_DIR="$PETSONA_SMOKE_HOME/LaunchAgents"
 PETSONA_STATE_PORT="${PETSONA_SMOKE_STATE_PORT:-17872}"
 PETSONA_HOOK_PORT="${PETSONA_SMOKE_HOOK_PORT:-17873}"
 PETSONA_HOOK_TOKEN="${PETSONA_SMOKE_TOKEN:-$(uuidgen 2>/dev/null || printf 'petsona-macos-smoke-%s' "$$")}"
@@ -206,7 +207,7 @@ fi
 
 printf '{"activePet":%s,"greeting":{"enabled":false},"window":{"autoWalk":{"enabled":false}},"stateServer":{"enabled":true,"port":%s}}\n' "$PETSONA_ACTIVE_PET_JSON" "$PETSONA_STATE_PORT" > "$PETSONA_SMOKE_HOME/config.json"
 
-PETSONA_HOME="$PETSONA_SMOKE_HOME" PETSONA_TEST_HOOKS=1 PETSONA_TEST_HOOKS_PORT="$PETSONA_HOOK_PORT" PETSONA_TEST_HOOKS_TOKEN="$PETSONA_HOOK_TOKEN" RUST_LOG=info "$PETSONA_BINARY" >"$PETSONA_SMOKE_HOME/stdout.log" 2>"$PETSONA_SMOKE_HOME/stderr.log" &
+PETSONA_HOME="$PETSONA_SMOKE_HOME" PETSONA_AUTOSTART_PLIST_DIR="$PETSONA_AUTOSTART_PLIST_DIR" PETSONA_TEST_HOOKS=1 PETSONA_TEST_HOOKS_PORT="$PETSONA_HOOK_PORT" PETSONA_TEST_HOOKS_TOKEN="$PETSONA_HOOK_TOKEN" RUST_LOG=info "$PETSONA_BINARY" >"$PETSONA_SMOKE_HOME/stdout.log" 2>"$PETSONA_SMOKE_HOME/stderr.log" &
 PETSONA_PID=$!
 
 for _ in {1..80}; do
@@ -220,6 +221,13 @@ assert_hook_value processId "$PETSONA_PID" '进程和 test-hooks PID 一致'
 assert_hook_value petVisible true '宠物默认可见'
 assert_hook_value alwaysOnTop true '宠物默认置顶'
 assert_hook_value clickThrough true '宠物默认启用像素穿透'
+initial_status="$(hook_status)"
+initial_monitor_count="$(json_value "$initial_status" monitorCount)"
+if [[ "$initial_monitor_count" =~ ^[0-9]+$ ]] && (( initial_monitor_count >= 1 )); then
+  assert_hook_value windowWithinWorkArea true '启动位置位于 NSScreen 可用工作区内'
+else
+  printf '[SKIP] NSScreen 工作区 runtime 检查（当前会话没有可枚举的 winit 显示器）\n'
+fi
 wait_for_hook nativeMenuReady true 3
 pass 'macOS 原生菜单已创建'
 if [[ -n "$PETSONA_V2_PET_DIR" ]]; then
@@ -369,8 +377,12 @@ pass '状态 TTL 到期回到 idle'
 hook_action '{"action":"open-settings"}'
 wait_for_hook settingsOpen true
 pass '设置窗口状态可控'
-wait_for_hook settingsKeyWindow true 8
-pass '设置窗口获得键盘焦点'
+if [[ "$initial_monitor_count" =~ ^[0-9]+$ ]] && (( initial_monitor_count >= 1 )); then
+  wait_for_hook settingsKeyWindow true 8
+  pass '设置窗口获得键盘焦点'
+else
+  printf '[SKIP] 设置窗口 Key Window 检查（当前会话没有可枚举的 winit 显示器）\n'
+fi
 hook_action '{"action":"close-settings"}'
 wait_for_hook settingsOpen false
 pass '设置窗口可关闭'
@@ -410,6 +422,20 @@ for _ in {1..50}; do
 done
 [[ "$saved_scale" == "1.5" || "$saved_scale" == "1.500000" ]] || fail "配置没有保存缩放值（实际：${saved_scale:-<empty>}）"
 pass '配置可以保存并被机器读取'
+
+assert_hook_value autostartSupported true 'macOS 设置支持开机自启动'
+PETSONA_AUTOSTART_PLIST="$PETSONA_AUTOSTART_PLIST_DIR/com.petsona.desktop.plist"
+hook_action '{"action":"set-autostart","enabled":true}'
+wait_for_hook autostartEnabled true
+[[ -f "$PETSONA_AUTOSTART_PLIST" ]] || fail 'LaunchAgent plist was not created in the isolated smoke home'
+/usr/bin/plutil -lint "$PETSONA_AUTOSTART_PLIST" >/dev/null || fail 'LaunchAgent plist is invalid'
+[[ "$(/usr/bin/plutil -extract Label raw -o - "$PETSONA_AUTOSTART_PLIST")" == 'com.petsona.desktop' ]] || fail 'LaunchAgent label is incorrect'
+[[ "$(/usr/bin/plutil -extract ProgramArguments.0 raw -o - "$PETSONA_AUTOSTART_PLIST")" == "$PETSONA_BINARY" ]] || fail 'LaunchAgent does not point to the current executable'
+pass 'LaunchAgent 开机自启动配置可创建并指向当前可执行文件'
+hook_action '{"action":"set-autostart","enabled":false}'
+wait_for_hook autostartEnabled false
+[[ ! -e "$PETSONA_AUTOSTART_PLIST" ]] || fail 'LaunchAgent plist was not removed after disabling autostart'
+pass 'LaunchAgent 开机自启动配置可关闭'
 
 hook_action '{"action":"open-conversation"}'
 wait_for_hook conversationOpen true

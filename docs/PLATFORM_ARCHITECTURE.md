@@ -80,5 +80,6 @@ macos-v0.2.1    -> .github/workflows/release-macos.yml   -> dist/Petsona.app + P
 
 ## 迁移状态
 
-共享层（core / runtime / app 纯库）和平台外壳（Win32 / AppKit）都已就位；发布 workflow 已建立，
-Windows 待首次 tag 执行，macOS 待实机复验与真实签名 / 公证。
+共享层（core / runtime / app 纯库）和平台外壳（Win32 / AppKit）都已就位；发布 workflow 已建立。
+Windows 使用设置开关管理 HKCU Run；macOS 使用设置开关管理用户 LaunchAgent，工作区取
+`NSScreen.visibleFrame`。登录后实际启动仍需实机验收；macOS 真实签名 / 公证待凭据。

@@ -41,6 +41,7 @@ use petsona_runtime::greeting;
 const PET_WINDOW_MIN_WIDTH: f32 = 220.0;
 const ACTIVE_REPAINT: Duration = Duration::from_millis(16);
 const EVENT_POLL_REPAINT: Duration = Duration::from_millis(100);
+const GAZE_POINTER_POLL_REPAINT: Duration = Duration::from_millis(40);
 const SCALE_PRESETS: &[(&str, f32)] = &[
     ("迷你", 0.5),
     ("小", 0.75),
@@ -440,6 +441,15 @@ impl PetsonaApp {
     /// it get edge-triggered sampling.
     fn refresh_pointer(&mut self, ctx: &egui::Context) {
         if self.platform.throttle_pointer_sampling() {
+            let gaze_active = self
+                .pet
+                .as_ref()
+                .is_some_and(|pet| pet.engine.gaze_direction().is_some());
+            let sampling_interval = if gaze_active {
+                GAZE_POINTER_POLL_REPAINT
+            } else {
+                EVENT_POLL_REPAINT
+            };
             let pointer_event = ctx.input(|input| {
                 input.pointer.delta() != egui::Vec2::ZERO
                     || input.pointer.primary_pressed()
@@ -449,7 +459,7 @@ impl PetsonaApp {
             });
             let low_frequency_due = self
                 .last_pointer_refresh
-                .is_none_or(|last| last.elapsed() >= EVENT_POLL_REPAINT);
+                .is_none_or(|last| last.elapsed() >= sampling_interval);
             if !(pointer_event || low_frequency_due || self.pet_dragged || self.menu_open) {
                 return;
             }
@@ -712,9 +722,18 @@ impl PetsonaApp {
         }
 
         if self.pet_visible && !self.settings_open && !self.platform.event_driven_mouse() {
-            // macOS still needs a low-frequency global pointer poll. Windows
-            // uses the low-level mouse hook and wakes only on real input.
-            sooner(EVENT_POLL_REPAINT);
+            // macOS uses a cheap low-frequency fallback while idle, then
+            // samples faster while a gaze is active so the pose follows motion.
+            // Windows uses its low-level mouse hook and wakes on real input.
+            let gaze_active = self
+                .pet
+                .as_ref()
+                .is_some_and(|pet| pet.engine.gaze_direction().is_some());
+            sooner(if gaze_active {
+                GAZE_POINTER_POLL_REPAINT
+            } else {
+                EVENT_POLL_REPAINT
+            });
         }
         if self.greeting_inflight {
             sooner(EVENT_POLL_REPAINT);
@@ -909,6 +928,11 @@ mod tests {
         let size = conversation::conversation_window_size();
         assert!(size.x <= 340.0);
         assert_eq!(
+            conversation::CONVERSATION_MIN_INPUT_HEIGHT,
+            shadow::SHADOW_BUTTON_SIZE,
+            "single-line composer and edit button must share a height"
+        );
+        assert_eq!(
             conversation::conversation_input_rows("", 240.0),
             1,
             "empty input keeps one row"
@@ -917,6 +941,17 @@ mod tests {
             conversation::conversation_input_rows(&"很长".repeat(120), 240.0) > 1,
             "long text grows the input"
         );
+    }
+
+    #[test]
+    fn gaze_range_stays_near_the_pet_and_has_exit_hysteresis() {
+        let size = egui::vec2(220.0, 318.0);
+        assert!(geometry::cursor_within_gaze_range(
+            110.0, 159.0, size, false
+        ));
+        assert!(!geometry::cursor_within_gaze_range(170.0, 0.0, size, false));
+        assert!(geometry::cursor_within_gaze_range(170.0, 0.0, size, true));
+        assert!(!geometry::cursor_within_gaze_range(190.0, 0.0, size, true));
     }
 
     #[test]

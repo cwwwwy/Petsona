@@ -6,13 +6,14 @@
 
 use std::path::{Path, PathBuf};
 
+use crate::autostart;
 use objc2::MainThreadMarker;
 use objc2_app_kit::{
     NSApplication, NSEvent, NSModalResponseOK, NSOpenPanel, NSSavePanel, NSScreen, NSView,
     NSWindow, NSWindowStyleMask,
 };
 use objc2_foundation::{NSPoint, NSRect, NSSize, NSString, NSURL};
-use petsona_app::platform::{PlatformHost, PointerSnapshot};
+use petsona_app::platform::{PhysicalRect, PlatformHost, PointerSnapshot};
 use raw_window_handle::{HasWindowHandle as _, RawWindowHandle};
 
 #[link(name = "CoreGraphics", kind = "framework")]
@@ -137,6 +138,22 @@ impl PlatformHost for MacHost {
         set_pet_geometry(window, x, y, width, height);
     }
 
+    fn monitor_work_area(&self, x: i32, y: i32) -> Option<PhysicalRect> {
+        visible_work_area_for_point(x, y)
+    }
+
+    fn autostart_supported(&self) -> bool {
+        true
+    }
+
+    fn autostart_enabled(&self) -> bool {
+        autostart::is_enabled()
+    }
+
+    fn set_autostart(&self, enabled: bool) -> Result<(), String> {
+        autostart::set_enabled(enabled)
+    }
+
     fn uses_native_tray_menu(&self) -> bool {
         true
     }
@@ -202,6 +219,75 @@ fn appkit_frame_for_winit(
         NSPoint::new(x, main_screen_height - height - y),
         NSSize::new(width, height),
     )
+}
+
+fn appkit_rect_to_winit_physical(
+    rect: NSRect,
+    main_screen_height: f64,
+    scale_factor: f64,
+) -> PhysicalRect {
+    let scale_factor = scale_factor.max(0.1);
+    PhysicalRect::new(
+        (rect.origin.x * scale_factor).round() as i32,
+        ((main_screen_height - rect.origin.y - rect.size.height) * scale_factor).round() as i32,
+        (rect.size.width * scale_factor).round().max(1.0) as i32,
+        (rect.size.height * scale_factor).round().max(1.0) as i32,
+    )
+}
+
+fn point_distance_to_rect_squared(x: i32, y: i32, rect: PhysicalRect) -> i64 {
+    let x = i64::from(x);
+    let y = i64::from(y);
+    let left = i64::from(rect.x);
+    let top = i64::from(rect.y);
+    let right = left + i64::from(rect.width.max(1));
+    let bottom = top + i64::from(rect.height.max(1));
+    let dx = if x < left {
+        left - x
+    } else if x >= right {
+        x - right + 1
+    } else {
+        0
+    };
+    let dy = if y < top {
+        top - y
+    } else if y >= bottom {
+        y - bottom + 1
+    } else {
+        0
+    };
+    dx.saturating_mul(dx).saturating_add(dy.saturating_mul(dy))
+}
+
+fn nearest_work_area(
+    screens: &[(PhysicalRect, PhysicalRect)],
+    x: i32,
+    y: i32,
+) -> Option<PhysicalRect> {
+    screens
+        .iter()
+        .min_by_key(|(bounds, _)| point_distance_to_rect_squared(x, y, *bounds))
+        .map(|(_, work_area)| *work_area)
+}
+
+fn visible_work_area_for_point(x: i32, y: i32) -> Option<PhysicalRect> {
+    let main_thread = MainThreadMarker::new()?;
+    let main_screen_height = unsafe { CGDisplayBounds(CGMainDisplayID()).size.height };
+    let screens = NSScreen::screens(main_thread)
+        .iter()
+        .map(|screen| {
+            let scale_factor = screen.backingScaleFactor();
+            let bounds =
+                appkit_rect_to_winit_physical(screen.frame(), main_screen_height, scale_factor);
+            let visible = appkit_rect_to_winit_physical(
+                screen.visibleFrame(),
+                main_screen_height,
+                scale_factor,
+            );
+            (bounds, visible)
+        })
+        .collect::<Vec<_>>();
+    nearest_work_area(&screens, x, y)
 }
 
 fn path_from_url(url: Option<objc2::rc::Retained<NSURL>>) -> Option<PathBuf> {
@@ -390,7 +476,11 @@ fn global_cursor_position() -> Option<(f64, f64)> {
 
 #[cfg(test)]
 mod tests {
-    use super::{appkit_frame_for_winit, appkit_to_winit_cursor};
+    use super::{
+        appkit_frame_for_winit, appkit_rect_to_winit_physical, appkit_to_winit_cursor,
+        nearest_work_area, NSPoint, NSRect, NSSize,
+    };
+    use petsona_app::platform::PhysicalRect;
 
     #[test]
     fn frame_geometry_flips_winit_top_left_to_appkit_bottom_left() {
@@ -415,5 +505,33 @@ mod tests {
             appkit_to_winit_cursor(-200.0, -120.0, 900.0, 1.0),
             (-200.0, 1020.0)
         );
+    }
+
+    #[test]
+    fn visible_frame_maps_to_physical_winit_coordinates() {
+        let visible = NSRect::new(NSPoint::new(0.0, 24.0), NSSize::new(1440.0, 852.0));
+        assert_eq!(
+            appkit_rect_to_winit_physical(visible, 900.0, 2.0),
+            PhysicalRect::new(0, 48, 2880, 1704)
+        );
+    }
+
+    #[test]
+    fn work_area_lookup_selects_the_nearest_monitor() {
+        let screens = [
+            (
+                PhysicalRect::new(-2880, 0, 2880, 1800),
+                PhysicalRect::new(-2880, 40, 2880, 1700),
+            ),
+            (
+                PhysicalRect::new(0, 0, 2880, 1800),
+                PhysicalRect::new(0, 60, 2880, 1680),
+            ),
+        ];
+
+        assert_eq!(nearest_work_area(&screens, -200, 500), Some(screens[0].1));
+        assert_eq!(nearest_work_area(&screens, 200, 500), Some(screens[1].1));
+        assert_eq!(nearest_work_area(&screens, 6000, 1200), Some(screens[1].1));
+        assert_eq!(nearest_work_area(&[], 0, 0), None);
     }
 }
