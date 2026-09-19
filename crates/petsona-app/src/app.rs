@@ -338,10 +338,14 @@ impl PetsonaApp {
             .map(|server| server.status())
             .unwrap_or_else(|| Arc::new(Mutex::new(TestStatus::default())));
 
-        runtime.bubble = Some(Bubble {
-            text: fallback,
-            until: Instant::now() + Duration::from_secs(8),
-        });
+        if runtime.pet.is_some() {
+            // Startup greeting; with no pet on screen there is nothing to
+            // anchor a bubble to (the settings window opens instead).
+            runtime.bubble = Some(Bubble {
+                text: fallback,
+                until: Instant::now() + Duration::from_secs(8),
+            });
+        }
 
         // The login item lives in the OS, not in the config file, so read it
         // once here and re-read it whenever the settings toggle changes it.

@@ -142,6 +142,10 @@ impl PetsonaApp {
     }
 
     pub(super) fn show_bubble(&mut self, text: String) {
+        if self.pet.is_none() {
+            // No pet: never leave a floating bubble behind.
+            return;
+        }
         self.bubble = Some(Bubble {
             text,
             until: Instant::now() + Duration::from_secs(8),

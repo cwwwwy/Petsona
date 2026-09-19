@@ -71,7 +71,7 @@
 | W-25 | D4 / D4b | release workflow 首次执行（先 `workflow_dispatch`，再打 tag） | 流程 | 🔴 | |
 | W-26 | D6 | 干净 Windows 用户环境首启 | 流程 | 🔴 | |
 | W-27 | — | **P0 非代码**：内置宠物授权未确认 | 流程 | ✅ | 2026-09-19 · 已通过**移除内置宠物**解决：第三方图集与 `default_pet` 已从仓库 / 二进制删除，README / AGENTS 同步；smoke 改用自绘夹具 `crates/petsona-core/testdata/v2-test-pet` |
-| W-33 | — | 首次运行 / 本地库为空时直接打开设置窗口 | app | 🟢 | 2026-09-19 · 已实现（本地截图验证）：`firstRun` / 空库 → 启动即打开设置窗；有宠物时不弹 · 2026-09-19 补充：空库时不再画占位文字、不显示影子、不触发任何问候（本地截图只剩桌面） |
+| W-33 | — | 首次运行 / 本地库为空时直接打开设置窗口 | app | 🟢 | 2026-09-19 · 已实现（本地截图验证）：`firstRun` / 空库 → 启动即打开设置窗；有宠物时不弹 · 2026-09-19 补充：空库时不再画占位文字、不显示影子、不触发任何问候（含启动时的 `runtime.bubble` 问候气泡与 `show_bubble` 兜底；本地大范围截图只剩桌面 / 背后窗口） |
 | W-28 | — | **P0 非代码**：发布通道缺失——release workflow 只 upload-artifact，不建 GitHub Release；README 无下载入口 | 流程 | 🔴 | |
 | W-29 | — | **P3 拍板**：exe 未签名，SmartScreen 会拦（README.txt 已写明）；首版接受还是上证书 | 流程 | ⬜ | |
 
