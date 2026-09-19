@@ -242,7 +242,7 @@ impl Animation {
 /// Look rows are pose tables, not turn/return timelines. The middle frame is
 /// the neutral, front-facing pose for the row; cursor gaze animates directly
 /// between this pose and the requested pose.
-const GAZE_FRAME_MS: f32 = 40.0;
+const GAZE_FRAME_MS: f32 = 16.0;
 
 fn gaze_neutral_frame(animation: &Animation) -> usize {
     animation.sprites.len().saturating_sub(1) / 2

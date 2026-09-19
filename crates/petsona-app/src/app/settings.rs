@@ -172,9 +172,6 @@ impl PetsonaApp {
                         pet.id,
                         pet.root.label()
                     );
-                    if pet.id == petsona_core::pet::DEFAULT_PET_ID {
-                        label.push_str("  ·  内置");
-                    }
                     if pet.sprite_version_number == Some(2) || pet.frame.rows >= 11 {
                         label.push_str("  ·  V2（支持持续注视）");
                     }
@@ -422,7 +419,7 @@ impl PetsonaApp {
                 for (label, value) in SCALE_PRESETS {
                     if ui
                         .selectable_label(
-                            (self.effective_scale() - *value).abs() < f32::EPSILON,
+                            (self.target_scale() - *value).abs() < f32::EPSILON,
                             *label,
                         )
                         .clicked()

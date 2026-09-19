@@ -5,7 +5,7 @@ use anyhow::Result;
 use petsona_core::config::{AppConfig, AppPaths};
 use petsona_core::memory::{EventKind, PetMemory};
 use petsona_core::persona::{Persona, PersonaStore};
-use petsona_core::pet::{default_pet, PetEntry, PetLibrary};
+use petsona_core::pet::{PetEntry, PetLibrary};
 use petsona_core::state_server::{Health, StateEvent, StateServer};
 
 use crate::pet::PetSession;
@@ -82,14 +82,6 @@ impl PetsonaRuntime {
         }
 
         let library = PetLibrary::discover(paths.pets_dir.clone());
-        if let Some(installed) =
-            default_pet::ensure_installed(&library, config.bundled_pet_removed)?
-        {
-            tracing::info!(pet = %installed.id, "installed the bundled pet");
-            if config.active_pet.is_none() {
-                config.active_pet = Some(installed.id);
-            }
-        }
         let pets = library.list();
         let memory = PetMemory::open(&paths.memory_file)?;
 

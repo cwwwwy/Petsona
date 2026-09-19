@@ -9,7 +9,7 @@ use eframe::egui;
 use petsona_core::config::{AppConfig, AppPaths, WindowPosition};
 use petsona_core::deepseek::{save_api_key, DeepSeekClient};
 use petsona_core::memory::EventKind;
-use petsona_core::pet::state::PetState;
+use petsona_core::pet::state::{GazePhase, PetState};
 use petsona_core::pet::{PetAtlas, PetEntry};
 use petsona_runtime::pet::{PetSession, IDLE_REPAINT};
 use petsona_runtime::session::{Bubble, ConversationTurn, PetsonaRuntime};
@@ -31,7 +31,9 @@ use bubble::BUBBLE_ENTRY;
 use conversation::{CONVERSATION_ENTRY, CONVERSATION_EXIT};
 #[cfg(any(feature = "test-hooks", test))]
 use geometry::rect_within_work_area;
-use geometry::{bottom_center_anchor, clamp_rect_to_work_area, position_for_bottom_center};
+use geometry::{
+    bottom_center_anchor, clamp_rect_to_work_area, ease_out, position_for_bottom_center,
+};
 use menus::NativeMenu;
 
 #[cfg(feature = "test-hooks")]
@@ -39,6 +41,9 @@ use crate::test_hooks::{TestActionRequest, TestHookServer, TestStatus};
 use petsona_runtime::greeting;
 
 const PET_WINDOW_MIN_WIDTH: f32 = 220.0;
+/// Scale presets ease into place instead of jumping: the window is
+/// resized once, the sprite animates inside it.
+const SCALE_TRANSITION: Duration = Duration::from_millis(180);
 const ACTIVE_REPAINT: Duration = Duration::from_millis(16);
 const EVENT_POLL_REPAINT: Duration = Duration::from_millis(100);
 const GAZE_POINTER_POLL_REPAINT: Duration = Duration::from_millis(40);
@@ -113,6 +118,12 @@ pub struct PetsonaApp {
     /// Primary-button edge detector used to close the composer when the
     /// user clicks anywhere outside the input pill.
     conversation_primary_was_down: bool,
+    /// Ignore pet clicks while a native menu owns the pointer: the click
+    /// that dismisses the menu must not also wave the pet.
+    click_guard_until: Option<Instant>,
+    /// Set by the "立即活动" menu item so the next auto-walk tick starts a
+    /// reminder walk regardless of the interval.
+    activity_now_requested: bool,
     /// Set while a click-triggered model greeting is in flight. If the
     /// reply takes too long the UI shows a local line instead of leaving
     /// the click without feedback.
@@ -205,6 +216,12 @@ pub struct PetsonaApp {
     /// redraw the non-client frame, which showed up as a flashing border.
     applied_window_size: Option<egui::Vec2>,
     applied_always_on_top: Option<bool>,
+    /// Scale the sprite is currently drawn at; eases towards the preset
+    /// selected in the settings.
+    scale_display: f32,
+    scale_anim_from: f32,
+    scale_anim_started: Instant,
+    scale_anim_active: bool,
     /// Icon built from the active pet, cached by pet id.
     pet_icon: Option<(String, std::sync::Arc<egui::IconData>)>,
     applied_window_icon: Option<String>,
@@ -291,6 +308,7 @@ impl PetsonaApp {
         platform: Arc<dyn PlatformHost>,
     ) -> Result<Self> {
         config.window.scale = nearest_scale(config.window.scale);
+        let initial_scale = config.window.scale;
         let mut runtime = PetsonaRuntime::load(paths, config)?;
 
         let greeting_draft = runtime.persona.greeting.clone().unwrap_or_default();
@@ -352,6 +370,8 @@ impl PetsonaApp {
             conversation_draft: String::new(),
             conversation_cursor: None,
             conversation_primary_was_down: false,
+            click_guard_until: None,
+            activity_now_requested: false,
             click_greeting_pending_at: None,
             click_greeting_fallback_shown: false,
             settings_open: false,
@@ -420,6 +440,10 @@ impl PetsonaApp {
             pending_delete: None,
             applied_window_size: None,
             applied_always_on_top: None,
+            scale_display: initial_scale,
+            scale_anim_from: initial_scale,
+            scale_anim_started: Instant::now(),
+            scale_anim_active: false,
             pet_icon: None,
             applied_window_icon: None,
             autostart_enabled,
@@ -430,7 +454,20 @@ impl PetsonaApp {
             #[cfg(feature = "test-hooks")]
             gravity_landings: 0,
         };
-        let _ = app.trigger_greeting("startup", true);
+        if app.pet.is_none() {
+            // First run, or the library is empty: send the user straight to
+            // the settings window to pick or import a pet.
+            app.open_settings();
+        }
+        if app.config.first_run {
+            app.config.first_run = false;
+            if let Err(error) = app.config.save(&app.paths.config_file) {
+                tracing::warn!(%error, "cannot persist the first-run flag");
+            }
+        }
+        if app.pet.is_some() {
+            let _ = app.trigger_greeting("startup", true);
+        }
         app.sync_state_server();
         Ok(app)
     }
@@ -486,14 +523,43 @@ impl PetsonaApp {
             .unwrap_or_else(|| egui::vec2(192.0, 208.0))
     }
 
-    fn effective_scale(&self) -> f32 {
+    /// Preset the user selected; what the window geometry and menus use.
+    fn target_scale(&self) -> f32 {
         nearest_scale(self.config.window.scale)
+    }
+
+    /// Scale the sprite is drawn at; equals the preset except during the
+    /// transition animation.
+    fn effective_scale(&self) -> f32 {
+        if self.scale_anim_active {
+            self.scale_display
+        } else {
+            self.target_scale()
+        }
+    }
+
+    /// Advance the scale transition. Called once per frame before drawing.
+    fn update_scale_animation(&mut self, ctx: &egui::Context) {
+        if !self.scale_anim_active {
+            return;
+        }
+        let progress = (self.scale_anim_started.elapsed().as_secs_f32()
+            / SCALE_TRANSITION.as_secs_f32())
+        .clamp(0.0, 1.0);
+        let target = self.target_scale();
+        self.scale_display =
+            self.scale_anim_from + (target - self.scale_anim_from) * ease_out(progress);
+        if progress >= 1.0 {
+            self.scale_display = target;
+            self.scale_anim_active = false;
+        }
+        ctx.request_repaint();
     }
 
     fn scale_label(&self) -> &'static str {
         SCALE_PRESETS
             .iter()
-            .find(|(_, value)| (*value - self.effective_scale()).abs() < f32::EPSILON)
+            .find(|(_, value)| (*value - self.target_scale()).abs() < f32::EPSILON)
             .map(|(label, _)| *label)
             .unwrap_or("标准")
     }
@@ -503,6 +569,12 @@ impl PetsonaApp {
         if (self.config.window.scale - snapped).abs() < f32::EPSILON {
             return;
         }
+        // Ease from whatever is on screen right now, so a quick second change
+        // does not snap back to the previous preset.
+        self.scale_anim_from = self.effective_scale();
+        self.scale_anim_started = Instant::now();
+        self.scale_anim_active = true;
+        self.scale_display = self.scale_anim_from;
         self.config.window.scale = snapped;
         if let Err(error) = self.config.save(&self.paths.config_file) {
             tracing::warn!(%error, "cannot save pet scale preset");
@@ -529,9 +601,16 @@ impl PetsonaApp {
             .unwrap_or_else(|| egui::vec2(192.0, 208.0))
     }
 
-    /// Window scale rounded up to the next quarter step.
+    /// Window scale. While a transition runs the window keeps the larger of
+    /// the two presets so a shrinking sprite is never clipped; the extra
+    /// transparent area is invisible and the final resize happens once the
+    /// animation has finished.
     fn stage_scale(&self) -> f32 {
-        self.effective_scale()
+        if self.scale_anim_active {
+            self.scale_anim_from.max(self.target_scale())
+        } else {
+            self.target_scale()
+        }
     }
 
     fn apply_viewport(
@@ -628,12 +707,17 @@ impl PetsonaApp {
         }
     }
 
-    fn draw_pet(&mut self, root_ui: &mut egui::Ui, window_size: egui::Vec2) {
+    fn draw_pet(&mut self, root_ui: &mut egui::Ui, frame: &eframe::Frame, window_size: egui::Vec2) {
         if self.pet.is_none() {
-            self.draw_missing_pet(root_ui);
+            // No pet configured: nothing is drawn at all. The window stays
+            // transparent and click-through until a pet is imported.
             return;
         }
 
+        // Anchor the sprite in the window that actually exists right now.
+        // During a scale transition the requested size and the OS window size
+        // differ for a frame; using the target size made the sprite jump.
+        let window_size = frame_actual_size(frame).unwrap_or(window_size);
         // Compute the sprite rectangle before borrowing the pet mutably.
         let pet_rect = self.pet_rect(window_size);
         let scale = self.effective_scale();
@@ -660,16 +744,6 @@ impl PetsonaApp {
                     let image = egui::Image::new(egui::load::SizedTexture::new(texture_id, cell));
                     ui.put(pet_rect, image);
                 }
-            });
-    }
-
-    fn draw_missing_pet(&mut self, root_ui: &mut egui::Ui) {
-        egui::CentralPanel::default()
-            .frame(egui::Frame::NONE.fill(egui::Color32::TRANSPARENT))
-            .show(root_ui, |ui| {
-                ui.centered_and_justified(|ui| {
-                    ui.label("没有找到宠物\n右键打开设置");
-                });
             });
     }
 
@@ -709,7 +783,11 @@ impl PetsonaApp {
             || self
                 .conversation_closing_at
                 .is_some_and(|closing_at| closing_at.elapsed() < CONVERSATION_EXIT);
-        if self.pet_dragged || self.walk_until.is_some() || self.menu_open || conversation_animating
+        if self.pet_dragged
+            || self.walk_until.is_some()
+            || self.menu_open
+            || conversation_animating
+            || self.scale_anim_active
         {
             sooner(ACTIVE_REPAINT);
         }
@@ -723,6 +801,15 @@ impl PetsonaApp {
 
         if self.pet_visible {
             if let Some(pet) = &self.pet {
+                // A gaze transition steps one direction pose per
+                // `GAZE_FRAME_MS`; without a steady frame clock the pose only
+                // advanced on mouse events, which read as dropped frames.
+                if matches!(
+                    pet.engine.gaze_phase(),
+                    Some(GazePhase::Turning | GazePhase::Returning)
+                ) {
+                    sooner(ACTIVE_REPAINT);
+                }
                 let animation_after = pet.next_frame_after();
                 #[cfg(feature = "test-hooks")]
                 {
@@ -825,6 +912,7 @@ impl eframe::App for PetsonaApp {
             self.poll_test_hooks(ctx, frame);
         }
         self.refresh_pointer(ctx);
+        self.update_scale_animation(ctx);
         self.poll_tray(ctx);
         self.poll_native_menu(ctx);
         self.poll_menu(ctx);
@@ -899,7 +987,7 @@ impl eframe::App for PetsonaApp {
         let window_size = self.pet_window_size();
         self.apply_viewport(ui.ctx(), _frame, window_size);
         if self.pet_visible {
-            self.draw_pet(ui, window_size);
+            self.draw_pet(ui, _frame, window_size);
         }
         self.show_bubble_viewport(ui.ctx(), _frame);
         self.show_shadow_viewport(ui.ctx(), _frame);
@@ -925,6 +1013,17 @@ impl eframe::App for PetsonaApp {
 /// drag handling.
 fn button_pressed_edge(current_down: bool, previous_down: bool, event_pressed: bool) -> bool {
     event_pressed || (current_down && !previous_down)
+}
+
+/// Logical size of the pet window as the OS currently has it.
+fn frame_actual_size(frame: &eframe::Frame) -> Option<egui::Vec2> {
+    let window = frame.winit_window()?;
+    let scale = window.scale_factor().max(0.1) as f32;
+    let size = window.outer_size();
+    Some(egui::vec2(
+        size.width as f32 / scale,
+        size.height as f32 / scale,
+    ))
 }
 
 /// Speech bubble sized to its text and anchored just above the pet, with a
@@ -960,9 +1059,10 @@ mod tests {
         assert!(geometry::cursor_within_gaze_range(
             110.0, 159.0, size, false
         ));
-        assert!(!geometry::cursor_within_gaze_range(170.0, 0.0, size, false));
-        assert!(geometry::cursor_within_gaze_range(170.0, 0.0, size, true));
-        assert!(!geometry::cursor_within_gaze_range(190.0, 0.0, size, true));
+        assert!(geometry::cursor_within_gaze_range(200.0, 0.0, size, false));
+        assert!(!geometry::cursor_within_gaze_range(250.0, 0.0, size, false));
+        assert!(geometry::cursor_within_gaze_range(240.0, 0.0, size, true));
+        assert!(!geometry::cursor_within_gaze_range(300.0, 0.0, size, true));
     }
 
     #[test]
@@ -990,9 +1090,25 @@ mod tests {
         assert_eq!(position, egui::Pos2::ZERO);
     }
 
+    /// Synthetic V2 pet used by tests after the bundled pet was removed.
+    const TEST_PET_DIR: &str = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../petsona-core/testdata/v2-test-pet"
+    );
+
+    fn install_test_pet(paths: &AppPaths) {
+        let target = paths.pets_dir.join("test_fixture_v2");
+        std::fs::create_dir_all(&target).expect("create test pet dir");
+        for file in ["pet.json", "spritesheet.png"] {
+            std::fs::copy(format!("{TEST_PET_DIR}/{file}"), target.join(file))
+                .expect("copy test pet file");
+        }
+    }
+
     fn test_app(name: &str) -> PetsonaApp {
         let paths = AppPaths::resolve(std::env::temp_dir().join(format!("petsona-test-{name}")));
         let _ = std::fs::remove_dir_all(&paths.config_dir);
+        install_test_pet(&paths);
         PetsonaApp::new(
             paths,
             AppConfig::default(),
@@ -1001,8 +1117,37 @@ mod tests {
         .expect("app starts")
     }
 
+    #[test]
+    fn an_empty_library_opens_settings_once() {
+        let paths = AppPaths::resolve(std::env::temp_dir().join("petsona-test-first-run"));
+        let _ = std::fs::remove_dir_all(&paths.config_dir);
+        let app = PetsonaApp::new(
+            paths,
+            AppConfig::default(),
+            Arc::new(crate::platform::PortableHost),
+        )
+        .expect("app starts");
+
+        assert!(app.pet.is_none());
+        assert!(
+            app.settings_open,
+            "an empty library should send the user to the settings window"
+        );
+        assert!(
+            !app.config.first_run,
+            "the first-run flag should be consumed"
+        );
+    }
+
+    #[test]
+    fn a_pet_in_the_library_starts_without_settings() {
+        let app = test_app("no-first-run");
+        assert!(app.pet.is_some());
+        assert!(!app.settings_open);
+    }
+
     fn first_opaque_cell_point(app: &PetsonaApp) -> egui::Vec2 {
-        let pet = app.pet.as_ref().expect("bundled pet loads");
+        let pet = app.pet.as_ref().expect("the test pet loads");
         let mask = &pet.atlas.mask;
         for my in 0..mask.mask_height {
             for mx in 0..mask.mask_width {
@@ -1013,7 +1158,7 @@ mod tests {
                 }
             }
         }
-        panic!("the bundled pet draws something");
+        panic!("the test pet draws something");
     }
 
     #[test]
@@ -1042,7 +1187,7 @@ mod tests {
     #[test]
     fn a_look_pose_still_keeps_the_resting_body_clickable() {
         let mut app = test_app("gaze-hit");
-        let pet = app.pet.as_ref().expect("bundled pet loads");
+        let pet = app.pet.as_ref().expect("the test pet loads");
         let idle = pet
             .engine
             .animation(PetState::Idle)
@@ -1068,7 +1213,7 @@ mod tests {
                 }
             }
         }
-        let point = found.expect("the bundled pet has a resting body pixel");
+        let point = found.expect("the test pet has a resting body pixel");
         let look_sprites: Vec<u32> = [PetState::LookRow9, PetState::LookRow10]
             .into_iter()
             .flat_map(|state| {
@@ -1128,6 +1273,28 @@ mod tests {
         assert!(button_pressed_edge(true, false, false));
         assert!(!button_pressed_edge(false, false, false));
         assert!(!button_pressed_edge(true, true, false));
+    }
+
+    #[test]
+    fn scale_transition_keeps_the_window_at_the_larger_preset() {
+        let mut app = test_app("scale-anim");
+        app.config.window.scale = 0.5;
+        app.scale_anim_from = 2.0;
+        app.scale_display = 2.0;
+        app.scale_anim_started = Instant::now();
+        app.scale_anim_active = true;
+
+        // Shrinking: the window keeps the larger preset so the sprite is not
+        // clipped while it animates down.
+        assert!((app.stage_scale() - 2.0).abs() < f32::EPSILON);
+        assert!((app.effective_scale() - 2.0).abs() < f32::EPSILON);
+
+        app.scale_anim_started = Instant::now() - SCALE_TRANSITION - Duration::from_millis(1);
+        let ctx = egui::Context::default();
+        app.update_scale_animation(&ctx);
+        assert!(!app.scale_anim_active);
+        assert!((app.stage_scale() - 0.5).abs() < f32::EPSILON);
+        assert!((app.effective_scale() - 0.5).abs() < f32::EPSILON);
     }
 
     #[test]

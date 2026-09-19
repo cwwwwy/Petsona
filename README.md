@@ -6,8 +6,7 @@ DeepSeek greeting.
 
 ## Features
 
-- Bundled Codex pet (**Superintendent** by Renner Campos) plus a local,
-  user-owned pet library
+- Local, user-owned pet library (no bundled pet; pick or import one on first run)
 - 8×9 / 8×11 Codex pet packs, animation state machine, pixel-accurate click-through
 - Click / double-click / drag / native context menu / cursor gaze / speech bubble
 - Explicit import from Codex (`~/.codex/pets`), a folder or a `.zip`
@@ -81,11 +80,11 @@ The app loads only its own library (`<config>/Petsona/pets`). Codex pets are
 copied there explicitly via Settings → 宠物 → 「从 Codex 导入」; importing a
 folder or `.zip` (or dropping it on the window) works too. Packages are
 validated before import, exports use the Codex upload format, and deleting a
-local copy asks for confirmation. The bundled Superintendent is installed on
-every start unless you delete it in Settings.
+local copy asks for confirmation.
 
-> The bundled pet has no license field in `pet.json`; confirm the author's terms
-> before distributing a release.
+Petsona ships without a bundled pet: on first launch (or whenever the local
+library is empty) the Settings window opens so a pet can be picked from
+`~/.codex/pets` or imported from a folder / `.zip`.
 
 Inspect any pet package:
 

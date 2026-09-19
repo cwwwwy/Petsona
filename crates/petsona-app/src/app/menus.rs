@@ -5,13 +5,14 @@ const MENU_TITLE: &str = "Petsona 菜单";
 const MENU_WIDTH: f32 = 176.0;
 const MENU_ROW: f32 = 30.0;
 const MENU_PAD: f32 = 6.0;
-const MENU_ROWS: f32 = 4.0;
+const MENU_ROWS: f32 = 5.0;
 const MENU_SIZE: egui::Vec2 = egui::vec2(MENU_WIDTH, MENU_ROWS * MENU_ROW + MENU_PAD * 2.0);
 /// Identifiers of the tray-icon menu entries. Shells that hand the menu to the
 /// operating system (macOS) build it from these.
 const NATIVE_MENU_OPEN_SETTINGS_ID: &str = "petsona.open-settings";
 const NATIVE_MENU_SELECT_PET_PREFIX: &str = "petsona.select-pet:";
 const NATIVE_MENU_SCALE_PREFIX: &str = "petsona.scale:";
+const NATIVE_MENU_TRIGGER_ACTIVITY_ID: &str = "petsona.trigger-activity";
 const NATIVE_MENU_TOGGLE_PET_ID: &str = "petsona.toggle-pet";
 const NATIVE_MENU_QUIT_ID: &str = "petsona.quit";
 
@@ -28,6 +29,7 @@ pub(super) struct NativeMenu {
 enum MenuAction {
     Dismiss,
     OpenSettings,
+    TriggerActivity,
     TogglePet,
     Quit,
 }
@@ -88,6 +90,7 @@ impl PetsonaApp {
                         let entries = [
                             ("打开设置", MenuAction::OpenSettings),
                             ("更换宠物", MenuAction::OpenSettings),
+                            ("立即活动", MenuAction::TriggerActivity),
                             (toggle, MenuAction::TogglePet),
                             ("退出", MenuAction::Quit),
                         ];
@@ -118,6 +121,7 @@ impl PetsonaApp {
         match action {
             MenuAction::Dismiss => {}
             MenuAction::OpenSettings => self.open_settings(),
+            MenuAction::TriggerActivity => self.request_activity_now(),
             MenuAction::TogglePet => {
                 let visible = !self.pet_visible;
                 self.set_pet_visible(ctx, visible);
@@ -265,9 +269,11 @@ impl PetsonaApp {
             return None;
         }
         let scale_menu = Submenu::with_id("petsona.scale", "宠物大小", true);
-        if !Self::fill_native_scale_menu(&scale_menu, self.effective_scale()) {
+        if !Self::fill_native_scale_menu(&scale_menu, self.target_scale()) {
             return None;
         }
+        let trigger_activity =
+            MenuItem::with_id(NATIVE_MENU_TRIGGER_ACTIVITY_ID, "立即活动", true, None);
         let toggle_pet = MenuItem::with_id(
             NATIVE_MENU_TOGGLE_PET_ID,
             if self.pet_visible {
@@ -280,7 +286,14 @@ impl PetsonaApp {
         );
         let quit = MenuItem::with_id(NATIVE_MENU_QUIT_ID, "退出", true, None);
 
-        let items: [&dyn IsMenuItem; 5] = [&open_settings, &pets, &scale_menu, &toggle_pet, &quit];
+        let items: [&dyn IsMenuItem; 6] = [
+            &open_settings,
+            &pets,
+            &scale_menu,
+            &trigger_activity,
+            &toggle_pet,
+            &quit,
+        ];
         for item in items {
             if let Err(error) = menu.append(item) {
                 tracing::warn!(%error, "cannot build native macOS menu");
@@ -309,7 +322,7 @@ impl PetsonaApp {
         if !Self::fill_native_pet_menu(&native_menu.pet_menu, &self.pets, &self.active_pet_id()) {
             tracing::warn!("cannot refresh native macOS pet menu");
         }
-        if !Self::fill_native_scale_menu(&native_menu.scale_menu, self.effective_scale()) {
+        if !Self::fill_native_scale_menu(&native_menu.scale_menu, self.target_scale()) {
             tracing::warn!("cannot refresh native macOS scale menu");
         }
     }
@@ -340,6 +353,9 @@ impl PetsonaApp {
             match command {
                 MenuCommand::OpenSettings | MenuCommand::ChangePet => {
                     self.open_settings();
+                }
+                MenuCommand::TriggerActivity => {
+                    self.request_activity_now();
                 }
                 MenuCommand::TogglePet => {
                     self.set_pet_visible(ctx, !self.pet_visible);
@@ -516,6 +532,9 @@ impl PetsonaApp {
             match id {
                 NATIVE_MENU_OPEN_SETTINGS_ID => {
                     self.open_settings();
+                }
+                NATIVE_MENU_TRIGGER_ACTIVITY_ID => {
+                    self.request_activity_now();
                 }
                 NATIVE_MENU_TOGGLE_PET_ID => {
                     self.set_pet_visible(ctx, !self.pet_visible);

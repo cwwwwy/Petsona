@@ -38,8 +38,8 @@ pub(super) fn cursor_within_gaze_range(
     pet_size: egui::Vec2,
     already_gazing: bool,
 ) -> bool {
-    const ENTER_MARGIN: f64 = 0.25;
-    const EXIT_MARGIN: f64 = 0.35;
+    const ENTER_MARGIN: f64 = 0.55;
+    const EXIT_MARGIN: f64 = 0.80;
     let margin = pet_size.x.min(pet_size.y).max(1.0) as f64
         * if already_gazing {
             EXIT_MARGIN
@@ -157,11 +157,16 @@ mod tests {
         let pet = egui::vec2(220.0, 318.0);
 
         assert!(cursor_within_gaze_range(110.0, 159.0, pet, false));
-        assert!(!cursor_within_gaze_range(170.0, 0.0, pet, false));
-        assert!(cursor_within_gaze_range(170.0, 0.0, pet, true));
-        assert!(!cursor_within_gaze_range(190.0, 0.0, pet, true));
-        assert!(!cursor_within_gaze_range(0.0, 220.0, pet, false));
-        assert!(cursor_within_gaze_range(0.0, 220.0, pet, true));
+        // Trigger radius: half the pet plus 55% of its short side; the release
+        // radius adds another 25 points of hysteresis.
+        assert!(cursor_within_gaze_range(200.0, 0.0, pet, false));
+        assert!(!cursor_within_gaze_range(250.0, 0.0, pet, false));
+        assert!(cursor_within_gaze_range(240.0, 0.0, pet, true));
+        assert!(!cursor_within_gaze_range(300.0, 0.0, pet, true));
+        assert!(cursor_within_gaze_range(0.0, 260.0, pet, false));
+        assert!(!cursor_within_gaze_range(0.0, 310.0, pet, false));
+        assert!(cursor_within_gaze_range(0.0, 320.0, pet, true));
+        assert!(!cursor_within_gaze_range(0.0, 350.0, pet, true));
     }
 
     #[test]

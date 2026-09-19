@@ -18,6 +18,12 @@ impl PetsonaApp {
         ctx.request_repaint();
     }
 
+    /// "立即活动" from the context menu: start a reminder walk on the next
+    /// tick even if the interval and the user grace period have not elapsed.
+    pub(super) fn request_activity_now(&mut self) {
+        self.activity_now_requested = true;
+    }
+
     pub(super) fn set_walk_state(&mut self, state: PetState) {
         if let Some(pet) = &mut self.pet {
             if pet.engine.set_base(state) {
@@ -54,8 +60,10 @@ impl PetsonaApp {
             return;
         }
         let cfg = self.config.window.auto_walk.clone();
-        if self.last_user_action.elapsed()
-            < Duration::from_secs_f32(cfg.user_grace_seconds.max(0.0))
+        let forced = std::mem::take(&mut self.activity_now_requested);
+        if !forced
+            && self.last_user_action.elapsed()
+                < Duration::from_secs_f32(cfg.user_grace_seconds.max(0.0))
         {
             return;
         }
@@ -73,7 +81,7 @@ impl PetsonaApp {
         let current_x = position.x as f32 / scale;
 
         if self.walk_until.is_none() {
-            if now < self.next_walk_at {
+            if !forced && now < self.next_walk_at {
                 self.set_walk_state(PetState::Idle);
                 return;
             }
@@ -712,7 +720,23 @@ impl PetsonaApp {
         let over_pet = self.cursor_over_pet(window_size, local);
         let now = Instant::now();
 
-        if left_pressed && over_pet {
+        // A native menu owns the pointer while it is open; the click that
+        // dismisses it arrives through the global button poll as well, and
+        // used to wave the pet ("right click makes the pet reply").
+        let menu_owns_pointer = self
+            .platform_menu
+            .as_ref()
+            .is_some_and(|menu| menu.is_open())
+            || self.click_guard_until.is_some_and(|until| now < until);
+        if menu_owns_pointer {
+            self.press_origin = None;
+            self.press_started_at = None;
+            self.press_moved = false;
+            self.pet_dragged = false;
+            self.drag_grab = None;
+        }
+
+        if left_pressed && over_pet && !menu_owns_pointer {
             self.press_origin = Some(local);
             self.press_started_at = Some(now);
             self.press_moved = false;
@@ -736,14 +760,19 @@ impl PetsonaApp {
             self.press_moved = false;
             self.pet_dragged = false;
             self.drag_grab = None;
-            if clicked {
+            if clicked && !menu_owns_pointer {
                 self.register_click();
             }
         }
         // The shell owns the native context menu; only shells without one
         // (and a failed Win32 menu thread) fall back to the egui menu.
-        if right_pressed && over_pet && !self.show_platform_menu(window, cursor_x, cursor_y) {
-            self.open_menu_at(egui::pos2(cursor_x as f32 / scale, cursor_y as f32 / scale));
+        if right_pressed && over_pet {
+            // Guard the dismissal click even when the shell falls back to the
+            // egui menu.
+            self.click_guard_until = Some(now + Duration::from_millis(250));
+            if !self.show_platform_menu(window, cursor_x, cursor_y) {
+                self.open_menu_at(egui::pos2(cursor_x as f32 / scale, cursor_y as f32 / scale));
+            }
         }
     }
 
@@ -810,6 +839,10 @@ impl PetsonaApp {
     }
 
     pub(super) fn trigger_greeting(&mut self, trigger: &str, force: bool) -> bool {
+        // No pet on screen: a floating greeting would have nothing to anchor to.
+        if self.pet.is_none() {
+            return false;
+        }
         if !force && !self.config.greeting.enabled {
             return false;
         }

@@ -63,8 +63,9 @@ MSVC 缺 `link.exe` 的 GNU 回退写在 `docs/WINDOWS_VERIFICATION.md`。
 
 ## 当前状态（2026-09-18）
 
-- 主线基线 `67c8b7f`（2026-09-18，macOS 补课 + 交互改进），与 `origin/main` 同步；checkout 路径随机器不同
-  （mac 为 `/Users/book/Desktop/Petsona`，当前 WSL 会话为 `/home/cwwwwy/Petsona`）。
+- 主线基线 `664cde2`（2026-09-19，子窗 1px 非客户区 / 常驻渲染 / 影子缩放）。
+- 2026-09-19 未提交（批次 4–7）：注视 16ms 步进、缩放过渡、右键菜单点击守卫、移除内置宠物 + 首启设置窗、
+  立即活动菜单、smoke 自绘夹具；代码与本地门禁全绿，待实机复测。
 - 决策（2026-09-18）：**Windows 优先**——先把 `docs/WINDOWS_ISSUES.md` 全部问题修完并实机确认，
   再开 Linux 端；Linux 可行性与范围决策要点见该文档附录，本轮不做。
 - 已合入：删除旧 `legacy/` 树、`petsona-app` UI 模块化、CJK 字体路径经 `PlatformHost` 注入、
@@ -92,10 +93,10 @@ MSVC 缺 `link.exe` 的 GNU 回退写在 `docs/WINDOWS_VERIFICATION.md`。
 
 ### 阶段 7 剩余
 
-1. **Windows 问题清零（当前唯一主线）**：按 `docs/WINDOWS_ISSUES.md` 逐项实测 / 修复 / 复测，
-   效果观感（B5 / B8 / B9 / B10 / B15 / C4 / C5）优先；清单清零前不开 Linux 线。
+1. **Windows 问题清零（当前唯一主线）**：`docs/WINDOWS_ISSUES.md` 批次 1–7 代码已完成（含移除内置宠物、
+   首启设置窗、立即活动、注视流畅、缩放过渡、右键回馈、子窗白线 / 闪框修复）；剩余是**实机复测**与 D 组打包交付。
 2. **Windows 首次发布**：清单清零后定版本 → 先 `workflow_dispatch` 试跑 → 再打 `windows-v*` tag；
-   发布前必须解决内置宠物授权（W-27）与 GitHub Release 通道（W-28）；
+   发布前必须解决 GitHub Release 通道（W-28）；W-27 已通过移除内置宠物解决；
    macOS 拿到 Developer ID 后走 `sign-macos.sh` / `notarize-macos.sh`。
 3. **macOS 人工验收**：确认 A12 LaunchAgent 在下一次登录启动、`NSScreen.visibleFrame` 的窗口夹取 / 重力落点、
    B5 注视视觉、B8 缩放、B9 caret gaze、B11 Activity Monitor、A11 Keychain、真实签名 / 公证；多屏 / Retina 暂缓。
@@ -124,8 +125,8 @@ MSVC 缺 `link.exe` 的 GNU 回退写在 `docs/WINDOWS_VERIFICATION.md`。
 - 数据目录：`%APPDATA%\Petsona` / `~/Library/Application Support/Petsona`，可用 `PETSONA_HOME` 覆盖。
 - 宠物库：只加载本地 `...\Petsona\pets`（`PetLibrary::discover()` 只返回本地根）；
   `~/.codex/pets` 只作为「从 Codex 导入」的来源（`codex_pets_dir()` + `PetLibrary::scan_dir()`），
-  不再自动扫描 `~/.unipet/pets`。内置宠物：Superintendent by Renner Campos
-  （id `Superintendent_Petdex`，V2 8×11，1536×2288）；在设置里删除可永久停用重装。
+  不再自动扫描 `~/.unipet/pets`。**无内置宠物**：本地库为空时启动会直接打开设置窗口；
+  测试/ smoke 用自绘夹具 `crates/petsona-core/testdata/v2-test-pet`（V2 8×11，无第三方素材）。
 - 配置：`config.json`。`window.startPosition` 是**物理像素**；`window.gravityEnabled` 默认 `false`
   （重力 2600 px/s²、上限 1800 px/s，落到当前显示器工作区底部并播放一次 `jumping`）。
 - 开机自启（Windows）：`HKCU\Software\Microsoft\Windows\CurrentVersion\Run` 的 `Petsona` =
@@ -156,6 +157,10 @@ MSVC 缺 `link.exe` 的 GNU 回退写在 `docs/WINDOWS_VERIFICATION.md`。
 - **进场动画是自绘的**：气泡从下往上 8px / 160ms；影子悬停 180ms 变为编辑按钮，
   输入框从按钮位置展开、关闭时缩回（220ms / 180ms）。不再通过移动 / 改变窗口几何做输入框动画。
   气泡底部 `BUBBLE_BOTTOM_PADDING` 与窗口 `BUBBLE_WINDOW_GAP` 是成对常量，改一处必须改另一处。
+- **winit 会重设整份窗口样式**：鼠标穿透 / 显示等 flag 变化时，winit 按自己的 flag 重算 GWL_STYLE，把
+  `WS_CAPTION` / `WS_THICKFRAME` 加回来（透明子窗闪现一次系统边框）。修法：窗口过程拦截 `WM_STYLECHANGING`
+  就地剥掉这些位（frameless 子类也要拦，不只是 NOACTIVATE），配合隐藏 warm-up + 每帧/显示后重申；
+  守卫：连续 12 轮开关输入框，可见帧样式必须始终是 `0x96000000`。
 - **子窗保留 1px 非客户区（透明窗顶部白线的真根因）**：egui viewport 窗口的客户区原点比窗口低 1px ——
   顶部 1px 被系统画白、底部 1px 被裁（表现为「输入框下方被横切」）。SWP_FRAMECHANGED 与 DWM 边框属性都无效；
   修法：窗口过程 `WM_NCCALCSIZE`（wparam!=0 → 返回 0，客户区=整窗）+ `WM_NCPAINT` → 0，安装子类后
@@ -183,7 +188,8 @@ MSVC 缺 `link.exe` 的 GNU 回退写在 `docs/WINDOWS_VERIFICATION.md`。
   避免“聚焦后立刻失去焦点”。后台脚本会话受 Windows 前台锁限制，焦点观感仍需实机确认。
 - **V2 注视是方向姿势表**：look-row-9/10 每帧是目标姿势，不是 turn/return 时间线；
   同一行内从中性 / 当前帧沿帧序移动到目标，跨左右行先经过旧行对应的上 / 下边缘姿势，再从新行同侧边缘进入目标；
-  触发区是椭圆，半径为宠物半尺寸 + 短边 25% 留白，退出留白 35%，姿势步进 / 活动指针采样 40ms，离开触发区回中性帧。
+  触发区是椭圆，半径为宠物半尺寸 + 短边 25% 留白，退出留白 35%，姿势步进 16ms（`Turning`/`Returning` 期间按 16ms 请求重绘），
+macOS 活动指针采样 40ms，离开触发区回中性帧。
   优先级 20 > running-left/right 的 10；smoke A8 先把光标移到对面角落再跑协议状态。
 - **转向姿态会让命中像素变透明**：光标移到宠物上 → 它转头 → 当前帧像素变了 → 窗口变穿透 → 点不到。
   修法：`cursor_over_pet` 先测当前帧，再回退 idle 全帧并集掩码；回归测试

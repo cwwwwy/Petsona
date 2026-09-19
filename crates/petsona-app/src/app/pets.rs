@@ -164,11 +164,6 @@ impl PetsonaApp {
         match self.library.remove_local(id) {
             Ok(()) => {
                 self.pending_delete = None;
-                if id == petsona_core::pet::DEFAULT_PET_ID {
-                    // Do not resurrect a pet the user deleted on purpose.
-                    self.config.bundled_pet_removed = true;
-                    let _ = self.config.save(&self.paths.config_file);
-                }
                 if self.active_pet_id() == id {
                     self.refresh_pets();
                     if let Some(next) = self.pets.first().map(|pet| pet.id.clone()) {

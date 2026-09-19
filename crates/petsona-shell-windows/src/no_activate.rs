@@ -6,7 +6,7 @@ use windows_sys::Win32::UI::WindowsAndMessaging::{
     GWL_STYLE, MA_NOACTIVATE, STYLESTRUCT, SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE,
     SWP_NOSIZE, SWP_NOZORDER, WM_MOUSEACTIVATE, WM_NCCALCSIZE, WM_NCDESTROY, WM_NCPAINT,
     WM_STYLECHANGING, WNDPROC, WS_BORDER, WS_CAPTION, WS_DLGFRAME, WS_EX_NOACTIVATE,
-    WS_MAXIMIZEBOX, WS_MINIMIZEBOX, WS_POPUP, WS_SYSMENU,
+    WS_MAXIMIZEBOX, WS_MINIMIZEBOX, WS_POPUP, WS_SYSMENU, WS_THICKFRAME,
 };
 
 thread_local! {
@@ -84,14 +84,24 @@ unsafe extern "system" fn no_activate_wndproc(
             .get(&(hwnd as isize))
             .is_some_and(|(_, frameless_only)| *frameless_only)
     });
-    if message == WM_STYLECHANGING && lparam != 0 && !frameless_only {
+    if message == WM_STYLECHANGING && lparam != 0 {
         let styles = unsafe { &mut *(lparam as *mut STYLESTRUCT) };
         let index = wparam as i32;
         if index == GWL_STYLE {
-            let frame =
-                WS_CAPTION | WS_BORDER | WS_DLGFRAME | WS_SYSMENU | WS_MINIMIZEBOX | WS_MAXIMIZEBOX;
+            // winit rewrites the whole style whenever one of its window flags
+            // changes (mouse passthrough, visible, ...); it puts the classic
+            // caption/frame bits back, which flashed a native border on the
+            // otherwise frameless overlays. Veto those bits here so the
+            // decorated style never reaches the window.
+            let frame = WS_CAPTION
+                | WS_BORDER
+                | WS_DLGFRAME
+                | WS_SYSMENU
+                | WS_MINIMIZEBOX
+                | WS_MAXIMIZEBOX
+                | WS_THICKFRAME;
             styles.styleNew = (styles.styleNew & !frame) | WS_POPUP;
-        } else if index == GWL_EXSTYLE {
+        } else if index == GWL_EXSTYLE && !frameless_only {
             styles.styleNew |= WS_EX_NOACTIVATE;
         }
     }

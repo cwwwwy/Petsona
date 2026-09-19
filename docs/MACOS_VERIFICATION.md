@@ -114,7 +114,8 @@ LaunchAgent plist 开关（使用临时目录，不触碰用户真实登录项�
 **不覆盖**：缩放闪动观感、真实触控板 / 托盘点击、菜单外观、Activity Monitor 最终 CPU、
 Retina / Spaces、多显示器。
 
-V2 夹具默认从 `~/.codex/pets` 搜索并复制进临时 `PETSONA_HOME`
+V2 夹具优先用仓库自绘夹具 `crates/petsona-core/testdata/v2-test-pet`，
+没有时从 `~/.codex/pets` 搜索并复制进临时 `PETSONA_HOME`
 （应用只加载本地库）；也可以显式指定：
 
 ```bash

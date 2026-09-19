@@ -110,7 +110,6 @@ function Write-SmokeConfig {
         activePet = $null
         activePersona = $null
         firstRun = $false
-        bundledPetRemoved = $false
         window = [ordered] @{
             scale = 1.0
             opacity = 1.0
@@ -910,6 +909,13 @@ $stamp = Get-Date -Format "yyyyMMdd-HHmmssfff"
 $script:SmokeHome = Join-Path $tempRoot ("petsona-windows-smoke-{0}-{1}" -f $PID, $stamp)
 $script:AutoStartValueName = "PetsonaSmoke-$PID-$(([Guid]::NewGuid()).ToString('N').Substring(0, 8))"
 [void] (New-Item -ItemType Directory -Path $script:SmokeHome -Force)
+# The app no longer ships a bundled pet: install the synthetic V2 fixture so
+# every smoke run has a pet to show, click and switch.
+$fixture = Join-Path $root "crates\petsona-core\testdata\v2-test-pet"
+$fixtureTarget = Join-Path $script:SmokeHome "pets\test_fixture_v2"
+[void] (New-Item -ItemType Directory -Path $fixtureTarget -Force)
+Copy-Item -LiteralPath (Join-Path $fixture "pet.json") -Destination $fixtureTarget
+Copy-Item -LiteralPath (Join-Path $fixture "spritesheet.png") -Destination $fixtureTarget
 $script:Port = Find-FreeTcpPort
 if ($UseTestHooks) {
     $script:TestHookPort = Find-FreeTcpPort
@@ -1173,7 +1179,9 @@ try {
             Assert-True (-not [PetsonaSmoke.Native]::HasAny($conversation.Style, [PetsonaSmoke.Native]::WS_FRAME)) "conversation still has a native title/frame."
             Assert-True (-not [PetsonaSmoke.Native]::HasAny($conversation.ExStyle, [PetsonaSmoke.Native]::WS_EX_NOACTIVATE)) "conversation cannot accept keyboard focus."
             Invoke-TestAction -Action "close-conversation"
-            Wait-WindowGone -ProcessId $first.Process.Id -Title "Petsona 对话" -TimeoutSeconds 5
+            # The composer window is kept alive (transparent + click-through)
+            # so re-showing it cannot re-apply a decorated Win32 frame.
+            [void] (Wait-ForTestStatus -Predicate { param($candidate) -not $candidate.conversationWindowCreated } -Description "conversation closed" -TimeoutSeconds 5)
         }
 
         Invoke-SmokeCheck -Id "B11" -Name "idle uses event-driven mouse wakeups" {

@@ -42,8 +42,9 @@ use windows_sys::Win32::UI::WindowsAndMessaging::{
 
 const COMMAND_OPEN_SETTINGS: u32 = 1;
 const COMMAND_CHANGE_PET: u32 = 2;
-const COMMAND_TOGGLE_PET: u32 = 3;
-const COMMAND_QUIT: u32 = 4;
+const COMMAND_TRIGGER_ACTIVITY: u32 = 3;
+const COMMAND_TOGGLE_PET: u32 = 4;
+const COMMAND_QUIT: u32 = 5;
 
 const CLASS_NAME: &str = "Petsona.NativeMenu";
 
@@ -132,12 +133,17 @@ impl PlatformMenu for WindowsMenu {
         }
     }
 
+    fn is_open(&self) -> bool {
+        self.open.load(Ordering::Relaxed)
+    }
+
     fn poll(&self) -> Vec<MenuCommand> {
         self.commands
             .try_iter()
             .filter_map(|command| match command {
                 COMMAND_OPEN_SETTINGS => Some(MenuCommand::OpenSettings),
                 COMMAND_CHANGE_PET => Some(MenuCommand::ChangePet),
+                COMMAND_TRIGGER_ACTIVITY => Some(MenuCommand::TriggerActivity),
                 COMMAND_TOGGLE_PET => Some(MenuCommand::TogglePet),
                 COMMAND_QUIT => Some(MenuCommand::Quit),
                 _ => None,
@@ -219,6 +225,7 @@ fn run_menu_thread(
 
     if !append_item(menu, COMMAND_OPEN_SETTINGS as usize, "打开设置")
         || !append_item(menu, COMMAND_CHANGE_PET as usize, "更换宠物")
+        || !append_item(menu, COMMAND_TRIGGER_ACTIVITY as usize, "立即活动")
         || !append_item(menu, COMMAND_TOGGLE_PET as usize, "隐藏宠物")
         || !append_item(menu, COMMAND_QUIT as usize, "退出")
     {

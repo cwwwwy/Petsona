@@ -158,6 +158,12 @@ find_v2_pet() {
     printf '%s\n' "$PETSONA_SMOKE_V2_PET_DIR"
     return 0
   fi
+  # The app ships without a bundled pet; fall back to the repo fixture so
+  # the smoke always has a V2 pet to switch to.
+  if [[ -d "$PETSONA_ROOT/crates/petsona-core/testdata/v2-test-pet" ]]; then
+    printf '%s\n' "$PETSONA_ROOT/crates/petsona-core/testdata/v2-test-pet"
+    return 0
+  fi
   for root in "$HOME/.codex/pets"; do
     [[ -d "$root" ]] || continue
     while IFS= read -r -d '' manifest; do

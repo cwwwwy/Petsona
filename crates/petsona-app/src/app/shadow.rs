@@ -51,7 +51,7 @@ impl PetsonaApp {
         // show re-created the window (an occasional visible "restart").
         let composer_active = self.conversation_window_warmed
             && (self.conversation_open || self.conversation_closing_at.is_some());
-        let showing = self.pet_visible && !composer_active;
+        let showing = self.pet.is_some() && self.pet_visible && !composer_active;
         if !showing {
             self.shadow_hovered = false;
             self.shadow_hover_progress = 0.0;

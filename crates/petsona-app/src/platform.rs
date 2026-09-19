@@ -74,6 +74,7 @@ impl PhysicalRect {
 pub enum MenuCommand {
     OpenSettings,
     ChangePet,
+    TriggerActivity,
     TogglePet,
     Quit,
 }
@@ -89,6 +90,12 @@ pub trait PlatformMenu: Send {
 
     /// Commands the user selected since the last call.
     fn poll(&self) -> Vec<MenuCommand>;
+
+    /// Whether a menu is currently open. Backends that do not track the menu
+    /// (macOS AppKit, egui fallback) report `false`.
+    fn is_open(&self) -> bool {
+        false
+    }
 }
 
 /// Everything the shared UI needs from the operating system.

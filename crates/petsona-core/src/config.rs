@@ -169,9 +169,6 @@ pub struct AppConfig {
     pub active_pet: Option<String>,
     pub active_persona: Option<String>,
     pub first_run: bool,
-    /// Set when the user deletes the bundled pet from the local library; the
-    /// app then stops reinstalling it.
-    pub bundled_pet_removed: bool,
     pub window: PetWindowConfig,
     pub deepseek: DeepSeekConfig,
     pub greeting: GreetingConfig,
@@ -186,7 +183,6 @@ impl Default for AppConfig {
             active_pet: None,
             active_persona: None,
             first_run: true,
-            bundled_pet_removed: false,
             window: PetWindowConfig::default(),
             deepseek: DeepSeekConfig::default(),
             greeting: GreetingConfig::default(),

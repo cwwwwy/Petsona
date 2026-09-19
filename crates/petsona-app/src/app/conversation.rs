@@ -20,6 +20,12 @@ impl PetsonaApp {
         if !self.conversation_open {
             self.conversation_shown_at = Some(Instant::now());
         }
+        // Re-run the hidden warm-up on every open. egui may have dropped the
+        // viewport while the pet window was occluded; a recreated window is
+        // born decorated and would flash a native border before the shell can
+        // strip it. Warming up keeps the "create hidden -> style -> show"
+        // order, no matter whether the old window still exists.
+        self.conversation_window_warmed = false;
         self.conversation_open = true;
         self.conversation_closing_at = None;
         self.conversation_focus_pending = true;
@@ -230,6 +236,12 @@ impl PetsonaApp {
                 .with_visible(false);
             ctx.show_viewport_immediate(conversation_id, builder, |_ui, _class| {});
             self.conversation_window_warmed = true;
+            // Strip the frame in the same frame the window is created: showing
+            // it one frame later first paints the decorated Win32 window (the
+            // flash of border the user sees when the composer expands).
+            let _ = self
+                .platform
+                .prepare_activatable_popup_window(CONVERSATION_TITLE);
             return;
         }
         let _ = self
@@ -295,7 +307,10 @@ impl PetsonaApp {
             .with_resizable(false)
             .with_active(true)
             .with_mouse_passthrough(!(interactive && pointer_in_pill))
-            .with_visible(self.pet_visible && !fully_closed);
+            // Keep the window visible even when closed: showing it again
+            // made winit re-apply the decorated style for a frame, which
+            // flashed a native border when the composer expanded.
+            .with_visible(self.pet_visible);
         let mut send = false;
         let mut close = false;
         // Clicking anywhere outside the pill closes the composer; the draft is
@@ -442,6 +457,11 @@ impl PetsonaApp {
             }
         });
 
+        // Post-pass: if egui had to create the OS window during this frame it
+        // exists only now, so strip the decorated style before it is painted.
+        let _ = self
+            .platform
+            .prepare_activatable_popup_window(CONVERSATION_TITLE);
         self.conversation_window_created = !fully_closed;
         if self.conversation_focus_pending {
             ctx.send_viewport_cmd_to(conversation_id, egui::ViewportCommand::Focus);
