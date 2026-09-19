@@ -1,6 +1,13 @@
 [workspace]
 resolver = "2"
-members = ["crates/petsona-core", "crates/petsona-runtime", "crates/petsona-app", "crates/petsona-shell-windows", "crates/petsona-shell-macos"]
+members = [
+    "crates/petsona-core",
+    "crates/petsona-runtime",
+    "crates/petsona-app",
+    "crates/petsona-shell-windows",
+    "crates/petsona-shell-macos",
+    "crates/petsona-ffi",
+]
 
 [workspace.package]
 version = "0.1.0"
@@ -49,4 +56,7 @@ opt-level = 2
 lto = "thin"
 codegen-units = 1
 strip = true
-panic = "abort"
+# The native frontends call through a C ABI. The FFI layer catches unwinding
+# panics and turns them into a terminal engine error instead of unwinding into
+# Swift or .NET. Undefined pointers and OOM remain process-fatal.
+panic = "unwind"

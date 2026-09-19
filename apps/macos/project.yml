@@ -1,0 +1,57 @@
+name: Petsona
+options:
+  bundleIdPrefix: com.petsona
+  deploymentTarget:
+    macOS: "13.0"
+settings:
+  SWIFT_VERSION: "6.0"
+  CLANG_CXX_LANGUAGE_STANDARD: c++20
+  CLANG_ENABLE_MODULES: YES
+targets:
+  Petsona:
+    type: application
+    platform: macOS
+    sources:
+      - path: Petsona/Sources
+    resources:
+      - path: ../../packaging/macos/Petsona.icns
+    settings:
+      PRODUCT_BUNDLE_IDENTIFIER: com.petsona.desktop
+      PRODUCT_NAME: Petsona
+      INFOPLIST_FILE: Petsona/Info.plist
+      SWIFT_OBJC_BRIDGING_HEADER: "$(SRCROOT)/../../contracts/petsona.h"
+      HEADER_SEARCH_PATHS:
+        - "$(SRCROOT)/../../contracts"
+      OTHER_LDFLAGS:
+        - "$(SRCROOT)/../../target/release/libpetsona_ffi.a"
+        - "-framework"
+        - Security
+        - "-framework"
+        - SystemConfiguration
+      CODE_SIGNING_ALLOWED: NO
+    preBuildScripts:
+      - name: Build Rust FFI
+        script: |
+          set -euo pipefail
+          cd "${SRCROOT}/../.."
+          cargo build -p petsona-ffi --release --locked
+        basedOnDependencyAnalysis: false
+  PetsonaTests:
+    type: bundle.unit-test
+    platform: macOS
+    sources:
+      - path: PetsonaTests
+    dependencies:
+      - target: Petsona
+    settings:
+      PRODUCT_BUNDLE_IDENTIFIER: com.petsona.desktop.tests
+      CODE_SIGNING_ALLOWED: NO
+schemes:
+  Petsona:
+    build:
+      targets:
+        Petsona: all
+    test:
+      gatherCoverageData: false
+      targets:
+        - name: PetsonaTests

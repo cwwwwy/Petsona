@@ -3,10 +3,8 @@ set -euo pipefail
 
 PETSONA_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 OUTPUT_DIR="${1:-$PETSONA_ROOT/dist}"
-PACKAGE_VERSION="$(sed -n 's/^version = "\([^"]*\)"/\1/p' "$PETSONA_ROOT/Cargo.toml" | head -n 1)"
-VERSION="${PETSONA_VERSION:-${PACKAGE_VERSION:-0.1.0}}"
-TARGET="${PETSONA_TARGET:-}"
 ARCH="${PETSONA_ARCH:-$(uname -m)}"
+VERSION="${PETSONA_VERSION:-$(sed -n 's/^version = "\([^"]*\)"/\1/p' "$PETSONA_ROOT/Cargo.toml" | head -n 1)}"
 
 case "$OUTPUT_DIR" in
   /*) ;;
@@ -15,52 +13,51 @@ esac
 
 APP_DIR="$OUTPUT_DIR/Petsona.app"
 ZIP_PATH="$OUTPUT_DIR/Petsona-macos-$ARCH.zip"
+DERIVED_DATA="${PETSONA_NATIVE_DERIVED_DATA:-$PETSONA_ROOT/.scratch/macos-package-build}"
 
-if ! command -v cargo >/dev/null 2>&1; then
-  printf 'Missing required command: cargo\n' >&2
-  exit 1
-fi
-for command_name in ditto plutil; do
-  if ! command -v "$command_name" >/dev/null 2>&1; then
+for command_name in cargo xcodebuild ditto plutil; do
+  command -v "$command_name" >/dev/null 2>&1 || {
     printf 'Missing required command: %s\n' "$command_name" >&2
     exit 1
-  fi
+  }
 done
 
 cd "$PETSONA_ROOT"
-
-cargo_args=(build --release --locked -p petsona-shell-macos)
-binary_path="$PETSONA_ROOT/target/release/petsona-macos"
-if [[ -n "$TARGET" ]]; then
-  cargo_args+=(--target "$TARGET")
-  binary_path="$PETSONA_ROOT/target/$TARGET/release/petsona-macos"
+if [[ "${PETSONA_SKIP_BUILD:-0}" != "1" ]]; then
+  cargo build -p petsona-ffi --release --locked
+  xcodebuild \
+    -project "$PETSONA_ROOT/apps/macos/Petsona.xcodeproj" \
+    -scheme Petsona \
+    -configuration Release \
+    -arch "$ARCH" \
+    -derivedDataPath "$DERIVED_DATA" \
+    CODE_SIGNING_ALLOWED=NO \
+    build
 fi
-if [[ "${PETSONA_SKIP_BUILD:-0}" == "1" ]]; then
-  printf 'Skipping release build because PETSONA_SKIP_BUILD=1\n'
-else
-  cargo "${cargo_args[@]}"
-fi
 
-if [[ ! -x "$binary_path" ]]; then
-  printf 'Release binary was not found: %s\n' "$binary_path" >&2
+BUILT_APP="$DERIVED_DATA/Build/Products/Release/Petsona.app"
+[[ -d "$BUILT_APP" ]] || {
+  printf 'Native app bundle was not found: %s\n' "$BUILT_APP" >&2
   exit 1
-fi
+}
 
 rm -rf "$APP_DIR"
 rm -f "$ZIP_PATH"
-mkdir -p "$APP_DIR/Contents/MacOS" "$APP_DIR/Contents/Resources"
-
-cp "$binary_path" "$APP_DIR/Contents/MacOS/Petsona"
+mkdir -p "$OUTPUT_DIR"
+ditto "$BUILT_APP" "$APP_DIR"
+mkdir -p "$APP_DIR/Contents/Resources"
 cp "$PETSONA_ROOT/packaging/macos/Petsona.icns" "$APP_DIR/Contents/Resources/Petsona.icns"
-sed "s/@VERSION@/$VERSION/g" \
-  "$PETSONA_ROOT/packaging/macos/Info.plist" \
-  > "$APP_DIR/Contents/Info.plist"
-chmod 755 "$APP_DIR/Contents/MacOS/Petsona"
 
-plutil -lint "$APP_DIR/Contents/Info.plist" >/dev/null
+INFO="$APP_DIR/Contents/Info.plist"
+EXECUTABLE="$APP_DIR/Contents/MacOS/Petsona"
+plutil -replace CFBundleShortVersionString -string "$VERSION" "$INFO"
+plutil -replace CFBundleVersion -string "$VERSION" "$INFO"
+plutil -replace CFBundleIconFile -string "Petsona" "$INFO" 2>/dev/null || \
+  plutil -insert CFBundleIconFile -string "Petsona" "$INFO"
+[[ -x "$EXECUTABLE" ]] || { printf 'Native app executable is missing\n' >&2; exit 1; }
+plutil -lint "$INFO" >/dev/null
 ditto -c -k --norsrc --keepParent "$APP_DIR" "$ZIP_PATH"
 
 printf 'Created %s\n' "$APP_DIR"
 printf 'Created %s\n' "$ZIP_PATH"
-printf 'Bundle identifier: com.petsona.desktop\n'
-printf 'The bundle is unsigned unless scripts/sign-macos.sh is run.\n'
+printf 'Native SwiftUI/AppKit app; unsigned unless scripts/sign-macos.sh is run.\n'

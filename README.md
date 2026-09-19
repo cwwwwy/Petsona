@@ -1,8 +1,8 @@
 # Petsona
 
-A lightweight, Rust-only desktop pet for Windows and macOS. No Node, no WebView,
-no Tauri — native windows, a Codex-compatible pet engine and an optional
-DeepSeek greeting.
+A lightweight desktop pet for Windows and macOS. The target architecture uses a
+shared Rust engine with native platform frontends, a Codex-compatible pet engine
+and an optional DeepSeek greeting.
 
 ## Features
 
@@ -22,18 +22,28 @@ DeepSeek greeting.
 |---|---|
 | `crates/petsona-core/` | Pet format, animation engine, persona, memory, DeepSeek, state protocol |
 | `crates/petsona-runtime/` | Platform-independent runtime: config, sessions, locks, logs, greetings |
-| `crates/petsona-app/` | Shared egui UI + `PlatformHost` boundary (library, no binary) |
-| `crates/petsona-shell-windows/` | Win32 shell → `petsona-windows.exe` |
-| `crates/petsona-shell-macos/` | AppKit shell → `petsona-macos` |
+| `crates/petsona-ffi/` | Native frontend C ABI under development; not yet validated as stable |
+| `apps/macos/` | SwiftUI + AppKit native macOS frontend (in development) |
+| `crates/petsona-app/` | Legacy egui UI retained until native cutover |
+| `crates/petsona-shell-windows/` | Legacy Rust/Win32 shell retained until WinUI cutover |
+| `crates/petsona-shell-macos/` | Legacy Rust/AppKit shell retained until native cutover |
 
-Platform code lives in the shells, not in `petsona-app`: each shell implements
-`petsona_app::platform::PlatformHost` and calls `petsona_app::run(host)`.
+The target architecture is shared Rust core/runtime plus native platform
+frontends. The macOS frontend in `apps/macos` calls the Rust engine through
+`contracts/petsona.h`; the current egui shells remain only while the native
+feature set is being migrated. The native frontend is incomplete and has open
+review findings; it is not a release-ready replacement yet.
+See the [execution contract](docs/plans/native-ui-rewrite.md),
+[implementation and review record](docs/execution/native-ui-rewrite.md), and
+[collaboration rules](AGENTS.md).
 
 ## Run
 
 ```powershell
-cargo run -p petsona-shell-windows   # Windows
-cargo run -p petsona-shell-macos     # macOS
+cargo run -p petsona-shell-windows   # legacy Windows entry during migration
+cargo run -p petsona-shell-macos     # legacy macOS entry during migration
+xcodegen generate --spec apps/macos/project.yml --project apps/macos
+xcodebuild -project apps/macos/Petsona.xcodeproj -scheme Petsona build
 ```
 
 Windows needs VS Build Tools ("Desktop development with C++") for the MSVC
@@ -42,8 +52,8 @@ linker. A GNU toolchain fallback is documented in `docs/WINDOWS_VERIFICATION.md`
 ## Verify
 
 ```text
-macOS    bash scripts/verify-macos-all.sh               # gates + runtime smoke + package smoke
-         bash scripts/verify-macos-all.sh --gates-only  # fmt / clippy / test / release
+macOS    bash scripts/verify-macos-all.sh               # Rust + native build + smoke + package
+         bash scripts/verify-macos-all.sh --gates-only  # Rust + native build gates
 Windows  powershell -ExecutionPolicy Bypass -File scripts\verify-windows.ps1        # gates
          powershell -ExecutionPolicy Bypass -File scripts\verify-windows.ps1 -Full  # gates + smoke
 ```

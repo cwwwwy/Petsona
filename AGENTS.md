@@ -2,8 +2,9 @@
 
 ## 项目速览
 
-Petsona 是 Windows / macOS 桌宠：**Rust-only**（eframe/egui + winit + tray-icon + ureq），
-无 Node / WebView / Tauri。读取 Codex 宠物包（`pet.json` + 8×9 / 8×11 图集），
+Petsona 是 Windows / macOS 桌宠：共享 Rust 核心与运行时，配合各端原生前端（当前 macOS
+使用 SwiftUI / AppKit，Windows 目标为 C# / WinUI 3 + Win32）。旧 egui 入口在迁移完成前保留，
+但不属于最终产品架构。读取 Codex 宠物包（`pet.json` + 8×9 / 8×11 图集），
 播放官方动画，支持人格、轻量 JSON 记忆、DeepSeek 短问候和本地状态协议。
 
 平台现状：**Windows 是主要实测平台**；macOS 后端已接入，仍需在 mac 上人工验收
@@ -15,21 +16,24 @@ Petsona 是 Windows / macOS 桌宠：**Rust-only**（eframe/egui + winit + tray-
 |---|---|
 | `crates/petsona-core/` | 宠物格式与动画引擎、人格、记忆、DeepSeek、状态协议 |
 | `crates/petsona-runtime/` | 平台无关运行时：配置、宠物会话、实例锁、日志、问候 |
-| `crates/petsona-app/` | 共享 egui UI + `PlatformHost` 边界；UI 已拆入 `src/app/` 子模块 |
-| `crates/petsona-shell-windows/` | Win32 外壳（bin `petsona-windows`） |
-| `crates/petsona-shell-macos/` | AppKit 外壳（bin `petsona-macos`） |
+| `crates/petsona-ffi/` | 原生前端 C ABI 雏形，稳定性与生命周期尚未验收 |
+| `apps/macos/` | SwiftUI / AppKit 原生 macOS 前端（迁移中） |
+| `crates/petsona-app/` | 旧 egui UI，完成对照后删除 |
+| `crates/petsona-shell-windows/` | 旧 Rust/Win32 外壳，完成 WinUI 对照后删除 |
+| `crates/petsona-shell-macos/` | 旧 Rust/AppKit 外壳，完成原生对照后删除 |
 | `docs/` | 平台架构、两端实机验收清单、Windows 问题跟踪（`WINDOWS_ISSUES.md`） |
 
 ## 常用命令
 
 ```powershell
 cargo run -p petsona-shell-windows        # Windows 产品入口
+cargo build -p petsona-ffi --release
 cargo test --workspace
 cargo clippy --workspace --all-targets -- -D warnings
 cargo fmt --check
 ```
 
-验收入口（每端只有一个脚本，已包含 fmt / clippy / test / release / smoke / 打包结构检查）：
+验收入口（每端一个脚本；macOS 原生 build/test/smoke/打包已接入，窗口视觉仍需人工）：
 
 ```text
 Windows 快速: powershell -ExecutionPolicy Bypass -File scripts\verify-windows.ps1
@@ -43,7 +47,8 @@ macOS   门禁: bash scripts/verify-macos-all.sh --gates-only
 - 不要新增 `.cmd` / `.command` 包装；新增脚本前先问能否并入现有脚本。
 - 窗口、托盘、菜单、穿透的肉眼部分仍按 `docs/*_VERIFICATION.md` 检查。
 
-macOS 需要 Xcode Command Line Tools；Windows 需要 VS Build Tools（含 C++ 桌面开发）。
+macOS 原生工程需要完整 Xcode；修改工程 spec 时需要 XcodeGen，版本与生成工程须同步记录。
+旧 Windows 入口需要 VS Build Tools（含 C++ 桌面开发），未来 WinUI 前端另需 .NET/Windows SDK。
 MSVC 缺 `link.exe` 的 GNU 回退写在 `docs/WINDOWS_VERIFICATION.md`。
 
 ## 协作偏好（硬规则）
@@ -52,7 +57,7 @@ MSVC 缺 `link.exe` 的 GNU 回退写在 `docs/WINDOWS_VERIFICATION.md`。
 - **Git 只做只读查询，不代替用户操作**：`status` / `log` / `diff` / `remote -v` / `branch -vv` 可以；
   `add` / `commit` / `push` / 建删分支 / tag / 改 remote / `gh repo edit` 一律给命令让用户自己跑，
   除非用户明确说“你来操作”。
-- `AGENTS.md` 由 AI 直接维护；重要决策、计划、坑要及时写回本文件。
+- `AGENTS.md` 由 AI 在获准修改文档时维护长期决策与规则；单次计划和执行证据分别写入下述文档。用户要求只读时不得自行写回。
 - 新会话先读：`AGENTS.md`、`docs/PLATFORM_ARCHITECTURE.md`、`docs/WINDOWS_VERIFICATION.md`、
   `docs/MACOS_VERIFICATION.md`、git log。
 - 尽量不新增第三方依赖：能用标准库 / 现有 `windows-sys` 解决就不加 crate
@@ -61,11 +66,30 @@ MSVC 缺 `link.exe` 的 GNU 回退写在 `docs/WINDOWS_VERIFICATION.md`。
 - 仓库对外元数据（GitHub 名称、About、Topics、README 首段）要和 Petsona 同步，建议值见下文。
 - 涉及窗口 / 托盘 / 菜单的改动，交付时写清“需要用户实机确认什么”。
 
-## 当前状态（2026-09-18）
+## 跨对话工作流（规划 → 执行 → 审查）
 
-- 主线基线 `664cde2`（2026-09-19，子窗 1px 非客户区 / 常驻渲染 / 影子缩放）。
-- 2026-09-19 未提交（批次 4–7）：注视 16ms 步进、缩放过渡、右键菜单点击守卫、移除内置宠物 + 首启设置窗、
-  立即活动菜单、smoke 自绘夹具；代码与本地门禁全绿，待实机复测。
+- 计划契约：`docs/plans/<任务名>.md`；执行证据：`docs/execution/<任务名>.md`。模板分别为各目录的 `TEMPLATE.md`。
+- 当前任务：计划 [native-ui-rewrite.md](docs/plans/native-ui-rewrite.md)，执行记录 [native-ui-rewrite.md](docs/execution/native-ui-rewrite.md)。功能表 [FEATURE_PARITY.md](docs/FEATURE_PARITY.md) 只汇总状态，不覆盖计划。
+- 每个对话先确认角色与用户授权，读取 AGENTS、指定计划及执行记录，再用 `git status`、`git log`、`git diff` 和未跟踪文件核对基线。已有用户改动必须保留。
+- **规划**：只读调查，明确目标/非目标、逐文件增改删、约束、REQ 编号、依赖、验收矩阵、命令和完成条件。用户要求“不修改文件”时只在对话输出；授权落盘后才写指定文档，不写产品代码。
+- **执行**：先复述关键目标和验收标准，再按指定计划实施。可作计划内的局部实现选择，不得自行缩减功能、将完整交付改成骨架、跳过验收或改变架构边界。
+- **暂停**：基线重叠冲突、目标互斥、必须改变契约/依赖/数据格式/平台范围，或无法满足必要验收时，说明文件证据、影响、建议和所需决定，暂停受影响工作。若用户要求整体暂停则整体暂停；否则可继续不依赖冲突的已授权工作。普通编译错误与计划内修复不要求重新批准。
+- **计划变更**：执行者只能在执行记录中提出偏差/变更请求，不能修改目标或验收来使现状“合规”。计划修订须记录用户确认、版本及改变的 REQ；不能凭空写“已批准”。
+- **证据**：每个 REQ 分开记录实现、自动测试、人工验收状态；命令须记录目标程序、架构、退出码、执行时工作区和结果位置。保留失败及 SKIP；旧入口测试、编译成功和执行者声明不能替代新入口验收。
+- **审查**：默认只读，对照契约、实际 diff（含未跟踪文件）和证据，按 REQ 报告优先级、位置、影响、缺少测试。不因为发现问题就重新实现；只读审查不自行更新文档。
+- **完成**：所有本次范围内必需项通过、有证据、无未解决审查项才可宣布完成。必需测试受阻/跳过、人工检查未做时写“未完成/待验收”，不自行降低标准。
+- 新测试必须隔离数据目录、网络端口、自启项和凭据；应用宿主测试也必须在入口初始化前隔离。不得让测试启动默认用户实例。
+
+## 当前状态（2026-09-19）
+
+- 用户确认最终方向是共享 Rust 核心 + 原生前端：macOS SwiftUI/AppKit，Windows C#/WinUI 3/Win32；当前授权先实施 macOS 和必要共享层，Windows 后续，Linux 不在范围。
+- Git HEAD 为 `ad045bb`；原生重构位于未提交工作区。计划与执行记录见上，文档版本不能替代 Git/工作区基线。
+- 当前 macOS 原生入口已从骨架推进到可构建/可测试/可协议 smoke 的实施状态，但**仍未完成完整原生验收**；剩余功能和人工项以执行记录 REV-02/04/05/07/08 及 M-01～M-06 为准。旧入口暂留作行为对照；Windows 旧验证结论不代表新原生实现已通过。
+- 2026-09-19 执行：runtime worker + ABI3 FFI、原生 SwiftUI/AppKit 宠物窗/气泡/Composer/设置/宠物库命令、静态 `.a` 链接、原生 XCTest 和 native smoke 已接入；统一 `verify-macos-all.sh` 已通过，但不等于窗口视觉、IME、多屏、签名、公证人工通过。
+
+### 旧入口历史记录（非当前原生验收结论）
+
+- 历史基线 `664cde2`，后续 `eb99f71` 已包含批次 4–7，`ad045bb` 补空库问候/气泡修复；以下测试数字均为当时旧入口记录。
 - 决策（2026-09-18）：**Windows 优先**——先把 `docs/WINDOWS_ISSUES.md` 全部问题修完并实机确认，
   再开 Linux 端；Linux 可行性与范围决策要点见该文档附录，本轮不做。
 - 已合入：删除旧 `legacy/` 树、`petsona-app` UI 模块化、CJK 字体路径经 `PlatformHost` 注入、
@@ -91,9 +115,9 @@ MSVC 缺 `link.exe` 的 GNU 回退写在 `docs/WINDOWS_VERIFICATION.md`。
 - macOS 实机：A3、B1–B4、B6–B7 曾通过；B5 注视视觉、B8 缩放观感、B9 输入框动画 / caret gaze、
   B11 Activity Monitor、A12 下一次登录启动仍待确认；多屏 / Retina 按用户决定暂缓，签名 / 公证待凭据。
 
-### 阶段 7 剩余
+### 旧入口阶段 7 剩余（历史待办）
 
-1. **Windows 问题清零（当前唯一主线）**：`docs/WINDOWS_ISSUES.md` 批次 1–7 代码已完成（含移除内置宠物、
+1. **Windows 问题清零（原主线，当前以任务计划为准）**：`docs/WINDOWS_ISSUES.md` 批次 1–7 代码已完成（含移除内置宠物、
    首启设置窗、立即活动、注视流畅、缩放过渡、右键回馈、子窗白线 / 闪框修复）；剩余是**实机复测**与 D 组打包交付。
 2. **Windows 首次发布**：清单清零后定版本 → 先 `workflow_dispatch` 试跑 → 再打 `windows-v*` tag；
    发布前必须解决 GitHub Release 通道（W-28）；W-27 已通过移除内置宠物解决；
@@ -103,16 +127,14 @@ MSVC 缺 `link.exe` 的 GNU 回退写在 `docs/WINDOWS_VERIFICATION.md`。
 
 ## 架构约定
 
-- 一个仓库、一个 workspace、共享 `petsona-core` / `petsona-runtime`；Windows 与 macOS 各自拥有
-  UI 外壳，可独立发布（tag `windows-v*` / `macos-v*`），不长期维护平台分支。
-- `petsona-app` 是纯共享库：不允许 `#[cfg(target_os = ...)]`，也不提供二进制。
-- 平台能力全部经 `PlatformHost` 注入，每个方法都有可移植默认实现（winit / egui 回退）。
-  新增能力 = 在 trait 加带默认实现的方法 + 在对应外壳 override。
-- 字体候选路径经 `PlatformHost::cjk_font_candidates` 注入，`petsona-app` 不直接判断操作系统。
-- `PhysicalRect` 是跨混合 DPI 的唯一几何单位（物理像素）；逻辑点只在 winit 边界换算。
-- Windows 菜单用进程内 Win32 菜单线程，macOS 用 AppKit 原生菜单；不接受 WinUI3 /
-  Windows App SDK 依赖（决策见 `docs/PLATFORM_ARCHITECTURE.md`）。
-- 接口清单与迁移历史见 `docs/PLATFORM_ARCHITECTURE.md`。
+- 一个仓库、一个 workspace、共享 `petsona-core` / `petsona-runtime` / `petsona-ffi`；Windows 与
+  macOS 各自拥有原生前端，可独立发布（tag `windows-v*` / `macos-v*`），不长期维护平台分支。
+- 最终前端不依赖 egui、eframe 或 winit。`petsona-app` 和旧 shell 只作为迁移期间的行为对照。
+- Rust 负责业务状态、动画与平台无关几何；原生前端负责 UI 主线程、窗口、输入、托盘、菜单和渲染。
+- `contracts/petsona.h` 是跨语言边界；不跨边界传递 Rust 引用、容器或分配器所有权。
+- `PhysicalRect` 是跨混合 DPI 的唯一几何单位（物理像素）；逻辑点只在平台前端边界换算。
+- Windows 目标使用 WinUI 3 + Win32，macOS 使用 SwiftUI + AppKit；平台差异通过各自原生服务实现。
+- 接口清单与迁移历史见 `docs/PLATFORM_ARCHITECTURE.md` 和 `docs/NATIVE_REWRITE_PLAN.md`。
 
 ## GitHub 元数据
 
@@ -138,7 +160,8 @@ MSVC 缺 `link.exe` 的 GNU 回退写在 `docs/WINDOWS_VERIFICATION.md`。
   姿势表、row10 = 左侧方向姿势表，每行中间帧是中性姿势；依据与测量方法见 `pet/state.rs` 和
   `pet_inspect`。
 - 日志：数据目录 `logs/petsona.log`；单实例锁：数据目录 `petsona.lock`。
-- release profile：`lto = "thin"`、`codegen-units = 1`、`strip = true`、`panic = "abort"`。
+- 当前 release profile：`lto = "thin"`、`codegen-units = 1`、`strip = true`、`panic = "unwind"`。
+  旧入口曾使用 abort；新 FFI 的 panic 终止处理尚有 REV-05，不能把 unwind 当作已完成的故障隔离。
 - Windows 打包产物：`dist\Petsona-windows-x64-<version>.zip`（含 exe、图标、VERSION、README）；
   exe 图标由 `crates\petsona-shell-windows\build.rs` 调 `rc.exe` / `windres.exe` 编译
   `packaging\windows\Petsona.rc`，不引 crate。
@@ -179,10 +202,10 @@ MSVC 缺 `link.exe` 的 GNU 回退写在 `docs/WINDOWS_VERIFICATION.md`。
 - **egui 会回收未渲染的 viewport**：气泡 / 影子 / 输入框被隐藏后若停止渲染，下次出现是**新建 Win32 窗口**，
   `warm-up → 设属性 → 显示` 只对首次有效，之后会带一帧默认边框并播放 DWM 滑入。修法：隐藏时重置 warm-up 标志，
   每次重建都重做 warm-up；`style_popup_window` 需同时禁用 DWM 非客户区渲染。
-- **输入框是单一轻量组件**：固定小影子始终显示在宠物下方；悬停变为圆形编辑按钮；点击按钮展开
+- **旧 egui 输入框是单一轻量组件**：固定小影子始终显示在宠物下方；悬停变为圆形编辑按钮；点击按钮展开
   小型输入框，只保留输入框和向上箭头发送按钮。输入框宽度约 300pt，文字自动换行并增高；
-  Enter 发送、Shift+Enter 换行、Esc 关闭。组件由原生透明窗口承载但仍由 egui 自绘，不引入 Win32
-  `EDIT` / WinUI3 子控件，以保留透明和缩放动画。
+  Enter 发送、Shift+Enter 换行、Esc 关闭。该记录只约束旧 egui 入口；最终原生前端使用平台文本控件，
+  但必须保持相同快捷键和 IME 行为。
 - **Win32 菜单打开设置时不能恢复旧前台**：菜单线程在 `打开设置` / `更换宠物` 命令后跳过
   `SetForegroundWindow(previous)`；`WindowsHost::confirm_settings_focus` 在设置窗出现后重新确认前台，
   避免“聚焦后立刻失去焦点”。后台脚本会话受 Windows 前台锁限制，焦点观感仍需实机确认。

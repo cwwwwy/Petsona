@@ -1,0 +1,461 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 77;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		2332E93B0191A553BB1F641A /* EngineClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 763D809BA2FC73283C125DC5 /* EngineClient.swift */; };
+		23508CB364F319CE2F2CD500 /* SystemServiceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8CC244EC9E477167C0553970 /* SystemServiceTests.swift */; };
+		379E86A5B930C3A7B88C7455 /* SystemServices.swift in Sources */ = {isa = PBXBuildFile; fileRef = D0AB9E3FE607652338B00325 /* SystemServices.swift */; };
+		749EE7505E91D13AF66497FD /* EngineClientTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = CBAAB991C83D8029F16555FE /* EngineClientTests.swift */; };
+		86618A6B1CDA37ACAA726A71 /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7A83CD3E29FB23450E39A3E3 /* AppDelegate.swift */; };
+		8AD5B1925B5D159AE42C66F6 /* OverlayPanels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 94CB3F7D16E9E533E8CFADF7 /* OverlayPanels.swift */; };
+		9B42BB269AA0817C404DC6FA /* PetsonaApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 47D5B033934AC70BABDACE1A /* PetsonaApp.swift */; };
+		B526334FBBC4ACEB9EB3C442 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D1715372BAF34458F42E576A /* SettingsView.swift */; };
+		B9E1FDB0402A601CA55CC515 /* PetWindowController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0C86F7D7EEB6FC8891B28B84 /* PetWindowController.swift */; };
+		F035BB1686BC62D9643E29E9 /* AbiTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2642B1511D79F30A5133D43 /* AbiTests.swift */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		78FB7BF13190A234287BE4AC /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 8ED5043D6839ECA59930C29C /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = A112281F5E7EA6063C0F998B;
+			remoteInfo = Petsona;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXFileReference section */
+		0C86F7D7EEB6FC8891B28B84 /* PetWindowController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PetWindowController.swift; sourceTree = "<group>"; };
+		47D5B033934AC70BABDACE1A /* PetsonaApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PetsonaApp.swift; sourceTree = "<group>"; };
+		763D809BA2FC73283C125DC5 /* EngineClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EngineClient.swift; sourceTree = "<group>"; };
+		7A83CD3E29FB23450E39A3E3 /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
+		828292AC9AF72549A7290581 /* PetsonaTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = PetsonaTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		8CC244EC9E477167C0553970 /* SystemServiceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SystemServiceTests.swift; sourceTree = "<group>"; };
+		94CB3F7D16E9E533E8CFADF7 /* OverlayPanels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OverlayPanels.swift; sourceTree = "<group>"; };
+		A2642B1511D79F30A5133D43 /* AbiTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AbiTests.swift; sourceTree = "<group>"; };
+		CBAAB991C83D8029F16555FE /* EngineClientTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EngineClientTests.swift; sourceTree = "<group>"; };
+		D0AB9E3FE607652338B00325 /* SystemServices.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SystemServices.swift; sourceTree = "<group>"; };
+		D1715372BAF34458F42E576A /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
+		EBC4A91B0919B37A9522ECB7 /* Petsona.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Petsona.app; sourceTree = BUILT_PRODUCTS_DIR; };
+/* End PBXFileReference section */
+
+/* Begin PBXGroup section */
+		2A8C8AAE24DCA2FFCBB737D4 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				EBC4A91B0919B37A9522ECB7 /* Petsona.app */,
+				828292AC9AF72549A7290581 /* PetsonaTests.xctest */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		2C05494F1A92FDCE4E169091 = {
+			isa = PBXGroup;
+			children = (
+				CA38F7279B030A9A38E99EA7 /* PetsonaTests */,
+				FDE2E4AD5AF1629EAB017DBC /* Sources */,
+				2A8C8AAE24DCA2FFCBB737D4 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		CA38F7279B030A9A38E99EA7 /* PetsonaTests */ = {
+			isa = PBXGroup;
+			children = (
+				A2642B1511D79F30A5133D43 /* AbiTests.swift */,
+				CBAAB991C83D8029F16555FE /* EngineClientTests.swift */,
+				8CC244EC9E477167C0553970 /* SystemServiceTests.swift */,
+			);
+			path = PetsonaTests;
+			sourceTree = "<group>";
+		};
+		FDE2E4AD5AF1629EAB017DBC /* Sources */ = {
+			isa = PBXGroup;
+			children = (
+				7A83CD3E29FB23450E39A3E3 /* AppDelegate.swift */,
+				763D809BA2FC73283C125DC5 /* EngineClient.swift */,
+				94CB3F7D16E9E533E8CFADF7 /* OverlayPanels.swift */,
+				47D5B033934AC70BABDACE1A /* PetsonaApp.swift */,
+				0C86F7D7EEB6FC8891B28B84 /* PetWindowController.swift */,
+				D1715372BAF34458F42E576A /* SettingsView.swift */,
+				D0AB9E3FE607652338B00325 /* SystemServices.swift */,
+			);
+			name = Sources;
+			path = Petsona/Sources;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		4A6F9B9CA6FC5C847D94A2EF /* PetsonaTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = DB6C51B73CEB301BA50129D8 /* Build configuration list for PBXNativeTarget "PetsonaTests" */;
+			buildPhases = (
+				DFEDEA20F4FCE1C6251210DE /* Sources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				382CB7568E8AA1821A851B2C /* PBXTargetDependency */,
+			);
+			name = PetsonaTests;
+			packageProductDependencies = (
+			);
+			productName = PetsonaTests;
+			productReference = 828292AC9AF72549A7290581 /* PetsonaTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
+		A112281F5E7EA6063C0F998B /* Petsona */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 9EAD2F23C30626FB0A28553D /* Build configuration list for PBXNativeTarget "Petsona" */;
+			buildPhases = (
+				535FF0676CC414901D2559C9 /* Build Rust FFI */,
+				A8AA49E6F29D5104E2996101 /* Sources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = Petsona;
+			packageProductDependencies = (
+			);
+			productName = Petsona;
+			productReference = EBC4A91B0919B37A9522ECB7 /* Petsona.app */;
+			productType = "com.apple.product-type.application";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		8ED5043D6839ECA59930C29C /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = YES;
+				LastUpgradeCheck = 1430;
+				TargetAttributes = {
+				};
+			};
+			buildConfigurationList = 1AF0847CD474311642D7344F /* Build configuration list for PBXProject "Petsona" */;
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				Base,
+				en,
+			);
+			mainGroup = 2C05494F1A92FDCE4E169091;
+			minimizedProjectReferenceProxies = 1;
+			preferredProjectObjectVersion = 77;
+			productRefGroup = 2A8C8AAE24DCA2FFCBB737D4 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				A112281F5E7EA6063C0F998B /* Petsona */,
+				4A6F9B9CA6FC5C847D94A2EF /* PetsonaTests */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXShellScriptBuildPhase section */
+		535FF0676CC414901D2559C9 /* Build Rust FFI */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+			);
+			name = "Build Rust FFI";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "set -euo pipefail\ncd \"${SRCROOT}/../..\"\ncargo build -p petsona-ffi --release --locked\n";
+		};
+/* End PBXShellScriptBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		A8AA49E6F29D5104E2996101 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				86618A6B1CDA37ACAA726A71 /* AppDelegate.swift in Sources */,
+				2332E93B0191A553BB1F641A /* EngineClient.swift in Sources */,
+				8AD5B1925B5D159AE42C66F6 /* OverlayPanels.swift in Sources */,
+				B9E1FDB0402A601CA55CC515 /* PetWindowController.swift in Sources */,
+				9B42BB269AA0817C404DC6FA /* PetsonaApp.swift in Sources */,
+				B526334FBBC4ACEB9EB3C442 /* SettingsView.swift in Sources */,
+				379E86A5B930C3A7B88C7455 /* SystemServices.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		DFEDEA20F4FCE1C6251210DE /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				F035BB1686BC62D9643E29E9 /* AbiTests.swift in Sources */,
+				749EE7505E91D13AF66497FD /* EngineClientTests.swift in Sources */,
+				23508CB364F319CE2F2CD500 /* SystemServiceTests.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		382CB7568E8AA1821A851B2C /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = A112281F5E7EA6063C0F998B /* Petsona */;
+			targetProxy = 78FB7BF13190A234287BE4AC /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
+
+/* Begin XCBuildConfiguration section */
+		1E518830E954537D69769767 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGNING_ALLOWED = NO;
+				COMBINE_HIDPI_IMAGES = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+					"@loader_path/../Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.petsona.desktop.tests;
+				SDKROOT = macosx;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Petsona.app/Contents/MacOS/Petsona";
+			};
+			name = Release;
+		};
+		44DE26A8D2B916E074DD596E /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGNING_ALLOWED = NO;
+				COMBINE_HIDPI_IMAGES = YES;
+				HEADER_SEARCH_PATHS = (
+					"$(SRCROOT)/../../contracts",
+				);
+				INFOPLIST_FILE = Petsona/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				OTHER_LDFLAGS = (
+					"$(SRCROOT)/../../target/release/libpetsona_ffi.a",
+					"-framework",
+					Security,
+					"-framework",
+					SystemConfiguration,
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.petsona.desktop;
+				PRODUCT_NAME = Petsona;
+				SDKROOT = macosx;
+				SWIFT_OBJC_BRIDGING_HEADER = "$(SRCROOT)/../../contracts/petsona.h";
+			};
+			name = Release;
+		};
+		5CBFBB6A6702FA6C92A2C23B /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGNING_ALLOWED = NO;
+				COMBINE_HIDPI_IMAGES = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+					"@loader_path/../Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.petsona.desktop.tests;
+				SDKROOT = macosx;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Petsona.app/Contents/MacOS/Petsona";
+			};
+			name = Debug;
+		};
+		63B6302841157170257DDF9D /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGNING_ALLOWED = NO;
+				COMBINE_HIDPI_IMAGES = YES;
+				HEADER_SEARCH_PATHS = (
+					"$(SRCROOT)/../../contracts",
+				);
+				INFOPLIST_FILE = Petsona/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				OTHER_LDFLAGS = (
+					"$(SRCROOT)/../../target/release/libpetsona_ffi.a",
+					"-framework",
+					Security,
+					"-framework",
+					SystemConfiguration,
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.petsona.desktop;
+				PRODUCT_NAME = Petsona;
+				SDKROOT = macosx;
+				SWIFT_OBJC_BRIDGING_HEADER = "$(SRCROOT)/../../contracts/petsona.h";
+			};
+			name = Debug;
+		};
+		C095C04671607400FDC07880 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "c++20";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"$(inherited)",
+					"DEBUG=1",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				MACOSX_DEPLOYMENT_TARGET = 13.0;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = macosx;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 6.0;
+			};
+			name = Debug;
+		};
+		EC7E0040FB77578F9444BC09 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "c++20";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				MACOSX_DEPLOYMENT_TARGET = 13.0;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = macosx;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				SWIFT_VERSION = 6.0;
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		1AF0847CD474311642D7344F /* Build configuration list for PBXProject "Petsona" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				C095C04671607400FDC07880 /* Debug */,
+				EC7E0040FB77578F9444BC09 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		9EAD2F23C30626FB0A28553D /* Build configuration list for PBXNativeTarget "Petsona" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				63B6302841157170257DDF9D /* Debug */,
+				44DE26A8D2B916E074DD596E /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		DB6C51B73CEB301BA50129D8 /* Build configuration list for PBXNativeTarget "PetsonaTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				5CBFBB6A6702FA6C92A2C23B /* Debug */,
+				1E518830E954537D69769767 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = 8ED5043D6839ECA59930C29C /* Project object */;
+}

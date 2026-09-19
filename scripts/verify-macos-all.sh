@@ -81,6 +81,7 @@ require_command rustc
 require_command cargo
 require_command xcode-select
 require_command xcrun
+require_command xcodebuild
 
 if ! xcode-select -p >/dev/null 2>&1; then
   printf 'Xcode Command Line Tools are not configured. Run: xcode-select --install\n' >&2
@@ -105,8 +106,44 @@ cargo test --workspace --locked
 step 'cargo build (release linker check)'
 cargo build --workspace --release --locked
 
+step 'macOS native frontend build'
+PETSONA_NATIVE_DERIVED_DATA="$PETSONA_ROOT/.scratch/macos-native-gates"
+mkdir -p "$PETSONA_NATIVE_DERIVED_DATA"
+PETSONA_NATIVE_ARCH="${PETSONA_NATIVE_ARCH:-$(uname -m)}"
+xcodebuild \
+  -project "$PETSONA_ROOT/apps/macos/Petsona.xcodeproj" \
+  -scheme Petsona \
+  -configuration Release \
+  -arch "$PETSONA_NATIVE_ARCH" \
+  -derivedDataPath "$PETSONA_NATIVE_DERIVED_DATA" \
+  CODE_SIGNING_ALLOWED=NO \
+  build
+
+step 'macOS native XCTest'
+PETSONA_NATIVE_TEST_DATA="$PETSONA_ROOT/.scratch/macos-native-tests"
+rm -rf "$PETSONA_NATIVE_TEST_DATA"
+xcodebuild \
+  -quiet \
+  -project "$PETSONA_ROOT/apps/macos/Petsona.xcodeproj" \
+  -scheme Petsona \
+  -configuration Debug \
+  -destination "platform=macOS,arch=$PETSONA_NATIVE_ARCH" \
+  -derivedDataPath "$PETSONA_NATIVE_TEST_DATA" \
+  -only-testing:PetsonaTests/EngineClientTests \
+  -only-testing:PetsonaTests/AbiTests \
+  -only-testing:PetsonaTests/SystemServiceTests \
+  CODE_SIGNING_ALLOWED=NO \
+  test
+PETSONA_TEST_RESULT="$(find "$PETSONA_NATIVE_TEST_DATA/Logs/Test" -maxdepth 1 -type d -name '*.xcresult' -print | sort | tail -1)"
+[[ -n "$PETSONA_TEST_RESULT" ]] || fail '未找到原生 XCTest xcresult'
+if command -v xcrun >/dev/null 2>&1; then
+  xcrun xcresulttool get test-results summary --path "$PETSONA_TEST_RESULT" > "$PETSONA_NATIVE_TEST_DATA/test-summary.json"
+  grep -q '"result" : "Passed"' "$PETSONA_NATIVE_TEST_DATA/test-summary.json" || fail '原生 XCTest 结果不是 Passed'
+  pass '原生 XCTest 4 项通过（摘要已保存）'
+fi
+
 if [[ "$PETSONA_GATES_ONLY" == "1" ]]; then
-  printf '\nAll macOS Rust gates passed.\n'
+  printf '\nAll macOS Rust and native frontend gates passed.\n'
   printf 'Manual window checks remain: docs/MACOS_VERIFICATION.md\n'
   exit 0
 fi
@@ -114,6 +151,7 @@ fi
 choose_smoke_ports
 step "macOS runtime smoke (ports $PETSONA_VERIFY_STATE_PORT/$PETSONA_VERIFY_HOOK_PORT)"
 PETSONA_SMOKE_STATE_PORT="$PETSONA_VERIFY_STATE_PORT" \
+PETSONA_NATIVE_APP="$PETSONA_NATIVE_DERIVED_DATA/Build/Products/Release/Petsona.app" \
 PETSONA_SMOKE_HOOK_PORT="$PETSONA_VERIFY_HOOK_PORT" \
 bash "$PETSONA_ROOT/scripts/macos-smoke.sh"
 
@@ -130,7 +168,10 @@ cleanup_package_tmp() {
 }
 trap cleanup_package_tmp EXIT INT TERM
 
-PETSONA_SKIP_BUILD=1 "$PETSONA_ROOT/scripts/package-macos.sh" "$PETSONA_PACKAGE_TMP" >/dev/null
+PETSONA_SKIP_BUILD=1 \
+PETSONA_NATIVE_DERIVED_DATA="$PETSONA_NATIVE_DERIVED_DATA" \
+PETSONA_ARCH="$PETSONA_NATIVE_ARCH" \
+"$PETSONA_ROOT/scripts/package-macos.sh" "$PETSONA_PACKAGE_TMP" >/dev/null
 
 PETSONA_APP="$PETSONA_PACKAGE_TMP/Petsona.app"
 PETSONA_ZIP="$PETSONA_PACKAGE_TMP/Petsona-macos-$(uname -m).zip"
@@ -143,6 +184,14 @@ PETSONA_ICON="$PETSONA_APP/Contents/Resources/Petsona.icns"
 [[ -f "$PETSONA_ICON" ]] || fail 'Petsona.icns 缺失'
 [[ -f "$PETSONA_ZIP" ]] || fail 'macOS zip 未生成'
 pass 'app bundle、可执行文件和图标存在'
+
+if command -v otool >/dev/null 2>&1; then
+  otool -L "$PETSONA_EXECUTABLE" > "$PETSONA_PACKAGE_TMP/otool.txt"
+  ! grep -F "$PETSONA_ROOT" "$PETSONA_PACKAGE_TMP/otool.txt" || fail '原生 app 仍依赖仓库绝对路径'
+  ! grep -F 'libpetsona_ffi' "$PETSONA_PACKAGE_TMP/otool.txt" || fail '原生 app 仍动态依赖 petsona_ffi'
+  [[ "$(lipo -archs "$PETSONA_EXECUTABLE")" == "$PETSONA_NATIVE_ARCH" ]] || fail '原生 app 架构与构建架构不一致'
+  pass '原生 app 无仓库动态依赖且架构正确'
+fi
 
 plutil -lint "$PETSONA_INFO" >/dev/null || fail 'Info.plist 无法解析'
 [[ "$(plist_value "$PETSONA_INFO" CFBundleIdentifier)" == 'com.petsona.desktop' ]] || fail 'Bundle identifier 不正确'

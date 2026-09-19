@@ -1,0 +1,22 @@
+[package]
+name = "petsona-ffi"
+description = "Stable C ABI for the native Petsona frontends"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lib]
+crate-type = ["rlib", "cdylib", "staticlib"]
+
+[features]
+default = []
+test-hooks = []
+
+[dependencies]
+anyhow = { workspace = true }
+petsona-core = { path = "../petsona-core" }
+petsona-runtime = { path = "../petsona-runtime" }
+serde_json = { workspace = true }
+
+[dev-dependencies]
+tempfile = "3"

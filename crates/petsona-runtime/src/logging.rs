@@ -16,11 +16,11 @@ pub fn init(logs_dir: &Path) {
     match file {
         Ok(file) => {
             let writer = file.and(std::io::stderr);
-            tracing_subscriber::fmt()
+            let _ = tracing_subscriber::fmt()
                 .with_ansi(false)
                 .with_writer(writer)
                 .with_env_filter(filter)
-                .init();
+                .try_init();
             tracing::info!(path = %log_path.display(), "file logging enabled");
         }
         Err(error) => {
@@ -28,10 +28,10 @@ pub fn init(logs_dir: &Path) {
                 "cannot open Petsona log file {}: {error}",
                 log_path.display()
             );
-            tracing_subscriber::fmt()
+            let _ = tracing_subscriber::fmt()
                 .with_ansi(false)
                 .with_env_filter(filter)
-                .init();
+                .try_init();
         }
     }
 }
