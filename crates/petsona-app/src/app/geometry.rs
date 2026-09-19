@@ -17,6 +17,19 @@ pub(super) fn position_for_bottom_center(anchor: egui::Pos2, size: egui::Vec2) -
     anchor - egui::vec2(size.x * 0.5, size.y)
 }
 
+/// The ambient cursor gaze stays local to the pet, but the composer caret is
+/// a deliberate target: the pet should follow it even though the input pill
+/// is much wider than the pet-sized trigger ellipse.
+pub(super) fn gaze_range_allows(
+    caret_active: bool,
+    dx: f64,
+    dy: f64,
+    pet_size: egui::Vec2,
+    already_gazing: bool,
+) -> bool {
+    caret_active || cursor_within_gaze_range(dx, dy, pet_size, already_gazing)
+}
+
 /// Keep gaze local to the pet while adding a small release margin so a cursor
 /// near the trigger edge does not make the pose flicker on and off.
 pub(super) fn cursor_within_gaze_range(
@@ -137,7 +150,7 @@ pub(super) fn ease_out(progress: f32) -> f32 {
 
 #[cfg(test)]
 mod tests {
-    use super::cursor_within_gaze_range;
+    use super::{cursor_within_gaze_range, gaze_range_allows};
 
     #[test]
     fn gaze_trigger_is_near_the_pet_with_release_hysteresis() {
@@ -149,5 +162,15 @@ mod tests {
         assert!(!cursor_within_gaze_range(190.0, 0.0, pet, true));
         assert!(!cursor_within_gaze_range(0.0, 220.0, pet, false));
         assert!(cursor_within_gaze_range(0.0, 220.0, pet, true));
+    }
+
+    #[test]
+    fn caret_gaze_is_not_limited_by_the_pet_sized_ellipse() {
+        let pet = egui::vec2(220.0, 318.0);
+
+        // The tip of the input pill sits far outside the ambient ellipse.
+        assert!(!cursor_within_gaze_range(400.0, 240.0, pet, true));
+        assert!(gaze_range_allows(true, 400.0, 240.0, pet, true));
+        assert!(!gaze_range_allows(false, 400.0, 240.0, pet, true));
     }
 }

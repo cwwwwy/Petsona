@@ -18,7 +18,7 @@ Petsona 是 Windows / macOS 桌宠：**Rust-only**（eframe/egui + winit + tray-
 | `crates/petsona-app/` | 共享 egui UI + `PlatformHost` 边界；UI 已拆入 `src/app/` 子模块 |
 | `crates/petsona-shell-windows/` | Win32 外壳（bin `petsona-windows`） |
 | `crates/petsona-shell-macos/` | AppKit 外壳（bin `petsona-macos`） |
-| `docs/` | 平台架构与两端实机验收清单 |
+| `docs/` | 平台架构、两端实机验收清单、Windows 问题跟踪（`WINDOWS_ISSUES.md`） |
 
 ## 常用命令
 
@@ -63,8 +63,10 @@ MSVC 缺 `link.exe` 的 GNU 回退写在 `docs/WINDOWS_VERIFICATION.md`。
 
 ## 当前状态（2026-09-18）
 
-- 本机 checkout：`/Users/book/Desktop/Petsona`，分支 `main`；最新已提交基线 `922614d`，与 `origin/main` 同步；
-  本轮 macOS 改动尚未提交（Git 操作由用户执行）。
+- 主线基线 `67c8b7f`（2026-09-18，macOS 补课 + 交互改进），与 `origin/main` 同步；checkout 路径随机器不同
+  （mac 为 `/Users/book/Desktop/Petsona`，当前 WSL 会话为 `/home/cwwwwy/Petsona`）。
+- 决策（2026-09-18）：**Windows 优先**——先把 `docs/WINDOWS_ISSUES.md` 全部问题修完并实机确认，
+  再开 Linux 端；Linux 可行性与范围决策要点见该文档附录，本轮不做。
 - 已合入：删除旧 `legacy/` 树、`petsona-app` UI 模块化、CJK 字体路径经 `PlatformHost` 注入、
   Windows `autostart.rs` / `no_activate.rs` 分拆、方向姿势注视与影子 / 对话输入框动画。
 - 2026-09-17 本轮新增：macOS 设置页 LaunchAgent 开关、以 `NSScreen.visibleFrame` 计算工作区，
@@ -72,7 +74,7 @@ MSVC 缺 `link.exe` 的 GNU 回退写在 `docs/WINDOWS_VERIFICATION.md`。
 - 2026-09-17 的完整 `bash scripts/verify-macos-all.sh` 曾通过：fmt / clippy / workspace 测试（app 14、core 58、
   runtime 1、macOS shell 7）/ release 构建、34 项运行 smoke 和打包结构检查。当前运行会话没有可枚举的
   winit 显示器，所以 visibleFrame runtime 检查明确 `[SKIP]`；坐标换算单测通过，真实可用区边缘行为与注销后自启仍待实机。
-- 2026-09-18 未提交修复：影子中心位于宠物窗口下方 22pt、40pt 交互窗完全避开宠物；编辑按钮与输入框共享
+- 2026-09-18 已提交（67c8b7f）：影子中心位于宠物窗口下方 22pt、40pt 交互窗完全避开宠物；编辑按钮与输入框共享
   34pt 锚点并原位横向展开；注视改为宠物附近的椭圆触发区（短边额外留白 25%，退出迟滞 35%），左右换行先经过
   对应的上 / 下边缘姿势；注视姿势间隔与活动采样均为 40ms。fmt / clippy / release 和 workspace 测试通过
   （app 19、core 59、runtime 1、macOS shell 7）；33 项 macOS runtime smoke 与打包结构检查通过。
@@ -90,9 +92,10 @@ MSVC 缺 `link.exe` 的 GNU 回退写在 `docs/WINDOWS_VERIFICATION.md`。
 
 ### 阶段 7 剩余
 
-1. **人工确认包**：Windows 的 H1–H5（登录自启、副屏位置、副屏菜单、拔屏回落、重力手感），
-   加上已有的 B5 / B7 / B8 / B10 / C4 / C5 / D1 / D6。
-2. **首次发布**：定版本 → 打 `windows-v*` tag 跑 `release-windows.yml`（D4 首次执行）；
+1. **Windows 问题清零（当前唯一主线）**：按 `docs/WINDOWS_ISSUES.md` 逐项实测 / 修复 / 复测，
+   效果观感（B5 / B8 / B9 / B10 / B15 / C4 / C5）优先；清单清零前不开 Linux 线。
+2. **Windows 首次发布**：清单清零后定版本 → 先 `workflow_dispatch` 试跑 → 再打 `windows-v*` tag；
+   发布前必须解决内置宠物授权（W-27）与 GitHub Release 通道（W-28）；
    macOS 拿到 Developer ID 后走 `sign-macos.sh` / `notarize-macos.sh`。
 3. **macOS 人工验收**：确认 A12 LaunchAgent 在下一次登录启动、`NSScreen.visibleFrame` 的窗口夹取 / 重力落点、
    B5 注视视觉、B8 缩放、B9 caret gaze、B11 Activity Monitor、A11 Keychain、真实签名 / 公证；多屏 / Retina 暂缓。
@@ -153,6 +156,24 @@ MSVC 缺 `link.exe` 的 GNU 回退写在 `docs/WINDOWS_VERIFICATION.md`。
 - **进场动画是自绘的**：气泡从下往上 8px / 160ms；影子悬停 180ms 变为编辑按钮，
   输入框从按钮位置展开、关闭时缩回（220ms / 180ms）。不再通过移动 / 改变窗口几何做输入框动画。
   气泡底部 `BUBBLE_BOTTOM_PADDING` 与窗口 `BUBBLE_WINDOW_GAP` 是成对常量，改一处必须改另一处。
+- **子窗保留 1px 非客户区（透明窗顶部白线的真根因）**：egui viewport 窗口的客户区原点比窗口低 1px ——
+  顶部 1px 被系统画白、底部 1px 被裁（表现为「输入框下方被横切」）。SWP_FRAMECHANGED 与 DWM 边框属性都无效；
+  修法：窗口过程 `WM_NCCALCSIZE`（wparam!=0 → 返回 0，客户区=整窗）+ `WM_NCPAINT` → 0，安装子类后
+  强制一次 `SetWindowPos(SWP_FRAMECHANGED)`；可激活窗口用 frameless-only 子类（不强制 NOACTIVATE）。
+- **egui 子窗不能停止渲染**：未渲染的 viewport 会被销毁，下次显示是新窗口（肉眼即「偶发重启」）。
+  子窗必须每帧 `show_viewport_immediate`，隐藏用 `with_visible(false)` + 空内容。
+- **按精灵尺寸缩放**：`pet_window_size()` 宽度有 `PET_WINDOW_MIN_WIDTH` 钳制，小档位不缩；
+  影子 / 注视这类跟随精灵的量要用 `pet_size()`。
+- **Win11 会给顶层窗口画系统边框 / 圆角**：剥掉所有经典 frame 样式后仍有一条 1px 边框（透明子窗上就是顶部白线）。
+  修法：`DWMWA_BORDER_COLOR = DWMWA_COLOR_NONE` + `DWMWA_WINDOW_CORNER_PREFERENCE = DWMWCP_DONOTROUND`，
+  宠物 / 气泡 / 影子 / 输入框都要设；旧系统会拒绝属性，失败无害。
+- **winit 忽略非 resizable 窗口的运行时 resize**：`.with_resizable(false)` + `.with_inner_size()` 改不动尺寸；
+  需要动态尺寸的窗口要一次给最大尺寸、内容在里面缩放。
+- **`TextEdit::frame(Frame::NONE)` 会忽略 `.margin()`**：margin 仅默认 frame 生效；撑高用 `.min_size()` +
+  `.vertical_align()`。
+- **egui 会回收未渲染的 viewport**：气泡 / 影子 / 输入框被隐藏后若停止渲染，下次出现是**新建 Win32 窗口**，
+  `warm-up → 设属性 → 显示` 只对首次有效，之后会带一帧默认边框并播放 DWM 滑入。修法：隐藏时重置 warm-up 标志，
+  每次重建都重做 warm-up；`style_popup_window` 需同时禁用 DWM 非客户区渲染。
 - **输入框是单一轻量组件**：固定小影子始终显示在宠物下方；悬停变为圆形编辑按钮；点击按钮展开
   小型输入框，只保留输入框和向上箭头发送按钮。输入框宽度约 300pt，文字自动换行并增高；
   Enter 发送、Shift+Enter 换行、Esc 关闭。组件由原生透明窗口承载但仍由 egui 自绘，不引入 Win32

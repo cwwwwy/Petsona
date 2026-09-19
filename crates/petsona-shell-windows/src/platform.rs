@@ -527,6 +527,7 @@ fn strip_frame_styles_hwnd(hwnd: *mut core::ffi::c_void) -> bool {
         | WS_MAXIMIZEBOX
         | WS_THICKFRAME;
     unsafe {
+        clear_dwm_border_hwnd(hwnd);
         let style = GetWindowLongPtrW(hwnd, GWL_STYLE) as u32;
         let wanted = (style & !frame) | WS_POPUP;
         if style == wanted {
@@ -633,10 +634,6 @@ fn windows_with_title(title: &str) -> Vec<windows_sys::Win32::Foundation::HWND> 
 /// (bubble, egui context menu). Returns how many windows were touched.
 fn style_popup_window(title: &str) -> usize {
     use windows_sys::Win32::Foundation::HWND;
-    use windows_sys::Win32::Graphics::Dwm::{
-        DwmEnableBlurBehindWindow, DWM_BB_BLURREGION, DWM_BB_ENABLE, DWM_BLURBEHIND,
-    };
-    use windows_sys::Win32::Graphics::Gdi::{CreateRectRgn, DeleteObject};
     use windows_sys::Win32::UI::WindowsAndMessaging::{
         GetWindowLongPtrW, SetWindowLongPtrW, SetWindowPos, GWL_EXSTYLE, GWL_STYLE,
         SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, WS_BORDER,
@@ -674,17 +671,10 @@ fn style_popup_window(title: &str) -> usize {
                     0,
                     SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED,
                 );
-                // Keep the popup transparent after the frame recompute.
-                let region = CreateRectRgn(0, 0, -1, -1);
-                let blur = DWM_BLURBEHIND {
-                    dwFlags: DWM_BB_ENABLE | DWM_BB_BLURREGION,
-                    fEnable: 1,
-                    hRgnBlur: region,
-                    fTransitionOnMaximized: 0,
-                };
-                DwmEnableBlurBehindWindow(hwnd, &blur);
-                DeleteObject(region);
             }
+            clear_dwm_frame_hwnd(hwnd);
+            clear_dwm_border_hwnd(hwnd);
+            enable_transparency_hwnd(hwnd);
             crate::no_activate::install(hwnd);
             if disable_window_transitions(hwnd) {
                 #[cfg(feature = "test-hooks")]
@@ -712,6 +702,7 @@ fn prepare_activatable_popup_window_by_title(title: &str) -> usize {
     let windows = windows_with_title(title);
     for hwnd in &windows {
         unsafe {
+            crate::no_activate::install_frameless(*hwnd);
             let style = GetWindowLongPtrW(*hwnd, GWL_STYLE) as u32;
             let frame = WS_CAPTION
                 | WS_BORDER
@@ -747,6 +738,7 @@ fn prepare_activatable_popup_window_by_title(title: &str) -> usize {
                 clear_dwm_frame_hwnd(*hwnd);
                 enable_transparency_hwnd(*hwnd);
             }
+            clear_dwm_border_hwnd(*hwnd);
             if disable_window_transitions(*hwnd) {
                 #[cfg(feature = "test-hooks")]
                 POPUP_TRANSITIONS_DISABLED.store(true, Ordering::Relaxed);
@@ -805,6 +797,35 @@ fn clamp_point_to_rect(x: i32, y: i32, work: PhysicalRect, inset: i32) -> (i32, 
 fn clear_dwm_frame(window: &winit::window::Window) {
     if let Some(hwnd) = window_hwnd(window) {
         clear_dwm_frame_hwnd(hwnd);
+    }
+}
+
+/// Windows 11 still draws a thin system border and rounds the corners of
+/// top-level windows even after every classic frame style is stripped; on a
+/// fully transparent overlay both show up as a 1px light line along the top
+/// edge. `DWMWA_COLOR_NONE` removes the border, `DWMWCP_DONOTROUND` the
+/// rounding. Older Windows versions reject both attributes, which is fine.
+fn clear_dwm_border_hwnd(hwnd: *mut core::ffi::c_void) {
+    use windows_sys::Win32::Graphics::Dwm::{
+        DwmSetWindowAttribute, DWMWA_BORDER_COLOR, DWMWA_COLOR_NONE,
+        DWMWA_WINDOW_CORNER_PREFERENCE, DWMWCP_DONOTROUND,
+    };
+
+    unsafe {
+        let border = DWMWA_COLOR_NONE;
+        DwmSetWindowAttribute(
+            hwnd,
+            DWMWA_BORDER_COLOR as u32,
+            &border as *const _ as *const _,
+            std::mem::size_of_val(&border) as u32,
+        );
+        let corners = DWMWCP_DONOTROUND;
+        DwmSetWindowAttribute(
+            hwnd,
+            DWMWA_WINDOW_CORNER_PREFERENCE as u32,
+            &corners as *const _ as *const _,
+            std::mem::size_of_val(&corners) as u32,
+        );
     }
 }
 

@@ -60,7 +60,16 @@ fn compile_msvc(resource: &Path, out_dir: &Path) -> Option<PathBuf> {
 }
 
 fn compile_gnu(resource: &Path, out_dir: &Path) -> Option<PathBuf> {
-    let windres = find_in_path("windres.exe")?;
+    let windres = env::var_os("WINDIRES")
+        .map(PathBuf::from)
+        .filter(|path| path.is_file())
+        .or_else(|| {
+            // Cross-compiling from Linux uses the target-prefixed tool.
+            let arch = env::var("CARGO_CFG_TARGET_ARCH").unwrap_or_default();
+            find_in_path(&format!("{arch}-w64-mingw32-windres"))
+        })
+        .or_else(|| find_in_path("windres.exe"))
+        .or_else(|| find_in_path("windres"))?;
     let object = out_dir.join("Petsona.res.o");
     let status = Command::new(windres)
         .arg("--input")

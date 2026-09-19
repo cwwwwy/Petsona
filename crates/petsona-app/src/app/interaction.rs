@@ -1,5 +1,5 @@
 use super::geometry::{
-    clamp_rect_to_work_area, cursor_within_gaze_range, monitor_for_point, monitor_for_rect,
+    clamp_rect_to_work_area, gaze_range_allows, monitor_for_point, monitor_for_rect,
     PhysicalMonitor,
 };
 use super::shadow::shadow_hit_rect;
@@ -207,10 +207,30 @@ impl PetsonaApp {
                 }
             }
             if let (Some(grab), Some((cursor_x, cursor_y))) = (self.drag_grab, cursor) {
-                ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(egui::pos2(
+                let desired = egui::pos2(
                     cursor_x as f32 / scale as f32 - grab.x,
                     cursor_y as f32 / scale as f32 - grab.y,
-                )));
+                );
+                if self.config.window.gravity_enabled {
+                    // Gravity needs a floor: dragging the pet below the
+                    // work area used to strand it off-screen, where the
+                    // fall loop would declare it grounded.
+                    let size = window.outer_size();
+                    let rect = PhysicalRect::new(
+                        (desired.x as f64 * scale).round() as i32,
+                        (desired.y as f64 * scale).round() as i32,
+                        size.width.max(1) as i32,
+                        size.height.max(1) as i32,
+                    );
+                    if let Some(monitor) = monitor_for_rect(&self.physical_monitors(window), rect) {
+                        self.platform.set_window_geometry_physical(
+                            window,
+                            clamp_rect_to_work_area(rect, monitor.work_area),
+                        );
+                    }
+                } else {
+                    ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(desired));
+                }
             }
         }
 
@@ -341,6 +361,14 @@ impl PetsonaApp {
         // Rest on the bottom edge of the work area (above the taskbar).
         let floor = monitor.work_area.bottom() - rect.height;
         if rect.y >= floor {
+            if rect.y > floor {
+                // Heal a pet that was left below the floor (an older build
+                // allowed dragging past the boundary).
+                self.platform.set_window_geometry_physical(
+                    window,
+                    PhysicalRect::new(rect.x, floor, rect.width, rect.height),
+                );
+            }
             self.gravity_velocity = 0.0;
             self.gravity_grounded = true;
             self.last_gravity_tick = Instant::now();
@@ -486,7 +514,8 @@ impl PetsonaApp {
         let pet_top = position.y as f64 / scale + (window_height - pet_size.y as f64).max(0.0);
         let dx = cursor_x - (pet_left + pet_size.x as f64 * 0.5);
         let dy = cursor_y - (pet_top + pet_size.y as f64 * 0.5);
-        if !cursor_within_gaze_range(dx, dy, pet_size, gaze_active) {
+        let caret_target = self.conversation_cursor.is_some();
+        if !gaze_range_allows(caret_target, dx, dy, pet_size, gaze_active) {
             self.release_glance(Instant::now());
             return;
         }
@@ -750,7 +779,12 @@ impl PetsonaApp {
             pet.anim_started = Instant::now();
             pet.last_state = pet.engine.current();
         }
-        if !self.trigger_greeting("click", true) {
+        if self.trigger_greeting("click", true) {
+            // The pet reacts immediately; only the bubble waits briefly for
+            // the model line, then falls back to a local one.
+            self.click_greeting_pending_at = Some(Instant::now());
+            self.click_greeting_fallback_shown = false;
+        } else {
             self.show_bubble(greeting::fallback_greeting(&self.persona));
         }
     }
@@ -837,7 +871,27 @@ impl PetsonaApp {
         true
     }
 
-    pub(super) fn poll_greeting(&mut self) {
+    /// Show the local line if a click greeting waits too long for the model.
+    fn poll_click_greeting_fallback(&mut self, ctx: &egui::Context) {
+        const FALLBACK_AFTER: Duration = Duration::from_millis(700);
+
+        let Some(requested_at) = self.click_greeting_pending_at else {
+            return;
+        };
+        if self.click_greeting_fallback_shown {
+            return;
+        }
+        let elapsed = requested_at.elapsed();
+        if elapsed >= FALLBACK_AFTER {
+            self.click_greeting_fallback_shown = true;
+            self.show_bubble(greeting::fallback_greeting(&self.persona));
+        } else {
+            ctx.request_repaint_after(FALLBACK_AFTER - elapsed);
+        }
+    }
+
+    pub(super) fn poll_greeting(&mut self, ctx: &egui::Context) {
+        self.poll_click_greeting_fallback(ctx);
         let received = self
             .greeting_rx
             .as_ref()
@@ -846,6 +900,8 @@ impl PetsonaApp {
             Some(Ok(result)) => {
                 self.greeting_rx = None;
                 self.greeting_inflight = false;
+                self.click_greeting_pending_at = None;
+                self.click_greeting_fallback_shown = false;
                 match result {
                     Ok(text) => {
                         self.show_bubble(text.clone());
@@ -873,6 +929,8 @@ impl PetsonaApp {
             Some(Err(TryRecvError::Disconnected)) => {
                 self.greeting_rx = None;
                 self.greeting_inflight = false;
+                self.click_greeting_pending_at = None;
+                self.click_greeting_fallback_shown = false;
             }
             None => {}
         }

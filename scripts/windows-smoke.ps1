@@ -1135,7 +1135,8 @@ try {
         Invoke-SmokeCheck -Id "B9" -Name "bubble overlay and conversation lifecycle (partial)" {
             $before = Get-PetsonaWindow -ProcessId $first.Process.Id -Title "Petsona" -TimeoutSeconds 5
             $shadow = Get-PetsonaWindow -ProcessId $first.Process.Id -Title "Petsona 影子" -TimeoutSeconds 5
-            Assert-True ($shadow.Width -le 96 -and $shadow.Height -le 96) "pet shadow window is larger than expected."
+            # The overlay is created at its maximum size; the drawn ellipse scales inside it.
+            Assert-True ($shadow.Width -le [int] ($pet.Width * 0.9) -and $shadow.Height -le 96) "pet shadow window is larger than expected."
             $petBottom = $before.Top + $before.Height
             Assert-True ($shadow.Top -ge $petBottom) "pet shadow window overlaps the pet and can be occluded."
             $petCenterX = $before.Left + [int] ($before.Width / 2)

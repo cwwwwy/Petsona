@@ -1,15 +1,17 @@
+use super::geometry::monitor_for_rect;
 use super::*;
 
 impl PetsonaApp {
-    pub(super) fn show_settings_viewport(&mut self, ctx: &egui::Context) {
+    pub(super) fn show_settings_viewport(&mut self, ctx: &egui::Context, frame: &eframe::Frame) {
         let viewport_id = egui::ViewportId::from_hash_of("petsona-settings");
         let size = egui::vec2(640.0, 720.0);
-        // Place the settings window next to the pet, clamped to the monitor,
-        // the first time it opens. After that the user owns the position.
+        // Place the settings window next to the pet, clamped to the monitor
+        // that currently holds it, the first time it opens. After that the
+        // user owns the position.
         let position = match self.settings_pos {
             Some(position) => position,
             None => {
-                let position = self.default_settings_position(ctx, size);
+                let position = self.default_settings_position(ctx, frame, size);
                 self.settings_pos = Some(position);
                 position
             }
@@ -75,22 +77,57 @@ impl PetsonaApp {
 
     /// Bottom-right of the pet when there is room, otherwise the closest spot
     /// that still fits on the monitor.
-    fn default_settings_position(&self, ctx: &egui::Context, size: egui::Vec2) -> egui::Pos2 {
+    fn default_settings_position(
+        &self,
+        ctx: &egui::Context,
+        frame: &eframe::Frame,
+        size: egui::Vec2,
+    ) -> egui::Pos2 {
+        // `monitor_size` alone has no origin: on a secondary monitor whose
+        // origin is not zero the old clamp always pushed the settings
+        // window back onto the primary display. Go through the physical
+        // monitor that actually contains the pet instead.
+        if let Some(window) = frame.winit_window() {
+            let (Ok(position), size_physical) = (window.outer_position(), window.outer_size())
+            else {
+                return self.fallback_settings_position(ctx, size);
+            };
+            let pet_rect = PhysicalRect::new(
+                position.x,
+                position.y,
+                size_physical.width.max(1) as i32,
+                size_physical.height.max(1) as i32,
+            );
+            if let Some(monitor) = monitor_for_rect(&self.physical_monitors(window), pet_rect) {
+                let scale = monitor.scale_factor.max(0.1) as f32;
+                let to_logical = |rect: PhysicalRect| {
+                    egui::Rect::from_min_size(
+                        egui::pos2(rect.x as f32 / scale, rect.y as f32 / scale),
+                        egui::vec2(rect.width as f32 / scale, rect.height as f32 / scale),
+                    )
+                };
+                return settings_position_for_pet(
+                    to_logical(pet_rect),
+                    size,
+                    to_logical(monitor.work_area),
+                );
+            }
+        }
+        self.fallback_settings_position(ctx, size)
+    }
+
+    /// Portable fallback: winit's `monitor_size`, which has no origin.
+    fn fallback_settings_position(&self, ctx: &egui::Context, size: egui::Vec2) -> egui::Pos2 {
         let (monitor, pet_rect) =
             ctx.input(|input| (input.viewport().monitor_size, input.viewport().outer_rect));
         let monitor = monitor.unwrap_or(egui::vec2(1280.0, 800.0));
         let pet_rect =
             pet_rect.unwrap_or_else(|| egui::Rect::from_min_size(egui::Pos2::ZERO, size));
-        let gap = 12.0;
-        let right = pet_rect.right() + gap;
-        let left = pet_rect.left() - size.x - gap;
-        let x = if right + size.x <= monitor.x {
-            right
-        } else {
-            left.max(0.0)
-        };
-        let y = (pet_rect.bottom() - size.y).clamp(0.0, (monitor.y - size.y).max(0.0));
-        egui::pos2(x.clamp(0.0, (monitor.x - size.x).max(0.0)), y)
+        settings_position_for_pet(
+            pet_rect,
+            size,
+            egui::Rect::from_min_size(egui::Pos2::ZERO, monitor),
+        )
     }
 
     fn draw_settings(&mut self, root_ui: &mut egui::Ui) {
@@ -633,6 +670,25 @@ impl PetsonaApp {
     }
 }
 
+/// Place the settings window next to the pet, inside `work` (same logical
+/// space). Prefer the right side and flip to the left when it does not fit.
+fn settings_position_for_pet(pet: egui::Rect, size: egui::Vec2, work: egui::Rect) -> egui::Pos2 {
+    const GAP: f32 = 12.0;
+    let right = pet.right() + GAP;
+    let left = pet.left() - size.x - GAP;
+    let x = if right + size.x <= work.right() {
+        right
+    } else {
+        left
+    };
+    let max_x = (work.right() - size.x).max(work.left());
+    let max_y = (work.bottom() - size.y).max(work.top());
+    egui::pos2(
+        x.clamp(work.left(), max_x),
+        (pet.bottom() - size.y).clamp(work.top(), max_y),
+    )
+}
+
 /// Decode the idle frame of a pet into a texture for the settings preview.
 fn pet_preview_texture(ctx: &egui::Context, entry: &PetEntry) -> Option<egui::TextureHandle> {
     let (atlas, warnings) = PetAtlas::open(&entry.dir, &entry.manifest).ok()?;
@@ -655,4 +711,34 @@ fn pet_preview_texture(ctx: &egui::Context, entry: &PetEntry) -> Option<egui::Te
         image,
         egui::TextureOptions::NEAREST,
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::settings_position_for_pet;
+
+    fn secondary_work_area() -> egui::Rect {
+        egui::Rect::from_min_size(egui::pos2(1920.0, 0.0), egui::vec2(1920.0, 1080.0))
+    }
+
+    #[test]
+    fn settings_open_on_the_pets_secondary_monitor() {
+        let pet = egui::Rect::from_min_size(egui::pos2(2200.0, 300.0), egui::vec2(192.0, 208.0));
+        let position =
+            settings_position_for_pet(pet, egui::vec2(640.0, 720.0), secondary_work_area());
+        assert!(
+            position.x >= 1920.0,
+            "settings must stay on the pet monitor"
+        );
+        assert!(position.x + 640.0 <= 3840.0);
+    }
+
+    #[test]
+    fn settings_flip_to_the_left_when_the_right_edge_is_full() {
+        let pet = egui::Rect::from_min_size(egui::pos2(3600.0, 100.0), egui::vec2(192.0, 208.0));
+        let position =
+            settings_position_for_pet(pet, egui::vec2(640.0, 720.0), secondary_work_area());
+        assert!(position.x < pet.left());
+        assert!(position.x >= 1920.0);
+    }
 }

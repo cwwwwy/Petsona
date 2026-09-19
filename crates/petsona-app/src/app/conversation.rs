@@ -212,7 +212,11 @@ impl PetsonaApp {
         let conversation_position =
             shadow_center - egui::vec2(window_size.x * 0.5, CONVERSATION_ANCHOR_Y);
 
+        let opening = self.conversation_open || self.conversation_closing_at.is_some();
         if !self.conversation_window_warmed {
+            if !opening {
+                return;
+            }
             let builder = egui::ViewportBuilder::default()
                 .with_title(CONVERSATION_TITLE)
                 .with_inner_size([window_size.x, window_size.y])
@@ -248,13 +252,14 @@ impl PetsonaApp {
         } else {
             1.0 - phase_progress
         };
-        if !self.conversation_open && morph_progress <= 0.0 {
-            ctx.send_viewport_cmd_to(conversation_id, egui::ViewportCommand::Visible(false));
-            self.conversation_window_created = false;
+        // Keep rendering the viewport after the close animation. egui destroys
+        // a viewport that stops being rendered, and the next open created a new
+        // Win32 window (the occasional "restart" flash).
+        let fully_closed = !self.conversation_open && morph_progress <= 0.0;
+        if fully_closed {
             self.conversation_closing_at = None;
             self.conversation_shown_at = None;
             self.conversation_cursor = None;
-            return;
         }
 
         let pill_width =
@@ -290,19 +295,46 @@ impl PetsonaApp {
             .with_resizable(false)
             .with_active(true)
             .with_mouse_passthrough(!(interactive && pointer_in_pill))
-            .with_visible(true);
+            .with_visible(self.pet_visible && !fully_closed);
         let mut send = false;
         let mut close = false;
+        // Clicking anywhere outside the pill closes the composer; the draft is
+        // kept so the next open continues where the user left off.
+        let pointer_down = self.pointer.primary_down.unwrap_or(false);
+        let freshly_opened = self
+            .conversation_shown_at
+            .is_some_and(|at| at.elapsed() < Duration::from_millis(200));
+        let pressed_outside = interactive
+            && !fully_closed
+            && !freshly_opened
+            && pointer_down
+            && !self.conversation_primary_was_down
+            && !pointer_in_pill;
+        self.conversation_primary_was_down = pointer_down;
+        if pressed_outside {
+            close = true;
+        }
         ctx.show_viewport_immediate(conversation_id, builder, |ui, _class| {
+            if fully_closed {
+                return;
+            }
             let enter_pressed =
                 ui.input(|input| input.key_pressed(egui::Key::Enter) && !input.modifiers.shift);
             let escape_pressed =
                 self.conversation_open && ui.input(|input| input.key_pressed(egui::Key::Escape));
             ui.scope_builder(egui::UiBuilder::new().max_rect(morph_rect), |ui| {
                 ui.set_clip_rect(morph_rect);
+                // The button's hairline belongs to the collapsed button; once
+                // the composer expands it has to fade out or it reads as an
+                // unwanted border around the input.
+                let stroke = edit_button_stroke();
+                let stroke = egui::Stroke::new(
+                    stroke.width,
+                    stroke.color.gamma_multiply(1.0 - content_progress),
+                );
                 egui::Frame::NONE
                     .fill(edit_button_background())
-                    .stroke(edit_button_stroke())
+                    .stroke(stroke)
                     .corner_radius(corner_radius)
                     .inner_margin(egui::Margin::symmetric(
                         CONVERSATION_WINDOW_PADDING as i8,
@@ -327,12 +359,17 @@ impl PetsonaApp {
                                         egui::Layout::top_down(egui::Align::Min),
                                         |ui| {
                                             ui.set_min_height(morph_size.y.max(1.0));
+                                            // `Frame::NONE` ignores the builder's
+                                            // margin, so the min size is what makes the
+                                            // edit box fill the pill; `vertical_align`
+                                            // then centers the text row inside it.
                                             egui::TextEdit::multiline(&mut self.conversation_draft)
                                                 .id_salt("conversation-input")
                                                 .desired_width(ui.available_width())
                                                 .desired_rows(if interactive { rows } else { 1 })
                                                 .frame(egui::Frame::NONE)
-                                                .margin(egui::Margin::symmetric(4, 6))
+                                                .vertical_align(egui::Align::Center)
+                                                .min_size(egui::vec2(0.0, morph_size.y.max(1.0)))
                                                 .text_color(egui::Color32::from_rgb(245, 245, 247))
                                                 .hint_text(
                                                     egui::RichText::new("输入消息…").color(
@@ -371,6 +408,10 @@ impl PetsonaApp {
                                 let can_send = interactive
                                     && !self.conversation_inflight
                                     && !self.conversation_draft.trim().is_empty();
+                                // Inset from the pill's rounded edge instead of
+                                // exactly matching its height.
+                                let send_size =
+                                    (morph_size.y - 4.0).clamp(22.0, SHADOW_BUTTON_SIZE);
                                 let arrow = egui::Button::new(
                                     egui::RichText::new("↑").size(18.0).color(if can_send {
                                         egui::Color32::WHITE
@@ -384,8 +425,8 @@ impl PetsonaApp {
                                     egui::Color32::from_rgba_unmultiplied(255, 255, 255, 16)
                                 })
                                 .stroke(egui::Stroke::NONE)
-                                .corner_radius(SHADOW_BUTTON_SIZE * 0.5)
-                                .min_size(egui::vec2(SHADOW_BUTTON_SIZE, SHADOW_BUTTON_SIZE));
+                                .corner_radius(send_size * 0.5)
+                                .min_size(egui::vec2(send_size, send_size));
                                 if ui.add_enabled(can_send, arrow).clicked() {
                                     send = true;
                                 }
@@ -401,7 +442,7 @@ impl PetsonaApp {
             }
         });
 
-        self.conversation_window_created = true;
+        self.conversation_window_created = !fully_closed;
         if self.conversation_focus_pending {
             ctx.send_viewport_cmd_to(conversation_id, egui::ViewportCommand::Focus);
             self.conversation_focus_pending = false;

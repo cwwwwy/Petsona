@@ -110,6 +110,14 @@ pub struct PetsonaApp {
     conversation_input_focus_pending: bool,
     conversation_draft: String,
     conversation_cursor: Option<egui::Pos2>,
+    /// Primary-button edge detector used to close the composer when the
+    /// user clicks anywhere outside the input pill.
+    conversation_primary_was_down: bool,
+    /// Set while a click-triggered model greeting is in flight. If the
+    /// reply takes too long the UI shows a local line instead of leaving
+    /// the click without feedback.
+    click_greeting_pending_at: Option<Instant>,
+    click_greeting_fallback_shown: bool,
     settings_open: bool,
     /// A settings command requests a real activation once the viewport exists.
     /// `with_active` only applies when egui creates the child window, while the
@@ -343,6 +351,9 @@ impl PetsonaApp {
             conversation_input_focus_pending: false,
             conversation_draft: String::new(),
             conversation_cursor: None,
+            conversation_primary_was_down: false,
+            click_greeting_pending_at: None,
+            click_greeting_fallback_shown: false,
             settings_open: false,
             settings_focus_pending: false,
             settings_focus_deadline: None,
@@ -818,7 +829,7 @@ impl eframe::App for PetsonaApp {
         self.poll_native_menu(ctx);
         self.poll_menu(ctx);
         self.poll_state_events(ctx);
-        self.poll_greeting();
+        self.poll_greeting(ctx);
         self.poll_conversation();
         self.expire_bubble();
         self.update_pet_timers();
@@ -895,7 +906,7 @@ impl eframe::App for PetsonaApp {
         self.show_conversation_viewport(ui.ctx(), _frame);
 
         if self.settings_open {
-            self.show_settings_viewport(ui.ctx());
+            self.show_settings_viewport(ui.ctx(), _frame);
         }
         if self.menu_open {
             self.show_context_menu(ui.ctx());

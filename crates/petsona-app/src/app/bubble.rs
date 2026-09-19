@@ -29,16 +29,6 @@ impl PetsonaApp {
         } else {
             None
         };
-        let Some(text) = text else {
-            self.bubble_shown_at = None;
-            if self.bubble_window_created {
-                ctx.send_viewport_cmd_to(bubble_id, egui::ViewportCommand::Visible(false));
-                self.bubble_window_created = false;
-                self.bubble_styled = false;
-            }
-            return;
-        };
-
         let Some(window) = frame.winit_window() else {
             return;
         };
@@ -57,11 +47,13 @@ impl PetsonaApp {
             pet_center.x - BUBBLE_WINDOW_SIZE.x * 0.5,
             pet_top - BUBBLE_WINDOW_SIZE.y - BUBBLE_WINDOW_GAP,
         );
+        let showing = text.is_some();
         let bubble_rect_global = egui::Rect::from_min_size(bubble_position, BUBBLE_WINDOW_SIZE);
-        let bubble_hovered = self.pointer.position.is_some_and(|(x, y)| {
-            bubble_rect_global
-                .contains(egui::pos2(x as f32 / scale as f32, y as f32 / scale as f32))
-        });
+        let bubble_hovered = showing
+            && self.pointer.position.is_some_and(|(x, y)| {
+                bubble_rect_global
+                    .contains(egui::pos2(x as f32 / scale as f32, y as f32 / scale as f32))
+            });
         // First appearance: create the overlay window hidden and let the shell
         // disable the system's show/hide transition for it. Showing it later is
         // then instant and only our own entry animation is visible.
@@ -83,11 +75,15 @@ impl PetsonaApp {
             return;
         }
 
-        let shown_at = *self.bubble_shown_at.get_or_insert_with(Instant::now);
-        let eased = ease_out(entry_progress(Some(shown_at), BUBBLE_ENTRY));
-        let opacity = eased;
-        // "From below": the content starts one rise lower and climbs into place.
-        let rise = (1.0 - eased) * BUBBLE_ENTRY_RISE;
+        let content = if let Some(text) = text {
+            let shown_at = *self.bubble_shown_at.get_or_insert_with(Instant::now);
+            let eased = ease_out(entry_progress(Some(shown_at), BUBBLE_ENTRY));
+            // "From below": the content starts one rise lower and climbs into place.
+            Some((text, eased, (1.0 - eased) * BUBBLE_ENTRY_RISE))
+        } else {
+            self.bubble_shown_at = None;
+            None
+        };
         let builder = egui::ViewportBuilder::default()
             .with_title(BUBBLE_TITLE)
             .with_inner_size([BUBBLE_WINDOW_SIZE.x, BUBBLE_WINDOW_SIZE.y])
@@ -99,9 +95,14 @@ impl PetsonaApp {
             .with_resizable(false)
             .with_active(false)
             .with_mouse_passthrough(!bubble_hovered)
-            .with_visible(true);
+            .with_visible(self.pet_visible);
         let mut open_conversation = false;
         ctx.show_viewport_immediate(bubble_id, builder, |ui, _class| {
+            // Render the viewport even when empty: egui drops viewports that
+            // are not rendered, and a re-created window shows up as a flash.
+            let Some((text, opacity, rise)) = content.as_ref() else {
+                return;
+            };
             egui::CentralPanel::default()
                 .frame(egui::Frame::NONE.fill(egui::Color32::TRANSPARENT))
                 .show(ui, |ui| {
@@ -109,9 +110,9 @@ impl PetsonaApp {
                     let bubble_rect = draw_bubble_window(
                         ui.painter(),
                         window,
-                        &text,
-                        opacity,
-                        rise,
+                        text,
+                        *opacity,
+                        *rise,
                         bubble_hovered,
                     );
                     // The bubble itself is the reply affordance. Keeping the
@@ -132,9 +133,11 @@ impl PetsonaApp {
         if open_conversation {
             self.open_conversation();
         }
-        self.bubble_window_created = true;
-        if !self.bubble_styled {
-            self.bubble_styled = self.platform.set_no_activate_for_title(BUBBLE_TITLE) > 0;
+        self.bubble_window_created = showing;
+        // Re-assert every visible frame: winit can restore the decorated
+        // style after the first show or a mouse-passthrough update.
+        if self.platform.set_no_activate_for_title(BUBBLE_TITLE) > 0 {
+            self.bubble_styled = true;
         }
     }
 
