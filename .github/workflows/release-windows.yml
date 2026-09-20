@@ -31,6 +31,11 @@ jobs:
           key: windows-release-cargo-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: windows-release-cargo-
 
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: apps/windows/global.json
+
       - name: Fast gates
         run: ./scripts/verify-windows.ps1
 

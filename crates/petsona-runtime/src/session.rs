@@ -244,10 +244,17 @@ impl PetsonaRuntime {
             }
             if let Some(pet) = &mut self.pet {
                 let source = format!("hook:{}", event.source);
-                pet.engine
-                    .raise(state, &source, message.clone(), event.ttl(), Instant::now());
-                pet.anim_started = Instant::now();
-                pet.last_state = pet.engine.current();
+                let before = pet.engine.current();
+                let transition =
+                    pet.engine
+                        .raise(state, &source, message.clone(), event.ttl(), Instant::now());
+                let current = pet.engine.current();
+                // Repeated status polls must not restart a continuous row;
+                // one-shot rows are still allowed to retrigger.
+                if transition.is_some() && (current != before || state.is_one_shot()) {
+                    pet.anim_started = Instant::now();
+                    pet.last_state = current;
+                }
             }
             let _ = self.memory.record_event(
                 &self.persona.id,

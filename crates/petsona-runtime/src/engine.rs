@@ -305,9 +305,17 @@ fn apply_command(
         RuntimeCommand::SetState { state, ttl } => {
             if let Some(pet) = &mut runtime.pet {
                 let now = Instant::now();
-                pet.engine.raise(state, "native", None, ttl, now);
-                pet.anim_started = now;
-                pet.last_state = pet.engine.current();
+                let previous = pet.engine.current();
+                let transition = pet.engine.raise(state, "native", None, ttl, now);
+                let current = pet.engine.current();
+                // Drag sends the same state every 80 ms. Restart the clock
+                // only for a real visible change (or an explicit one-shot
+                // retrigger); otherwise the running frames rewind to frame 0
+                // before the first 120 ms frame can advance.
+                if transition.is_some() && (current != previous || state.is_one_shot()) {
+                    pet.anim_started = now;
+                    pet.last_state = current;
+                }
                 runtime.last_user_action = now;
             } else {
                 runtime.status = "尚未导入宠物".to_string();
@@ -886,6 +894,9 @@ fn publish_projection(runtime: &PetsonaRuntime, projection: &Arc<SharedProjectio
                     "id": pet.id,
                     "name": pet.display_name,
                     "v2": pet.sprite_version_number == Some(2) || pet.frame.rows >= 11,
+                    "spritesheet": pet.spritesheet,
+                    "cellWidth": pet.frame.width,
+                    "cellHeight": pet.frame.height,
                 })
             })
             .collect::<Vec<_>>(),
@@ -1022,6 +1033,25 @@ mod tests {
         home
     }
 
+    /// Same isolated home plus the self-authored V2 fixture pet, used by the
+    /// animation-cadence regression test.
+    fn engine_home_with_pet() -> TempDir {
+        let home = engine_home();
+        let paths = AppPaths::resolve(home.path().to_path_buf());
+        let fixture =
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../petsona-core/testdata/v2-test-pet");
+        let destination = paths.pets_dir.join("v2-test-pet");
+        std::fs::create_dir_all(&destination).expect("fixture pet directory");
+        std::fs::copy(fixture.join("pet.json"), destination.join("pet.json"))
+            .expect("fixture manifest");
+        std::fs::copy(
+            fixture.join("spritesheet.png"),
+            destination.join("spritesheet.png"),
+        )
+        .expect("fixture spritesheet");
+        home
+    }
+
     #[test]
     fn spawn_does_not_load_the_home_on_the_caller_thread() {
         let home = engine_home();
@@ -1113,6 +1143,66 @@ mod tests {
             .text(RuntimeTextField::DeepSeekConfig)
             .contains("test-model"));
         assert!(engine.text(RuntimeTextField::Memory).contains("安静音乐"));
+        engine.stop();
+    }
+
+    #[test]
+    fn repeated_drag_state_does_not_rewind_the_animation() {
+        use petsona_core::pet::PetState;
+
+        let home = engine_home_with_pet();
+        let mut engine = RuntimeEngine::spawn(Some(home.path().to_path_buf()), || {}).unwrap();
+        let mut ready = false;
+        for _ in 0..200 {
+            let _ = engine.send(RuntimeCommand::Tick);
+            let snapshot = engine.snapshot();
+            if snapshot.ready && snapshot.has_pet {
+                ready = true;
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert!(ready, "fixture pet did not load");
+
+        let state = PetState::RunningRight;
+        engine
+            .send(RuntimeCommand::SetState {
+                state,
+                ttl: Some(Duration::from_secs(2)),
+            })
+            .expect("first drag state");
+
+        let mut first_frame = None;
+        for _ in 0..200 {
+            let _ = engine.send(RuntimeCommand::Tick);
+            if engine.text(RuntimeTextField::State) == state.name() {
+                let sprite = engine.snapshot().sprite_index;
+                first_frame = Some(sprite);
+                if sprite != 0 {
+                    break;
+                }
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        let first_frame = first_frame.expect("running-right became visible");
+
+        // 150 ms is past the fixture's first 120 ms running frame. A second
+        // SetState with the same state simulates the 80 ms drag resend; it must
+        // keep the clock rather than returning to the first frame.
+        std::thread::sleep(Duration::from_millis(150));
+        engine
+            .send(RuntimeCommand::SetState {
+                state,
+                ttl: Some(Duration::from_secs(2)),
+            })
+            .expect("drag resend");
+        std::thread::sleep(Duration::from_millis(60));
+
+        assert_ne!(
+            engine.snapshot().sprite_index,
+            first_frame,
+            "a repeated drag state must not rewind the running animation"
+        );
         engine.stop();
     }
 }

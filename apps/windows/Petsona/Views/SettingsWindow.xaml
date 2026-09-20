@@ -1,0 +1,142 @@
+<Window
+    x:Class="Petsona.Views.SettingsWindow"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    Title="Petsona 设置">
+    <NavigationView x:Name="RootPanel"
+                    PaneDisplayMode="Left"
+                    IsPaneOpen="True"
+                    OpenPaneLength="176"
+                    IsBackButtonVisible="Collapsed"
+                    IsSettingsVisible="False"
+                    SelectionChanged="OnNavSelectionChanged">
+        <NavigationView.MenuItems>
+            <NavigationViewItem Content="宠物库" Tag="pets" IsSelected="True" />
+            <NavigationViewItem Content="外观与交互" Tag="appearance" />
+            <NavigationViewItem Content="DeepSeek" Tag="deepseek" />
+            <NavigationViewItem Content="人格" Tag="persona" />
+            <NavigationViewItem Content="记忆" Tag="memory" />
+            <NavigationViewItem Content="启动" Tag="startup" />
+        </NavigationView.MenuItems>
+
+        <ScrollViewer Padding="16">
+            <Grid>
+                <StackPanel x:Name="PagePets" Spacing="12">
+                    <TextBlock x:Name="StatusText" Text="正在加载…" Opacity="0.75" TextWrapping="Wrap" />
+                    <StackPanel Orientation="Horizontal" Spacing="8">
+                        <Button Content="导入文件夹…" Click="OnImportFolderClick" />
+                        <Button Content="导入 zip…" Click="OnImportArchiveClick" />
+                        <Button Content="扫描 Codex 宠物" Click="OnScanCodexClick" />
+                        <Button Content="导出…" Click="OnExportPetClick" />
+                        <Button Content="删除" Click="OnDeletePetClick" />
+                    </StackPanel>
+                    <ListView x:Name="PetList" MaxHeight="220" SelectionChanged="OnPetSelectionChanged">
+                        <ListView.ItemTemplate>
+                            <DataTemplate>
+                                <StackPanel Orientation="Horizontal" Spacing="12">
+                                    <Image Width="48" Height="48" Source="{Binding Thumbnail}" />
+                                    <TextBlock Text="{Binding Label}" VerticalAlignment="Center" />
+                                </StackPanel>
+                            </DataTemplate>
+                        </ListView.ItemTemplate>
+                    </ListView>
+                    <StackPanel x:Name="ConflictPanel" Orientation="Horizontal" Spacing="8" Visibility="Collapsed">
+                        <TextBlock x:Name="ConflictText" VerticalAlignment="Center" TextWrapping="Wrap" />
+                        <Button Content="覆盖导入" Click="OnOverwriteImportClick" />
+                        <Button Content="取消" Click="OnCancelConflictClick" />
+                    </StackPanel>
+                    <TextBlock Text="Codex 候选（双击导入）" Opacity="0.7" />
+                    <ListView x:Name="CodexList" MaxHeight="220" DoubleTapped="OnCodexDoubleTapped">
+                        <ListView.ItemTemplate>
+                            <DataTemplate>
+                                <StackPanel Orientation="Horizontal" Spacing="12">
+                                    <Image Width="48" Height="48" Source="{Binding Thumbnail}" />
+                                    <TextBlock Text="{Binding Label}" VerticalAlignment="Center" />
+                                </StackPanel>
+                            </DataTemplate>
+                        </ListView.ItemTemplate>
+                    </ListView>
+                </StackPanel>
+
+                <StackPanel x:Name="PageAppearance" Spacing="12" Visibility="Collapsed">
+                    <ComboBox x:Name="ScaleCombo" Header="缩放档位" SelectionChanged="OnScaleSelectionChanged" />
+                    <ToggleSwitch x:Name="ClickThroughToggle" Header="像素级点击穿透" Toggled="OnClickThroughToggled" />
+                </StackPanel>
+
+                <StackPanel x:Name="PageDeepSeek" Spacing="12" Visibility="Collapsed">
+                    <TextBox x:Name="DeepSeekBaseUrl" Header="Base URL" />
+                    <TextBox x:Name="DeepSeekModel" Header="模型" />
+                    <TextBox x:Name="DeepSeekApiKeyEnv" Header="API Key 环境变量名" />
+                    <PasswordBox x:Name="DeepSeekKeyBox" Header="API Key（保存到 Windows 凭据管理器）" />
+                    <StackPanel Orientation="Horizontal" Spacing="8">
+                        <Button Content="保存密钥" Click="OnSaveKeyClick" />
+                        <Button Content="清除密钥" Click="OnClearKeyClick" />
+                        <TextBlock x:Name="KeyStatusText" VerticalAlignment="Center" Opacity="0.7" />
+                    </StackPanel>
+                    <NumberBox x:Name="DeepSeekTimeout" Header="超时（秒）" Minimum="1" Maximum="600" />
+                    <NumberBox x:Name="DeepSeekMaxTokens" Header="最大 token" Minimum="16" Maximum="32000" />
+                    <NumberBox x:Name="DeepSeekTemperature" Header="温度" Minimum="0" Maximum="2" SmallChange="0.1" />
+                    <ToggleSwitch x:Name="DeepSeekThinkingDisabled" Header="禁用思考模式" />
+                    <Button Content="保存 DeepSeek 设置" Click="OnSaveDeepSeekClick" />
+                </StackPanel>
+
+                <StackPanel x:Name="PagePersona" Spacing="12" Visibility="Collapsed">
+                    <ComboBox x:Name="PersonaCombo" Header="选择人格" SelectionChanged="OnPersonaSelectionChanged" />
+                    <StackPanel Orientation="Horizontal" Spacing="8">
+                        <Button Content="新建…" Click="OnCreatePersonaClick" />
+                        <Button Content="复制…" Click="OnDuplicatePersonaClick" />
+                        <Button Content="删除" Click="OnDeletePersonaClick" />
+                        <Button Content="导入…" Click="OnImportPersonaClick" />
+                        <Button Content="导出…" Click="OnExportPersonaClick" />
+                    </StackPanel>
+                    <TextBox x:Name="PersonaIdBox" Header="人格 ID" IsReadOnly="True" />
+                    <TextBox x:Name="PersonaNameBox" Header="名称" />
+                    <TextBox x:Name="PersonaDescriptionBox" Header="简介" />
+                    <TextBox x:Name="PersonaAvatarPetBox" Header="绑定宠物 ID（可选）" />
+                    <TextBox x:Name="PersonaToneBox" Header="语气" />
+                    <ComboBox x:Name="PersonaVerbosityCombo" Header="回答长度" />
+                    <TextBox x:Name="PersonaLanguageBox" Header="语言" />
+                    <ToggleSwitch x:Name="PersonaEmojiToggle" Header="允许 emoji" />
+                    <TextBox x:Name="PersonaGreetingBox" Header="固定问候（可选）" />
+                    <TextBox x:Name="PersonaSystemPromptBox" Header="系统提示词" AcceptsReturn="True" TextWrapping="Wrap" Height="120" />
+                    <NumberBox x:Name="PersonaTemperatureBox" Header="温度" Minimum="0" Maximum="2" SmallChange="0.1" />
+                    <NumberBox x:Name="PersonaMaxTokensBox" Header="最大回复 token" Minimum="16" Maximum="4000" />
+                    <TextBox x:Name="PersonaModelProviderBox" Header="模型提供方（可选）" />
+                    <TextBox x:Name="PersonaModelBox" Header="绑定模型（可选）" />
+                    <ToggleSwitch x:Name="PersonaMemoryEnabledToggle" Header="启用人格记忆" />
+                    <NumberBox x:Name="PersonaMemoryWindowBox" Header="对话记忆窗口（轮）" Minimum="1" Maximum="100" />
+                    <ToggleSwitch x:Name="PersonaLongTermToggle" Header="启用长期记忆" />
+                    <NumberBox x:Name="PersonaSummarizeAfterBox" Header="总结阈值（轮）" Minimum="1" Maximum="200" />
+                    <ToggleSwitch x:Name="PersonaTtsEnabledToggle" Header="启用语音配置" />
+                    <TextBox x:Name="PersonaTtsVoiceBox" Header="语音名称（可选）" />
+                    <NumberBox x:Name="PersonaTtsRateBox" Header="语速" Minimum="0.25" Maximum="4" SmallChange="0.05" />
+                    <ToggleSwitch x:Name="PersonaProactiveToggle" Header="启用主动问候配置" />
+                    <NumberBox x:Name="PersonaProactiveIdleBox" Header="主动问候空闲（分钟）" Minimum="1" Maximum="1440" />
+                    <Button Content="保存人格" Click="OnSavePersonaClick" />
+                </StackPanel>
+
+                <StackPanel x:Name="PageMemory" Spacing="12" Visibility="Collapsed">
+                    <ToggleSwitch x:Name="MemoryEnabledToggle" Header="启用记忆" />
+                    <NumberBox x:Name="MemoryRecentEventsBox" Header="保留近期事件数" Minimum="0" Maximum="200" />
+                    <NumberBox x:Name="MemoryRetentionDaysBox" Header="保留天数" Minimum="1" Maximum="3650" />
+                    <NumberBox x:Name="MemoryFactLimitBox" Header="事实上限" Minimum="1" Maximum="500" />
+                    <Button Content="保存记忆配置" Click="OnSaveMemoryClick" />
+                    <StackPanel Orientation="Horizontal" Spacing="8">
+                        <TextBox x:Name="FactKeyBox" Header="偏好名称" Width="180" />
+                        <TextBox x:Name="FactValueBox" Header="偏好内容" Width="300" />
+                        <Button Content="添加事实" Click="OnRememberFactClick" VerticalAlignment="Bottom" />
+                    </StackPanel>
+                    <ListView x:Name="FactsList" MaxHeight="200" />
+                    <StackPanel Orientation="Horizontal" Spacing="8">
+                        <Button Content="删除选中事实" Click="OnForgetFactClick" />
+                        <Button Content="清空记忆" Click="OnClearMemoryClick" />
+                    </StackPanel>
+                </StackPanel>
+
+                <StackPanel x:Name="PageStartup" Spacing="12" Visibility="Collapsed">
+                    <ToggleSwitch x:Name="AutostartToggle" Header="开机自启动（HKCU Run）" Toggled="OnAutostartToggled" />
+                </StackPanel>
+            </Grid>
+        </ScrollViewer>
+    </NavigationView>
+</Window>

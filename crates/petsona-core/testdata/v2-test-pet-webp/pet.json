@@ -1,0 +1,27 @@
+{
+  "name": "TestPetWebp",
+  "description": "Synthetic Petsona smoke-test pet (self-authored, no third-party art).",
+  "spriteVersionNumber": 2,
+  "spritesheet": "spritesheet.webp",
+  "grid": {
+    "columns": 8,
+    "rows": 11,
+    "cellWidth": 64,
+    "cellHeight": 64
+  },
+  "framesPerRow": [
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2
+  ],
+  "id": "test_fixture_v2_webp",
+  "displayName": "TestPetWebp"
+}

@@ -15,7 +15,9 @@ petsona-core + petsona-runtime  ->  petsona-ffi (C ABI)
 
 原生前端拥有各自的 UI 主线程和窗口生命周期；Rust 只维护共享业务状态、动画、配置、协议和后台任务。
 当前 macOS 入口已经建立，旧 `petsona-app` / shell 仍用于行为对照，直到
-[`FEATURE_PARITY.md`](FEATURE_PARITY.md) 全部完成。Windows 原生入口需在具备 Windows/.NET/Windows SDK 的环境中实施。
+[`FEATURE_PARITY.md`](FEATURE_PARITY.md) 全部完成。Windows 原生入口已于 2026-09-20 启动
+（C# / WinUI 3 + Win32，与 macOS 线并行），契约见
+[`plans/windows-native-rewrite.md`](plans/windows-native-rewrite.md)。
 
 ## 旧入口决策（历史记录，不约束新原生前端）
 
@@ -106,4 +108,5 @@ Windows 使用设置开关管理 HKCU Run；macOS 使用设置开关管理用户
 当前 macOS 原生实现已接入 runtime worker/ABI3、SwiftUI/AppKit 宠物窗、设置/宠物库/Composer、
 LaunchAgent/Keychain 服务和 native smoke，但仍未完成完整人工验收。目标契约以
 [计划 v1.0](plans/native-ui-rewrite.md) 为准，实际进展、命令证据与未修复审查项见
-[执行记录](execution/native-ui-rewrite.md)。旧共享 UI 的测试通过不能代表新前端通过。
+[执行记录](execution/native-ui-rewrite.md)。旧共享 UI 的测试通过不能代表新前端通过。Windows 线独立执行
+[`plans/windows-native-rewrite.md`](plans/windows-native-rewrite.md)，其进展不以 macOS 证据替代。

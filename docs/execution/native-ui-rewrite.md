@@ -214,3 +214,10 @@ E-07 的 xcresult 摘要在上一只读审查中因 TestReport 临时写入权�
 | E-20f | 4–10 / 交付包，MacBook Air arm64 / macOS 27 | `/Users/book/Desktop/Petsona` | `bash scripts/package-macos.sh`；`PETSONA_NATIVE_APP=dist/Petsona.app PETSONA_SMOKE_STATE_PORT=17972 PETSONA_SMOKE_HOOK_PORT=17973 bash scripts/macos-smoke.sh` | exit 0；dist smoke6/6 | 刷新 `/Users/book/Desktop/Petsona/dist/Petsona.app` 与 `dist/Petsona-macos-arm64.zip`；未签名，未内置 `pet.json`，最终包可启动并安全退出 |
 
 本批次未执行 Git add/commit/push；工作区既有改动及本批次改动均保留给用户审查。人工验收按 `docs/MACOS_VERIFICATION.md` 的 A4/A6/A11、B8/B9 及 M-01/M-04 进行；多屏/Retina/Spaces、重力、自动活动、透明度、签名/公证和宠物图标托盘化保持暂缓或待凭据。
+
+### 8.11 范围决定：Windows 线并行启动（2026-09-20）
+
+- 用户决定：Windows 原生线（C# / WinUI 3 + Win32）与 macOS 线**并行推进**；旧 Windows 线（egui/Win32 外壳）的 W-* 实机复测**冻结**。
+- 本记录（macOS 线）状态不变：**代码完成、人工验收未完成**（REV-02/04/05/07/08 部分未关闭；M-01～M-06 人工项待做；签名/公证待凭据）。
+- Windows 线契约：[windows-native-rewrite 计划](../plans/windows-native-rewrite.md) v1.0；执行记录：[windows-native-rewrite](../execution/windows-native-rewrite.md)。
+- 并行规则（对两条线生效）：共享层/ABI/契约变更须双端回归（Rust 门禁 + macOS 原生门禁 + Windows 构建/测试）；`apps/macos/**` 仅允许共享层接口同步适配；任一端未回归前不得发布该端。

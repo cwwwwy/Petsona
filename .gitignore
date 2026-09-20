@@ -9,3 +9,8 @@
 .env.local
 .pet-local
 /release
+
+# .NET / WinUI build outputs
+apps/windows/**/bin/
+apps/windows/**/obj/
+.vs/

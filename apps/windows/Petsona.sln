@@ -1,0 +1,34 @@
+
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.0.31903.59
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "Petsona", "Petsona\Petsona.csproj", "{BAF629EC-E7A1-4078-86E2-C821DF1499F7}"
+EndProject
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "Petsona.Core", "Petsona.Core\Petsona.Core.csproj", "{5653973E-0224-4885-A56B-D99382D6029D}"
+EndProject
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "Petsona.Tests", "Petsona.Tests\Petsona.Tests.csproj", "{83616986-4E2D-47C2-834C-1E8FAF1ED1B3}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|x64 = Debug|x64
+		Release|x64 = Release|x64
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{BAF629EC-E7A1-4078-86E2-C821DF1499F7}.Debug|x64.ActiveCfg = Debug|x64
+		{BAF629EC-E7A1-4078-86E2-C821DF1499F7}.Debug|x64.Build.0 = Debug|x64
+		{BAF629EC-E7A1-4078-86E2-C821DF1499F7}.Release|x64.ActiveCfg = Release|x64
+		{BAF629EC-E7A1-4078-86E2-C821DF1499F7}.Release|x64.Build.0 = Release|x64
+		{5653973E-0224-4885-A56B-D99382D6029D}.Debug|x64.ActiveCfg = Debug|x64
+		{5653973E-0224-4885-A56B-D99382D6029D}.Debug|x64.Build.0 = Debug|x64
+		{5653973E-0224-4885-A56B-D99382D6029D}.Release|x64.ActiveCfg = Release|x64
+		{5653973E-0224-4885-A56B-D99382D6029D}.Release|x64.Build.0 = Release|x64
+		{83616986-4E2D-47C2-834C-1E8FAF1ED1B3}.Debug|x64.ActiveCfg = Debug|x64
+		{83616986-4E2D-47C2-834C-1E8FAF1ED1B3}.Debug|x64.Build.0 = Debug|x64
+		{83616986-4E2D-47C2-834C-1E8FAF1ED1B3}.Release|x64.ActiveCfg = Release|x64
+		{83616986-4E2D-47C2-834C-1E8FAF1ED1B3}.Release|x64.Build.0 = Release|x64
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+EndGlobal

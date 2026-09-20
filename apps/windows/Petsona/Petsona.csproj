@@ -1,0 +1,45 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows10.0.26100.0</TargetFramework>
+    <TargetPlatformMinVersion>10.0.17763.0</TargetPlatformMinVersion>
+    <RootNamespace>Petsona</RootNamespace>
+    <AssemblyName>Petsona</AssemblyName>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <ApplicationIcon>..\..\..\packaging\windows\Petsona.ico</ApplicationIcon>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <UseWinUI>true</UseWinUI>
+    <WindowsPackageType>None</WindowsPackageType>
+    <EnableMsixTooling>false</EnableMsixTooling>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.WindowsAppSDK" Version="2.5.1" />
+    <PackageReference Include="System.Drawing.Common" Version="10.0.12" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Petsona.Core\Petsona.Core.csproj" />
+  </ItemGroup>
+
+  <Target Name="CopyPetsonaFfi" AfterTargets="Build">
+    <!-- Prefer the GNU target build (the local WSL workflow) and fall back to
+         the MSVC target (CI). Copying both would let the older one win. -->
+    <PropertyGroup>
+      <!-- The verify/package scripts select the DLL they just built; honoring
+           that explicit path prevents a stale DLL from another toolchain
+           silently winning the GNU-first fallback. -->
+      <PetsonaFfiSource Condition="'$(PetsonaFfiSource)' == '' And '$(PETSONA_FFI_DLL)' != '' And Exists('$(PETSONA_FFI_DLL)')">$(PETSONA_FFI_DLL)</PetsonaFfiSource>
+      <PetsonaFfiSource Condition="'$(PetsonaFfiSource)' == '' And Exists('$(RepoRoot)target/x86_64-pc-windows-gnu/release/petsona_ffi.dll')">$(RepoRoot)target/x86_64-pc-windows-gnu/release/petsona_ffi.dll</PetsonaFfiSource>
+      <PetsonaFfiSource Condition="'$(PetsonaFfiSource)' == '' And Exists('$(RepoRoot)target/release/petsona_ffi.dll')">$(RepoRoot)target/release/petsona_ffi.dll</PetsonaFfiSource>
+    </PropertyGroup>
+    <Copy Condition="'$(PetsonaFfiSource)' != ''"
+          SourceFiles="$(PetsonaFfiSource)"
+          DestinationFolder="$(OutDir)"
+          SkipUnchangedFiles="true" />
+    <Message Importance="high" Text="CopyPetsonaFfi: $(PetsonaFfiSource)" Condition="'$(PetsonaFfiSource)' != ''" />
+  </Target>
+
+</Project>

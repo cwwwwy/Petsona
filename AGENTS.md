@@ -69,7 +69,7 @@ MSVC 缺 `link.exe` 的 GNU 回退写在 `docs/WINDOWS_VERIFICATION.md`。
 ## 跨对话工作流（规划 → 执行 → 审查）
 
 - 计划契约：`docs/plans/<任务名>.md`；执行证据：`docs/execution/<任务名>.md`。模板分别为各目录的 `TEMPLATE.md`。
-- 当前任务：计划 [native-ui-rewrite.md](docs/plans/native-ui-rewrite.md)，执行记录 [native-ui-rewrite.md](docs/execution/native-ui-rewrite.md)。功能表 [FEATURE_PARITY.md](docs/FEATURE_PARITY.md) 只汇总状态，不覆盖计划。
+- 当前任务（两条并行线）：macOS [native-ui-rewrite](docs/plans/native-ui-rewrite.md)（执行记录 [同名](docs/execution/native-ui-rewrite.md)）；Windows [windows-native-rewrite](docs/plans/windows-native-rewrite.md)（执行记录 [同名](docs/execution/windows-native-rewrite.md)）。功能表 [FEATURE_PARITY.md](docs/FEATURE_PARITY.md) 只汇总状态，不覆盖计划。
 - 每个对话先确认角色与用户授权，读取 AGENTS、指定计划及执行记录，再用 `git status`、`git log`、`git diff` 和未跟踪文件核对基线。已有用户改动必须保留。
 - **规划**：只读调查，明确目标/非目标、逐文件增改删、约束、REQ 编号、依赖、验收矩阵、命令和完成条件。用户要求“不修改文件”时只在对话输出；授权落盘后才写指定文档，不写产品代码。
 - **执行**：先复述关键目标和验收标准，再按指定计划实施。可作计划内的局部实现选择，不得自行缩减功能、将完整交付改成骨架、跳过验收或改变架构边界。
@@ -82,8 +82,9 @@ MSVC 缺 `link.exe` 的 GNU 回退写在 `docs/WINDOWS_VERIFICATION.md`。
 
 ## 当前状态（2026-09-20）
 
-- 用户确认最终方向是共享 Rust 核心 + 原生前端：macOS SwiftUI/AppKit，Windows C#/WinUI 3/Win32；当前授权先实施 macOS 和必要共享层，Windows 后续，Linux 不在范围。
-- Git HEAD 为 `ad045bb`；原生重构位于未提交工作区。计划与执行记录见上，文档版本不能替代 Git/工作区基线。
+- 用户确认最终方向是共享 Rust 核心 + 原生前端：macOS SwiftUI/AppKit，Windows C#/WinUI 3/Win32；2026-09-20 确认两线并行推进（Windows 按 windows-native-rewrite 启动），Linux 不在范围。
+- Git HEAD 为 `c4fc413`，工作区干净；原生实现由 `3fb34c3`、`c4fc413` 提交。计划与执行记录见上，文档版本不能替代 Git/工作区基线。
+- Windows 线：旧入口（egui/Win32）人工复测按用户决定冻结、保持可构建；新原生线已完成批次 0 环境预研（无 VS 的 dotnet CLI 构建/运行/锁文件/UNC 直连验证通过），实施状态见 windows-native-rewrite 计划与执行记录。
 - 当前 macOS 原生入口已从骨架推进到可构建/可测试/可协议 smoke 的实施状态，但**仍未完成完整原生验收**；剩余功能和人工项以执行记录 REV-02/04/05/07/08 及 M-01～M-06 为准。旧入口暂留作行为对照；Windows 旧验证结论不代表新原生实现已通过。
 - 2026-09-20 执行：在已有 runtime worker + ABI3 FFI、原生 SwiftUI/AppKit 宠物窗/气泡/Composer/设置/宠物库命令基础上，完成 DeepSeek 全配置、记忆管理、人格 CRUD/模板/导入导出、明确偏好提取、重复导入确认、拖放导入和固定缩放档位/状态栏菜单；Rust workspace、原生 XCTest 5/5、native smoke 6/6、Release 静态链接与 arm64 打包门禁通过，但不等于窗口视觉、IME、Keychain/LaunchAgent 真实行为、多屏、签名、公证人工通过。
 
@@ -258,3 +259,6 @@ git push
 
 直接在 `main` 上开发；试验性改动可开 `codex/win-*` / `codex/mac-*` 短期分支，合并后删除。
 全局配置已设好：`pull.ff=only`、`push.autoSetupRemote=true`、`fetch.prune=true`、`core.longpaths=true`。
+
+- **提交总结是交付的一部分**：每轮修改文件后（无论用户是否准备立刻提交），交付说明中必须给出
+  未提交改动的分组摘要与可直接执行的 `git add` / `git commit` 命令；AI 不执行提交，由用户随时手动提交。

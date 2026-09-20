@@ -46,3 +46,49 @@ jobs:
 
       - name: Tests
         run: cargo test --workspace
+
+  windows-native:
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.98.0
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: windows-native-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: windows-native-cargo-
+
+      - name: Build FFI DLL
+        run: cargo build -p petsona-ffi --release --locked
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: apps/windows/global.json
+
+      - name: Restore (locked)
+        run: dotnet restore apps/windows/Petsona.sln --locked-mode
+
+      # dotnet format evaluates the workspace in Debug; build it first so the
+      # WinUI project resolves its project references.
+      - name: Build Debug
+        run: dotnet build apps/windows/Petsona.sln -c Debug --no-restore
+
+      - name: Format check
+        run: dotnet format apps/windows/Petsona.sln --verify-no-changes --no-restore
+
+      - name: Build Release
+        run: dotnet build apps/windows/Petsona.sln -c Release -p:Platform=x64 --no-restore
+
+      - name: Tests
+        run: dotnet test apps/windows/Petsona.sln -c Release -p:Platform=x64 --no-build

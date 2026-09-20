@@ -243,6 +243,9 @@ impl Animation {
 /// the neutral, front-facing pose for the row; cursor gaze animates directly
 /// between this pose and the requested pose.
 const GAZE_FRAME_MS: f32 = 16.0;
+/// Official Codex v2 look rows use 16 clockwise directions in 22.5-degree
+/// steps; 0 degrees is up/12 o'clock.
+const GAZE_DIRECTION_STEP_DEGREES: f32 = 22.5;
 
 fn gaze_neutral_frame(animation: &Animation) -> usize {
     animation.sprites.len().saturating_sub(1) / 2
@@ -604,32 +607,34 @@ impl PetEngine {
         Some(state)
     }
 
-    /// Resolve a cursor vector to a look row and one of its eight target
-    /// poses. `dy` uses screen coordinates: positive means below the pet.
+    /// Resolve a cursor vector to the official V2 look pose.
+    ///
+    /// The desktop app computes `angle = atan2(dx, -dy)` (0 degrees = up,
+    /// clockwise), rounds it to 16 directions in 22.5-degree steps, and maps
+    /// directions 0..7 to row 9 and 8..15 to row 10 (`column = direction % 8`).
+    /// The full angle is used instead of a clamped `dy / |dx|` slope so the
+    /// 22.5, 45, 67.5, 112.5, ... poses are all reachable.
     pub fn gaze_target(&self, dx: f32, dy: f32) -> Option<(PetState, usize)> {
-        let state = if dx < 0.0 {
-            PetState::LookRow10
-        } else {
+        if dx.abs() < f32::EPSILON && dy.abs() < f32::EPSILON {
+            return None;
+        }
+        let angle = (dx.atan2(-dy).to_degrees() + 360.0) % 360.0;
+        let direction = ((angle / GAZE_DIRECTION_STEP_DEGREES).round() as usize) % 16;
+        let state = if direction < 8 {
             PetState::LookRow9
+        } else {
+            PetState::LookRow10
         };
         let len = self.animations.get(&state)?.sprites.len();
         if len == 0 {
             return None;
         }
-        let vertical = if dx.abs() < f32::EPSILON {
-            if dy < 0.0 {
-                -1.0
-            } else {
-                1.0
-            }
+
+        let column = direction % 8;
+        let target = if len >= 8 {
+            column.min(len - 1)
         } else {
-            (dy / dx.abs()).clamp(-1.0, 1.0)
-        };
-        let normalized = ((vertical + 1.0) * 0.5 * (len - 1) as f32).round() as usize;
-        let target = if state.look_towards_right() {
-            normalized
-        } else {
-            len - 1 - normalized
+            ((column as f32 * (len - 1) as f32) / 7.0).round() as usize
         };
         Some((state, target.min(len - 1)))
     }
@@ -1074,6 +1079,28 @@ mod tests {
         let mut narrow = engine(9);
         assert_eq!(narrow.glance(40.0, now), None);
         assert_eq!(narrow.current(), PetState::Idle);
+    }
+
+    #[test]
+    fn gaze_target_matches_the_official_16_direction_table() {
+        let e = engine(11);
+        let diagonal = 2.0f32.sqrt() / 2.0;
+        let cases = [
+            (0.0, -1.0, PetState::LookRow9, 0),
+            (diagonal, -diagonal, PetState::LookRow9, 2),
+            (1.0, 0.0, PetState::LookRow9, 4),
+            (0.0, 1.0, PetState::LookRow10, 0),
+            (-1.0, 0.0, PetState::LookRow10, 4),
+            (-diagonal, -diagonal, PetState::LookRow10, 6),
+        ];
+        for (dx, dy, state, column) in cases {
+            assert_eq!(
+                e.gaze_target(dx, dy),
+                Some((state, column)),
+                "dx={dx} dy={dy}"
+            );
+        }
+        assert_eq!(e.gaze_target(0.0, 0.0), None);
     }
 
     #[test]
