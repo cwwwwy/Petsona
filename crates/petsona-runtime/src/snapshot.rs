@@ -16,6 +16,11 @@ pub enum RuntimeTextField {
     Status,
     Position,
     CodexPets,
+    Persona,
+    Personas,
+    DeepSeekConfig,
+    Memory,
+    ImportConflict,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -57,6 +62,11 @@ pub struct RuntimeTexts {
     pub status: String,
     pub position: String,
     pub codex_pets: String,
+    pub persona: String,
+    pub personas: String,
+    pub deepseek_config: String,
+    pub memory: String,
+    pub import_conflict: String,
 }
 
 impl RuntimeTexts {
@@ -74,6 +84,11 @@ impl RuntimeTexts {
             RuntimeTextField::Status => &self.status,
             RuntimeTextField::Position => &self.position,
             RuntimeTextField::CodexPets => &self.codex_pets,
+            RuntimeTextField::Persona => &self.persona,
+            RuntimeTextField::Personas => &self.personas,
+            RuntimeTextField::DeepSeekConfig => &self.deepseek_config,
+            RuntimeTextField::Memory => &self.memory,
+            RuntimeTextField::ImportConflict => &self.import_conflict,
         }
     }
 }

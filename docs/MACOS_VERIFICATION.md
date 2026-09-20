@@ -1,23 +1,25 @@
 # Petsona macOS 实机验收清单
 
 > 原生前端迁移入口：`apps/macos/Petsona.xcodeproj`。Rust FFI/SwiftUI/AppKit
-> 的构建契约和迁移范围见 `docs/NATIVE_REWRITE_PLAN.md`；本清单中的旧 `cargo run`
+> 的构建契约和迁移范围见 `docs/plans/native-ui-rewrite.md`；本清单中的旧 `cargo run`
 > 入口在原生功能全部对照完成前仅用于回归。
 
 > 下文历史通过项针对旧 Rust/egui 外壳，不能记为新原生实现已通过。
 > 新任务要求见 [计划](plans/native-ui-rewrite.md)，当前未完成项与审查证据见
-> [执行记录](execution/native-ui-rewrite.md)。现有完整脚本仍对旧入口做 smoke/打包；
-> 在 REQ-15 完成前，脚本全绿也不代表新前端验收通过。
+> [执行记录](execution/native-ui-rewrite.md)。当前完整脚本已经切换到原生 `.app`
+> 的 build、XCTest、smoke 与打包检查；窗口视觉和真实桌面行为仍必须人工确认。
 
 CI 只能证明“能编译”，不能证明“能用”；**真实结论以本清单为准**。
 最小可用判定：**B1（左键）、B3（拖拽）、B5（转头）、B6（穿透）、B11（空闲 CPU）全部通过**。
 
-## 已知状态（2026-09-19）
+## 已知状态（2026-09-20）
 
 - ✅ 已通过：A3、B1–B4、B6–B7；透明穿透、托盘菜单、设置聚焦、当前 Space 稳定。
 - ✅ 2026-09-17 完整 `verify-macos-all.sh` 通过；34 项 runtime smoke 含 LaunchAgent plist 开 / 关。
 - ✅ 2026-09-18 `bash scripts/verify-macos-all.sh` 通过：fmt / clippy / workspace tests（app 19、core 59、runtime 1、macOS shell 7）/ release、33 项 runtime smoke、打包结构检查。
 - ✅ 2026-09-19 原生重构门禁通过：workspace Rust tests（app25/core54/ffi3/runtime3/mac shell7）、原生 XCTest 4/4、原生 app FFI smoke（6 项）、静态 `.a` 依赖检查、arm64 bundle/zip 检查。
+- ✅ 2026-09-20 新增配置/记忆/人格命令往返 XCTest 后，原生测试摘要为 5/5 通过。
+- ✅ 2026-09-20 短期功能批次代码与自动测试：DeepSeek 全配置、记忆事实/事件、人格 CRUD/模板/导入导出、偏好提取、重复宠物覆盖确认、拖放导入、固定缩放档位已接入 worker/原生设置与状态栏菜单；Rust runtime/FFI 测试、原生设置命令往返测试通过。
 - ⚠️ 当前 native smoke 只覆盖协议/TTL/进程退出；窗口视觉、点击穿透、IME、托盘、LaunchAgent 登录行为仍需人工。
 - ⚠️ 当前会话没有可枚举的 winit 显示器，NSScreen 工作区与设置 Key Window 两项明确 `[SKIP]`；几何单测通过，真实桌面行为待确认。
 - ⚠️ 待复测：B5 真实光标、B8 缩放视觉、B9 输入框动画 / 注视、B11 Activity Monitor（修复前 8–10%）。
@@ -44,14 +46,14 @@ PETSONA_HOME="$HOME/.petsona-mac-test" cargo run -p petsona-shell-macos
 | A1 | 启动 | 宠物窗口出现、无边框、透明背景、置顶 | 待实测 |
 | A2 | 看菜单栏 | 出现 Petsona 托盘图标 | 待实测 |
 | A3 | 点击托盘图标 | macOS 原生菜单：打开设置 / 选择宠物（V2 有勾选）/ 显示隐藏 / 退出 | 代码完成；实机已通过一次，可复测 |
-| A4 | 打开设置 | 能打开、滚动；缩放、穿透、协议端口、自动行走可操作 | 待实测 |
+| A4 | 打开设置 | 能打开、滚动；固定缩放档位、穿透、DeepSeek、人格、记忆和行为可操作 | 待实测 |
 | A5 | 切换宠物 | 本地库 + 原生导入 / 切换可用；切换后动画与窗口更新 | native worker/UI 已接；人工待实测 |
-| A6 | 导入 / 导出 | 原生文件面板导入；保存面板导出；删除有确认 | native worker/UI 已接；人工待实测 |
+| A6 | 导入 / 导出 | 文件面板或拖放导入；Codex 可预览；重复 ID 明确确认覆盖；保存面板导出；删除有确认 | native worker/UI 已接；人工待实测 |
 | A7 | 状态协议 POST | `waiting`/`failed`/`review`/`running` 切换动画；message 显示气泡；TTL 回 base | 待实测 |
 | A8 | 状态协议 GET | `/health`、`/pets` 返回正确 | 待实测 |
 | A9 | 重启持久化 | 宠物、人格、缩放、位置写入 `config.json` 并保持 | 位置写入 smoke 通过；真实拖动重启待人工 |
 | A10 | 托盘隐藏 / 显示 / 退出 | 隐藏后窗口消失、可恢复；退出后进程真的结束 | 待实测 |
-| A11 | DeepSeek keychain | 保存后 Keychain 出现 Petsona 条目，重启仍可读；无 key 回落固定问候 | 待实测 |
+| A11 | DeepSeek / Keychain | Base URL、模型、超时、token、温度、思考模式可保存；Keychain 密钥可保存/清除，重启仍可读；无 key 回落固定问候 | 自动接线通过；待实测 |
 | A12 | 设置 → 启动 → 开机自启动 | 勾选 / 取消会创建 / 移除 `~/Library/LaunchAgents/com.petsona.desktop.plist` | 原生服务 XCTest 隔离验证；真实设置控件/登录启动待实测 |
 
 ```bash
@@ -73,8 +75,8 @@ curl -XPOST http://127.0.0.1:17872/state \
 | B5 | 光标在宠物周围移动 | 只在宠物附近的椭圆区域触发；row9/row10 作为方向姿势表，从中性帧逐帧到目标；左右换行先经过对应的上 / 下中间姿势；离开后回中性帧，死区不触发 | 范围与跨行状态机单测通过；真实方向、跟随延迟和过渡观感待复验 |
 | B6 | 开启 `click_through` | 透明像素点落到桌面；不透明像素仍可点；关闭后整窗可交互 | ✅ 已验证 |
 | B7 | 在 TextEdit / 浏览器输入时点宠物 | 前台焦点不被打断 | ✅ 已验证 |
-| B8 | 点击 / 右键 / 设置 / 改缩放 | 无边框闪；设置成为可输入前台窗口；`0.5 / 0.75 / 1.0 / 1.25 / 1.5 / 2.0` 缩放不闪 | 缩放锚点 / 几何 smoke 自动通过；Key Window 需在有显示器的桌面确认，缩放视觉待复测 |
-| B9 | 状态 message / 影子按钮 / 输入框 | 原生气泡含悬停回复；Composer 使用 NSTextView，Enter/Shift+Enter/Esc、草稿、caret 注视；输入框在宠物下方 | 原生编译与 worker smoke 通过；IME、位置和视觉动画待实测 |
+| B8 | 点击 / 右键 / 设置 / 改缩放 | 无边框闪；设置成为可输入前台窗口；固定档位 `0.5 / 0.75 / 1.0 / 1.25 / 1.5 / 1.75 / 2.0` 在设置和状态栏菜单可选且不闪 | 缩放锚点 / 几何 smoke 自动通过；Key Window 需在有显示器的桌面确认，缩放视觉待复测 |
+| B9 | 状态 message / 编辑按钮 / 输入框 | 气泡点击打开 Composer；宠物下方编辑按钮打开 Composer；无气泡回复按钮；Composer 使用 NSTextView，Enter/Shift+Enter/Esc、草稿、caret 注视；输入框在宠物下方 | 原生编译与 worker smoke 通过；IME、位置和视觉待实测 |
 | B10 | 在副屏右键 | 菜单出现在该屏并夹在工作区内 | 待实测（当前无副屏条件） |
 | B11 | 空闲看 Activity Monitor | CPU 接近 0–1%（允许偶发波动） | 修复前 8–10%；低频采样 smoke 通过，待复测 |
 | B12 | 启动第二个实例 | 不出现第二只宠物 | 待实测（锁已实现） |
@@ -117,7 +119,7 @@ bash scripts/verify-macos-all.sh               # 门禁 + runtime smoke + 打包
 bash scripts/verify-macos-all.sh --gates-only  # 只跑 fmt / clippy / test / release
 ```
 
-入口脚本 = workspace 门禁（等价 `cargo check -p petsona-shell-macos`）+ `macos-smoke.sh` +
+入口脚本 = workspace Rust 门禁 + 原生 XCTest + 原生 `macos-smoke.sh` +
 打包结构检查（可执行文件、图标、Bundle ID、`LSUIElement`、Retina 字段、LaunchAgent 模板）。
 smoke 覆盖协议 / TTL、设置、（有可枚举显示器时）Key Window、缩放锚点、位置保存、低频指针、idle 重绘、CPU 趋势、
 LaunchAgent plist 开关（使用临时目录，不触碰用户真实登录项）、V2 注视生命周期

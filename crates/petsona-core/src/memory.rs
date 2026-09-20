@@ -89,6 +89,71 @@ pub struct GreetingContext {
     pub last_greeting_at: Option<i64>,
 }
 
+/// Extract an explicit, user-authored preference from a message.
+///
+/// This intentionally only accepts unambiguous first-person phrases. It is a
+/// local, deterministic fallback for the native conversation flow, so a
+/// provider outage cannot make the app invent a long-term preference.
+pub fn extract_preference(text: &str) -> Option<(String, String, f32)> {
+    let text = text.trim().trim_matches(|character: char| {
+        matches!(character, '。' | '！' | '？' | '，' | ',' | '.' | '!' | '?')
+    });
+    let chinese_patterns = [
+        ("我不喜欢", "不喜欢"),
+        ("我讨厌", "不喜欢"),
+        ("我不想要", "不想要"),
+        ("我喜欢", "喜欢"),
+        ("我偏好", "偏好"),
+        ("我爱", "喜欢"),
+        ("我想要", "想要"),
+        ("请叫我", "称呼"),
+        ("我的名字是", "称呼"),
+        ("我叫", "称呼"),
+        ("我习惯", "习惯"),
+    ];
+    for (prefix, key) in chinese_patterns {
+        if let Some(value) = text.strip_prefix(prefix).map(str::trim) {
+            if let Some(value) = clean_preference_value(value) {
+                return Some((key.to_string(), value, 0.9));
+            }
+        }
+    }
+
+    let lower = text.to_ascii_lowercase();
+    let english_patterns = [
+        ("i don't like ", "不喜欢"),
+        ("i dislike ", "不喜欢"),
+        ("i hate ", "不喜欢"),
+        ("i like ", "喜欢"),
+        ("i prefer ", "偏好"),
+        ("i love ", "喜欢"),
+        ("call me ", "称呼"),
+        ("my name is ", "称呼"),
+    ];
+    for (prefix, key) in english_patterns {
+        if lower.strip_prefix(prefix).is_some() {
+            if let Some(value) = clean_preference_value(&text[prefix.len()..]) {
+                // Keep the user's original casing in the stored value.
+                return Some((key.to_string(), value, 0.9));
+            }
+        }
+    }
+    None
+}
+
+fn clean_preference_value(value: &str) -> Option<String> {
+    let value = value
+        .trim()
+        .trim_matches(|character: char| {
+            matches!(character, '。' | '！' | '？' | '，' | ',' | '.' | '!' | '?')
+        })
+        .trim();
+    if value.is_empty() || value.chars().count() > 120 {
+        return None;
+    }
+    Some(value.to_string())
+}
+
 impl GreetingContext {
     pub fn render(&self, now: i64) -> String {
         let mut sections = Vec::new();
@@ -255,6 +320,17 @@ impl PetMemory {
             .unwrap_or_default()
     }
 
+    /// Return the persisted memory projection for a persona without exposing
+    /// the internal mutex or allowing callers to mutate it.
+    pub fn persona_snapshot(&self, persona_id: &str) -> PersonaMemory {
+        self.inner
+            .lock()
+            .personas
+            .get(persona_id)
+            .cloned()
+            .unwrap_or_default()
+    }
+
     pub fn recent_events(&self, persona_id: &str, limit: usize) -> Vec<MemoryEvent> {
         let memory = self.inner.lock();
         let mut events = memory
@@ -387,5 +463,18 @@ mod tests {
         let context = memory.build_greeting_context("default", 5, 20);
         assert_eq!(context.recent_events.len(), 2);
         assert!(context.render(now_ms()).contains("最近互动"));
+    }
+
+    #[test]
+    fn extracts_only_explicit_preferences() {
+        assert_eq!(
+            extract_preference("我喜欢安静的音乐。"),
+            Some(("喜欢".to_string(), "安静的音乐".to_string(), 0.9))
+        );
+        assert_eq!(
+            extract_preference("Call me Book!"),
+            Some(("称呼".to_string(), "Book".to_string(), 0.9))
+        );
+        assert!(extract_preference("今天感觉不错").is_none());
     }
 }

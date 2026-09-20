@@ -11,12 +11,15 @@ use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
-use petsona_core::config::{AppConfig, AppPaths, WindowPosition};
+use petsona_core::config::{AppConfig, AppPaths, DeepSeekConfig, MemoryConfig, WindowPosition};
 use petsona_core::deepseek::DeepSeekClient;
-use petsona_core::memory::EventKind;
+use petsona_core::memory::{extract_preference, EventKind};
+use petsona_core::persona::{templates, ModelRef, Persona};
 use petsona_core::pet::PetLibrary;
 
-use crate::commands::RuntimeCommand;
+use crate::commands::{
+    ImportConflict, MemoryFactInput, PersonaCreate, PersonaPatch, RuntimeCommand,
+};
 use crate::events::RuntimeWaker;
 use crate::instance_lock::InstanceLock;
 use crate::logging;
@@ -25,6 +28,23 @@ use crate::snapshot::{RuntimeSnapshot, RuntimeTextField, RuntimeTexts};
 
 const INITIAL_SNAPSHOT_DELAY: Duration = Duration::from_secs(1);
 const IDLE_WORKER_WAIT: Duration = Duration::from_secs(1);
+pub const SCALE_PRESETS: &[f32] = &[0.5, 0.75, 1.0, 1.25, 1.5, 1.75, 2.0];
+
+fn normalize_scale(value: f32) -> f32 {
+    if !value.is_finite() {
+        return 1.0;
+    }
+    SCALE_PRESETS
+        .iter()
+        .copied()
+        .min_by(|left, right| {
+            (value - *left)
+                .abs()
+                .partial_cmp(&(value - *right).abs())
+                .unwrap_or(std::cmp::Ordering::Equal)
+        })
+        .unwrap_or(1.0)
+}
 
 #[derive(Debug, thiserror::Error)]
 pub enum RuntimeEngineError {
@@ -223,7 +243,7 @@ fn apply_command(
             true
         }
         RuntimeCommand::SetScale(scale) => {
-            runtime.config.window.scale = scale.clamp(0.5, 2.0);
+            runtime.config.window.scale = normalize_scale(scale);
             if let Err(error) = runtime.save_config() {
                 runtime.status = format!("保存缩放设置失败：{error}");
             }
@@ -316,6 +336,21 @@ fn apply_command(
             true
         }
         RuntimeCommand::ImportPet { path, overwrite } => {
+            runtime.import_conflict = None;
+            if !overwrite {
+                match PetLibrary::import_identity(&path) {
+                    Ok((id, name)) if runtime.pets.iter().any(|pet| pet.id == id) => {
+                        runtime.import_conflict = Some(ImportConflict { id, name, path });
+                        runtime.status = "本地已有同 ID 宠物，等待确认是否覆盖".to_string();
+                        return true;
+                    }
+                    Ok(_) => {}
+                    Err(error) => {
+                        runtime.status = format!("导入失败：{error:#}");
+                        return true;
+                    }
+                }
+            }
             let result = if path.is_dir() {
                 runtime.library.import_dir(&path, overwrite)
             } else {
@@ -341,6 +376,13 @@ fn apply_command(
                 Err(error) => runtime.status = format!("导入失败：{error:#}"),
             }
             runtime.publish_health();
+            true
+        }
+        RuntimeCommand::ClearImportConflict => {
+            runtime.import_conflict = None;
+            if runtime.status.contains("等待确认是否覆盖") {
+                runtime.status.clear();
+            }
             true
         }
         RuntimeCommand::ExportPet { id, path } => {
@@ -398,31 +440,152 @@ fn apply_command(
             true
         }
         RuntimeCommand::UpdatePersona(patch) => {
-            if let Some(value) = patch.name {
-                runtime.persona.name = value;
-            }
-            if let Some(value) = patch.tone {
-                runtime.persona.traits.tone = value;
-            }
-            if let Some(value) = patch.language {
-                runtime.persona.traits.language = value;
-            }
-            if let Some(value) = patch.greeting {
-                runtime.persona.greeting = if value.trim().is_empty() {
-                    None
-                } else {
-                    Some(value)
-                };
-            }
-            if let Some(value) = patch.system_prompt {
-                runtime.persona.system_prompt = value;
-            }
+            apply_persona_patch(&mut runtime.persona, *patch);
+            runtime.status = "人格已更新（待保存）".to_string();
             true
         }
         RuntimeCommand::SavePersona => {
             match runtime.personas.save(&runtime.persona) {
                 Ok(()) => runtime.status = "人格已保存".to_string(),
                 Err(error) => runtime.status = format!("保存人格失败：{error}"),
+            }
+            true
+        }
+        RuntimeCommand::RefreshPersonas => true,
+        RuntimeCommand::CreatePersona(spec) => {
+            let result = create_persona(&runtime.personas, spec);
+            match result {
+                Ok(persona) => {
+                    runtime.persona = persona.clone();
+                    runtime.config.active_persona = Some(persona.id.clone());
+                    runtime.status = format!("已创建人格：{}", persona.name);
+                    if let Err(error) = runtime.save_config() {
+                        runtime.status = format!("保存当前人格失败：{error}");
+                    }
+                }
+                Err(error) => runtime.status = format!("创建人格失败：{error}"),
+            }
+            true
+        }
+        RuntimeCommand::DuplicatePersona(spec) => {
+            match runtime
+                .personas
+                .duplicate(&spec.source_id, &spec.id, &spec.name)
+            {
+                Ok(persona) => {
+                    runtime.persona = persona.clone();
+                    runtime.config.active_persona = Some(persona.id.clone());
+                    let _ = runtime.save_config();
+                    runtime.status = format!("已复制人格：{}", persona.name);
+                }
+                Err(error) => runtime.status = format!("复制人格失败：{error}"),
+            }
+            true
+        }
+        RuntimeCommand::SelectPersona(id) => {
+            match runtime.personas.get(&id) {
+                Ok(Some(persona)) => {
+                    runtime.persona = persona;
+                    runtime.config.active_persona = Some(id.clone());
+                    let _ = runtime.save_config();
+                    runtime.status = format!("已切换人格：{}", runtime.persona.name);
+                }
+                Ok(None) => runtime.status = format!("人格不存在：{id}"),
+                Err(error) => runtime.status = format!("读取人格失败：{error}"),
+            }
+            true
+        }
+        RuntimeCommand::DeletePersona(id) => {
+            match runtime.personas.delete(&id) {
+                Ok(()) => {
+                    if runtime.config.active_persona.as_deref() == Some(id.as_str()) {
+                        let fallback = runtime
+                            .personas
+                            .get(petsona_core::persona::DEFAULT_PERSONA_ID)
+                            .ok()
+                            .flatten()
+                            .or_else(|| {
+                                runtime
+                                    .personas
+                                    .list()
+                                    .ok()
+                                    .and_then(|p| p.into_iter().next())
+                            });
+                        if let Some(persona) = fallback {
+                            runtime.persona = persona.clone();
+                            runtime.config.active_persona = Some(persona.id);
+                            let _ = runtime.save_config();
+                        }
+                    }
+                    runtime.status = format!("已删除人格：{id}");
+                }
+                Err(error) => runtime.status = format!("删除人格失败：{error}"),
+            }
+            true
+        }
+        RuntimeCommand::ImportPersona { path, overwrite } => {
+            match runtime.personas.import_file(&path, overwrite) {
+                Ok(persona) => {
+                    runtime.persona = persona.clone();
+                    runtime.config.active_persona = Some(persona.id.clone());
+                    let _ = runtime.save_config();
+                    runtime.status = format!("已导入人格：{}", persona.name);
+                }
+                Err(error) => runtime.status = format!("导入人格失败：{error}"),
+            }
+            true
+        }
+        RuntimeCommand::ExportPersona { id, path } => {
+            match runtime.personas.export_file(&id, &path) {
+                Ok(()) => runtime.status = format!("已导出人格：{}", path.display()),
+                Err(error) => runtime.status = format!("导出人格失败：{error}"),
+            }
+            true
+        }
+        RuntimeCommand::UpdateDeepSeekConfig(config) => {
+            runtime.config.deepseek = sanitize_deepseek_config(config);
+            match runtime.save_config() {
+                Ok(()) => runtime.status = "DeepSeek 配置已保存".to_string(),
+                Err(error) => runtime.status = format!("保存 DeepSeek 配置失败：{error}"),
+            }
+            true
+        }
+        RuntimeCommand::UpdateMemoryConfig(config) => {
+            runtime.config.memory = sanitize_memory_config(config);
+            match runtime.save_config() {
+                Ok(()) => runtime.status = "记忆设置已保存".to_string(),
+                Err(error) => runtime.status = format!("保存记忆设置失败：{error}"),
+            }
+            true
+        }
+        RuntimeCommand::RememberFact(MemoryFactInput {
+            key,
+            value,
+            confidence,
+        }) => {
+            match runtime.memory.remember_fact(
+                &runtime.persona.id,
+                key.trim(),
+                value.trim(),
+                confidence.unwrap_or(0.8).clamp(0.0, 1.0),
+            ) {
+                Ok(_) => runtime.status = "已保存一条用户偏好".to_string(),
+                Err(error) => runtime.status = format!("保存偏好失败：{error}"),
+            }
+            true
+        }
+        RuntimeCommand::ForgetFact(id) => {
+            match runtime.memory.forget_fact(&runtime.persona.id, &id) {
+                Ok(true) => runtime.status = "已删除记忆偏好".to_string(),
+                Ok(false) => runtime.status = "记忆偏好不存在".to_string(),
+                Err(error) => runtime.status = format!("删除偏好失败：{error}"),
+            }
+            true
+        }
+        RuntimeCommand::ClearMemory => {
+            match runtime.memory.clear_persona(&runtime.persona.id) {
+                Ok(()) => runtime.status = "已清空当前人格的记忆".to_string(),
+                Err(error) => runtime.status = format!("清空记忆失败：{error}"),
             }
             true
         }
@@ -443,6 +606,15 @@ fn apply_command(
                 EventKind::UserMessage,
                 Some(text.clone()),
             );
+            if runtime.config.memory.enabled && runtime.persona.memory.enabled {
+                if let Some((key, value, confidence)) = extract_preference(&text) {
+                    let _ =
+                        runtime
+                            .memory
+                            .remember_fact(&runtime.persona.id, &key, &value, confidence);
+                    runtime.status = "已从对话记录一条用户偏好".to_string();
+                }
+            }
             runtime
                 .conversation_history
                 .push(crate::session::ConversationTurn {
@@ -521,6 +693,128 @@ fn apply_command(
         }
         RuntimeCommand::Stop => false,
     }
+}
+
+fn apply_persona_patch(persona: &mut Persona, patch: PersonaPatch) {
+    if let Some(value) = patch.description {
+        persona.description = empty_to_none(value);
+    }
+    if let Some(value) = patch.avatar_pet {
+        persona.avatar_pet = empty_to_none(value);
+    }
+    if let Some(value) = patch.name {
+        persona.name = value;
+    }
+    if let Some(value) = patch.tone {
+        persona.traits.tone = value;
+    }
+    if let Some(value) = patch.verbosity {
+        persona.traits.verbosity = value;
+    }
+    if let Some(value) = patch.language {
+        persona.traits.language = value;
+    }
+    if let Some(value) = patch.emoji {
+        persona.traits.emoji = value;
+    }
+    if let Some(value) = patch.greeting {
+        persona.greeting = empty_to_none(value);
+    }
+    if let Some(value) = patch.system_prompt {
+        persona.system_prompt = value;
+    }
+    if let Some(value) = patch.temperature {
+        persona.sampling.temperature = value.clamp(0.0, 2.0);
+    }
+    if let Some(value) = patch.max_tokens {
+        persona.sampling.max_tokens = value.clamp(16, 4000);
+    }
+    if let Some(provider) = patch.model_provider {
+        let provider = provider.trim().to_string();
+        let model = patch.model.and_then(empty_to_none);
+        persona.model = if provider.is_empty() {
+            None
+        } else {
+            Some(ModelRef { provider, model })
+        };
+    } else if let Some(model) = patch.model {
+        if let Some(binding) = &mut persona.model {
+            binding.model = empty_to_none(model);
+        }
+    }
+    if let Some(value) = patch.memory_enabled {
+        persona.memory.enabled = value;
+    }
+    if let Some(value) = patch.memory_window_turns {
+        persona.memory.window_turns = value.clamp(1, 100);
+    }
+    if let Some(value) = patch.memory_long_term {
+        persona.memory.long_term = value;
+    }
+    if let Some(value) = patch.memory_summarize_after_turns {
+        persona.memory.summarize_after_turns = value.clamp(1, 200);
+    }
+    if let Some(value) = patch.tts_enabled {
+        persona.tts.enabled = value;
+    }
+    if let Some(value) = patch.tts_voice {
+        persona.tts.voice = empty_to_none(value);
+    }
+    if let Some(value) = patch.tts_rate {
+        persona.tts.rate = value.clamp(0.25, 4.0);
+    }
+    if let Some(value) = patch.proactive_enabled {
+        persona.proactive.enabled = value;
+    }
+    if let Some(value) = patch.proactive_idle_minutes {
+        persona.proactive.idle_minutes = value.clamp(1, 24 * 60);
+    }
+}
+
+fn empty_to_none(value: String) -> Option<String> {
+    (!value.trim().is_empty()).then_some(value)
+}
+
+fn create_persona(
+    store: &petsona_core::persona::PersonaStore,
+    spec: PersonaCreate,
+) -> anyhow::Result<Persona> {
+    if store.get(&spec.id)?.is_some() {
+        anyhow::bail!("人格 '{}' 已存在", spec.id);
+    }
+    let mut persona = spec
+        .template
+        .as_deref()
+        .and_then(|id| templates().get(id).cloned())
+        .unwrap_or_else(|| Persona::new(&spec.id, &spec.name));
+    persona.id = spec.id;
+    persona.name = spec.name;
+    persona.builtin = false;
+    store.save(&persona)?;
+    Ok(persona)
+}
+
+fn sanitize_deepseek_config(mut config: DeepSeekConfig) -> DeepSeekConfig {
+    if config.base_url.trim().is_empty() {
+        config.base_url = DeepSeekConfig::default().base_url;
+    }
+    if config.model.trim().is_empty() {
+        config.model = DeepSeekConfig::default().model;
+    }
+    if config.api_key_env.trim().is_empty() {
+        config.api_key_env = DeepSeekConfig::default().api_key_env;
+    }
+    config.timeout_seconds = config.timeout_seconds.clamp(5, 120);
+    config.max_tokens = config.max_tokens.clamp(16, 4000);
+    config.temperature = config.temperature.clamp(0.0, 2.0);
+    config
+}
+
+fn sanitize_memory_config(mut config: MemoryConfig) -> MemoryConfig {
+    config.recent_events = config.recent_events.clamp(1, 100);
+    config.retention_days = config.retention_days.clamp(1, 3650);
+    config.fact_limit = config.fact_limit.clamp(1, 50);
+    config
 }
 
 fn tick_runtime(
@@ -616,9 +910,50 @@ fn publish_projection(runtime: &PetsonaRuntime, projection: &Arc<SharedProjectio
             .collect::<Vec<_>>(),
     )
     .unwrap_or_else(|_| "[]".to_string());
+    let personas = serde_json::to_string(
+        &runtime
+            .personas
+            .list()
+            .unwrap_or_default()
+            .iter()
+            .map(|persona| {
+                serde_json::json!({
+                    "id": persona.id,
+                    "name": persona.name,
+                    "description": persona.description,
+                    "builtin": persona.builtin,
+                })
+            })
+            .collect::<Vec<_>>(),
+    )
+    .unwrap_or_else(|_| "[]".to_string());
+    let persona = serde_json::to_string(&runtime.persona).unwrap_or_else(|_| "{}".to_string());
+    let deepseek_config =
+        serde_json::to_string(&runtime.config.deepseek).unwrap_or_else(|_| "{}".to_string());
+    let memory_snapshot = runtime.memory.persona_snapshot(&runtime.persona.id);
+    let memory = serde_json::to_string(&serde_json::json!({
+        "config": runtime.config.memory,
+        "facts": memory_snapshot.facts,
+        "events": memory_snapshot.events,
+        "lastSeenAt": memory_snapshot.last_seen_at,
+        "lastGreetingAt": memory_snapshot.last_greeting_at,
+        "lastTrigger": memory_snapshot.last_trigger,
+    }))
+    .unwrap_or_else(|_| "{}".to_string());
+    let import_conflict = runtime
+        .import_conflict
+        .as_ref()
+        .map(ImportConflict::as_json)
+        .map(|value| value.to_string())
+        .unwrap_or_default();
     let mut texts = RuntimeTexts {
         pets,
         codex_pets,
+        persona,
+        personas,
+        deepseek_config,
+        memory,
+        import_conflict,
         persona_id: runtime.persona.id.clone(),
         persona_name: runtime.persona.name.clone(),
         ..RuntimeTexts::default()
@@ -722,5 +1057,62 @@ mod tests {
         assert!(snapshot.next_frame_ms >= 500);
         engine.stop();
         assert!(engine.send(RuntimeCommand::Tick).is_err());
+    }
+
+    #[test]
+    fn native_settings_commands_round_trip_through_projection() {
+        let home = engine_home();
+        let mut engine = RuntimeEngine::spawn(Some(home.path().to_path_buf()), || {}).unwrap();
+        for _ in 0..50 {
+            if engine.snapshot().ready {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+
+        engine
+            .send(RuntimeCommand::SetScale(1.1))
+            .expect("scale command");
+        engine
+            .send(RuntimeCommand::UpdateDeepSeekConfig(DeepSeekConfig {
+                model: "test-model".to_string(),
+                ..DeepSeekConfig::default()
+            }))
+            .expect("DeepSeek command");
+        engine
+            .send(RuntimeCommand::CreatePersona(PersonaCreate {
+                id: "tester".to_string(),
+                name: "测试人格".to_string(),
+                template: None,
+            }))
+            .expect("persona command");
+        engine
+            .send(RuntimeCommand::RememberFact(MemoryFactInput {
+                key: "喜欢".to_string(),
+                value: "安静音乐".to_string(),
+                confidence: Some(0.9),
+            }))
+            .expect("memory command");
+
+        for _ in 0..100 {
+            let _ = engine.send(RuntimeCommand::Tick);
+            if engine.text(RuntimeTextField::PersonaId) == "tester"
+                && engine
+                    .text(RuntimeTextField::DeepSeekConfig)
+                    .contains("test-model")
+                && engine.text(RuntimeTextField::Memory).contains("安静音乐")
+            {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert_eq!(engine.snapshot().scale, 1.0);
+        assert_eq!(engine.text(RuntimeTextField::PersonaId), "tester");
+        assert!(engine.text(RuntimeTextField::Personas).contains("测试人格"));
+        assert!(engine
+            .text(RuntimeTextField::DeepSeekConfig)
+            .contains("test-model"));
+        assert!(engine.text(RuntimeTextField::Memory).contains("安静音乐"));
+        engine.stop();
     }
 }

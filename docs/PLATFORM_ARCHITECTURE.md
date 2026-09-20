@@ -1,7 +1,7 @@
 # Petsona 平台架构
 
 > 2026-09-19 起，目标架构调整为“共享 Rust 核心 + 原生平台前端”。完整迁移计划见
-> [`NATIVE_REWRITE_PLAN.md`](NATIVE_REWRITE_PLAN.md)，功能对照见
+> [`plans/native-ui-rewrite.md`](plans/native-ui-rewrite.md)，功能对照见
 > [`FEATURE_PARITY.md`](FEATURE_PARITY.md)。本文件中关于 egui 共享 UI 的内容在迁移完成前仅描述旧入口，
 > 不代表最终产品架构。
 

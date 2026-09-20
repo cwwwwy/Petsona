@@ -66,6 +66,11 @@ pub enum PetsonaTextField {
     Status = 9,
     Position = 10,
     CodexPets = 11,
+    Persona = 12,
+    Personas = 13,
+    DeepSeekConfig = 14,
+    Memory = 15,
+    ImportConflict = 16,
 }
 
 #[repr(u32)]
@@ -93,6 +98,19 @@ pub enum PetsonaCommandKind {
     SavePersona = 17,
     SaveDeepSeekKey = 18,
     SendConversation = 19,
+    UpdateDeepSeekConfig = 23,
+    UpdateMemoryConfig = 24,
+    RememberFact = 25,
+    ForgetFact = 26,
+    ClearMemory = 27,
+    RefreshPersonas = 28,
+    CreatePersona = 29,
+    DuplicatePersona = 30,
+    SelectPersona = 31,
+    DeletePersona = 32,
+    ImportPersona = 33,
+    ExportPersona = 34,
+    ClearImportConflict = 35,
 }
 
 #[repr(C)]

@@ -51,6 +51,10 @@ enum KeychainService {
     static let account = "deepseek"
 
     static func saveDeepSeekKey(_ value: String) throws {
+        guard !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            throw NSError(domain: "Petsona", code: 2,
+                          userInfo: [NSLocalizedDescriptionKey: "API Key 不能为空"])
+        }
         let data = Data(value.utf8)
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
@@ -65,6 +69,28 @@ enum KeychainService {
             let addStatus = SecItemAdd(item as CFDictionary, nil)
             guard addStatus == errSecSuccess else { throw keychainError(addStatus) }
         } else if status != errSecSuccess {
+            throw keychainError(status)
+        }
+    }
+
+    static var hasDeepSeekKey: Bool {
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: account,
+            kSecReturnData as String: false,
+        ]
+        return SecItemCopyMatching(query as CFDictionary, nil) == errSecSuccess
+    }
+
+    static func deleteDeepSeekKey() throws {
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: account,
+        ]
+        let status = SecItemDelete(query as CFDictionary)
+        guard status == errSecSuccess || status == errSecItemNotFound else {
             throw keychainError(status)
         }
     }

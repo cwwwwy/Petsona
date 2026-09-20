@@ -4,11 +4,10 @@
 > are now exercised by Rust and Swift tests, but this is not yet a release
 > compatibility promise. The intended
 > lifecycle/threading contract is defined in [the task plan](../docs/plans/native-ui-rewrite.md).
-> Open findings are tracked in [the execution record](../docs/execution/native-ui-rewrite.md),
-> particularly REV-02 (UI-thread IO), REV-05 (panic does not stop the engine),
-> and REV-08 (missing cross-language layout/lifecycle tests).
-> The descriptions below must not be treated as evidence that these requirements
-> have already been implemented or verified.
+> Open findings and the remaining manual checks are tracked in [the execution
+> record](../docs/execution/native-ui-rewrite.md). The ABI now forwards
+> configuration, memory, persona-management and import-confirmation commands
+> to the serialized runtime worker; credentials are not included in snapshots.
 
 `contracts/petsona.h` is the hand-reviewed public C header for the native
 frontends. The Rust implementation lives in `crates/petsona-ffi`; the native
@@ -50,3 +49,13 @@ allocator failure and other undefined behavior remain process-fatal.
 changes. New fields are appended only when both sides can tolerate the old
 size. The native frontends reject an unsupported version before creating an
 engine.
+
+## Current extension values
+
+ABI 3 keeps the existing struct layout. Text fields `12–16` expose the current
+persona, persona list, non-secret DeepSeek configuration, current-persona
+memory projection and a pending pet-import conflict. Command kinds `23–35`
+cover DeepSeek/memory updates, fact operations, persona CRUD/import/export and
+clearing an import conflict. These values are serialized as UTF-8 JSON or
+paths; the worker validates and persists them before publishing the next
+projection.

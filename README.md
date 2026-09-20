@@ -10,6 +10,8 @@ and an optional DeepSeek greeting.
 - 8×9 / 8×11 Codex pet packs, animation state machine, pixel-accurate click-through
 - Click / double-click / drag / native context menu / cursor gaze / speech bubble
 - Explicit import from Codex (`~/.codex/pets`), a folder or a `.zip`
+- macOS settings: DeepSeek configuration, persona CRUD/templates, JSON memory
+  facts/events, drag-and-drop import with overwrite confirmation, fixed scale presets
 - Local state protocol (`127.0.0.1:17872`) so Codex hooks can drive the pet
 - Persona plus lightweight JSON memory (facts, recent events, last seen)
 - Windows: tray, native Win32 menu, login autostart, multi-monitor position
@@ -22,8 +24,8 @@ and an optional DeepSeek greeting.
 |---|---|
 | `crates/petsona-core/` | Pet format, animation engine, persona, memory, DeepSeek, state protocol |
 | `crates/petsona-runtime/` | Platform-independent runtime: config, sessions, locks, logs, greetings |
-| `crates/petsona-ffi/` | Native frontend C ABI under development; not yet validated as stable |
-| `apps/macos/` | SwiftUI + AppKit native macOS frontend (in development) |
+| `crates/petsona-ffi/` | Native frontend C ABI; ABI 3 contract and worker projection |
+| `apps/macos/` | SwiftUI + AppKit native macOS frontend (manual acceptance in progress) |
 | `crates/petsona-app/` | Legacy egui UI retained until native cutover |
 | `crates/petsona-shell-windows/` | Legacy Rust/Win32 shell retained until WinUI cutover |
 | `crates/petsona-shell-macos/` | Legacy Rust/AppKit shell retained until native cutover |
@@ -31,8 +33,9 @@ and an optional DeepSeek greeting.
 The target architecture is shared Rust core/runtime plus native platform
 frontends. The macOS frontend in `apps/macos` calls the Rust engine through
 `contracts/petsona.h`; the current egui shells remain only while the native
-feature set is being migrated. The native frontend is incomplete and has open
-review findings; it is not a release-ready replacement yet.
+feature set is being migrated. The native functional batch is implemented and
+automated gates are green, but window/IME/Keychain and release-signing manual
+acceptance is still required before calling it release-ready.
 See the [execution contract](docs/plans/native-ui-rewrite.md),
 [implementation and review record](docs/execution/native-ui-rewrite.md), and
 [collaboration rules](AGENTS.md).

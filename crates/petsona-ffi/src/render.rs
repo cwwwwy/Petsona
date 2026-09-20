@@ -76,6 +76,23 @@ pub fn text_field(field: u32) -> Option<(PetsonaTextField, RuntimeTextField)> {
         x if x == PetsonaTextField::CodexPets as u32 => {
             (PetsonaTextField::CodexPets, RuntimeTextField::CodexPets)
         }
+        x if x == PetsonaTextField::Persona as u32 => {
+            (PetsonaTextField::Persona, RuntimeTextField::Persona)
+        }
+        x if x == PetsonaTextField::Personas as u32 => {
+            (PetsonaTextField::Personas, RuntimeTextField::Personas)
+        }
+        x if x == PetsonaTextField::DeepSeekConfig as u32 => (
+            PetsonaTextField::DeepSeekConfig,
+            RuntimeTextField::DeepSeekConfig,
+        ),
+        x if x == PetsonaTextField::Memory as u32 => {
+            (PetsonaTextField::Memory, RuntimeTextField::Memory)
+        }
+        x if x == PetsonaTextField::ImportConflict as u32 => (
+            PetsonaTextField::ImportConflict,
+            RuntimeTextField::ImportConflict,
+        ),
         _ => return None,
     };
     Some(field)

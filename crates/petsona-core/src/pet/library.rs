@@ -334,6 +334,38 @@ impl PetLibrary {
         report
     }
 
+    /// Read only the identity fields needed to confirm an import collision.
+    /// Directories and zip packages use the same manifest contract so the UI
+    /// can ask for overwrite confirmation before any local files are touched.
+    pub fn import_identity(path: &Path) -> Result<(String, String)> {
+        if path.is_dir() {
+            let manifest = PetManifest::load(&path.join("pet.json"))?;
+            manifest.validate_id()?;
+            return Ok((manifest.id.clone(), manifest.display_name()));
+        }
+
+        use std::io::Read;
+        let file = std::fs::File::open(path)
+            .map_err(|err| Error::Zip(format!("cannot open {}: {err}", path.display())))?;
+        let mut archive = zip::ZipArchive::new(file)
+            .map_err(|err| Error::Zip(format!("cannot read {}: {err}", path.display())))?;
+        let manifest_file = archive.by_name("pet.json").map_err(|err| {
+            Error::Zip(format!(
+                "{} does not contain pet.json: {err}",
+                path.display()
+            ))
+        })?;
+        let mut text = String::new();
+        manifest_file
+            .take(1024 * 1024)
+            .read_to_string(&mut text)
+            .map_err(|err| Error::Zip(format!("cannot read pet.json: {err}")))?;
+        let manifest: PetManifest = serde_json::from_str(&text)
+            .map_err(|err| Error::manifest(format!("cannot parse pet.json: {err}")))?;
+        manifest.validate_id()?;
+        Ok((manifest.id.clone(), manifest.display_name()))
+    }
+
     /// Import a pet directory into the writable app library.
     pub fn import_dir(&self, src: &Path, overwrite: bool) -> Result<PetEntry> {
         let report = Self::validate_dir(src);
@@ -656,6 +688,20 @@ mod tests {
         assert!(lib.import_dir(&src, true).is_ok());
         lib.remove_local("alpha").unwrap();
         assert!(lib.get("alpha").is_none());
+    }
+
+    #[test]
+    fn import_identity_reads_directory_and_zip_manifests_without_copying() {
+        let tmp = tempfile::tempdir().unwrap();
+        let src = tmp.path().join("source/alpha");
+        write_pet(&src, "alpha", 9, "");
+        let lib = PetLibrary::discover(tmp.path().join("app-pets"));
+        let identity = PetLibrary::import_identity(&src).unwrap();
+        assert_eq!(identity, ("alpha".to_string(), "Test alpha".to_string()));
+        lib.import_dir(&src, false).unwrap();
+        let zip = tmp.path().join("alpha.zip");
+        lib.export_zip("alpha", &zip).unwrap();
+        assert_eq!(PetLibrary::import_identity(&zip).unwrap(), identity);
     }
 
     #[test]

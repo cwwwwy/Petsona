@@ -1,8 +1,11 @@
 use std::path::PathBuf;
 use std::time::Duration;
 
+use petsona_core::config::{DeepSeekConfig, MemoryConfig};
 use petsona_core::pet::PetState;
-use petsona_runtime::commands::{PersonaPatch, RuntimeCommand};
+use petsona_runtime::commands::{
+    MemoryFactInput, PersonaCreate, PersonaDuplicate, PersonaPatch, RuntimeCommand,
+};
 
 use crate::buffers::view_string;
 use crate::types::{PetsonaCommand, PetsonaCommandKind, PetsonaStatus};
@@ -122,6 +125,9 @@ pub fn convert(command: &PetsonaCommand) -> Result<RuntimeCommand, (PetsonaStatu
             path: PathBuf::from(text),
             overwrite: command.value >= 0.5,
         }),
+        x if x == PetsonaCommandKind::ClearImportConflict as u32 => {
+            Ok(RuntimeCommand::ClearImportConflict)
+        }
         x if x == PetsonaCommandKind::ExportPet as u32 => {
             let (id, path) = text.split_once('\n').ok_or_else(|| {
                 (
@@ -143,9 +149,79 @@ pub fn convert(command: &PetsonaCommand) -> Result<RuntimeCommand, (PetsonaStatu
                     format!("persona patch is not valid JSON: {error}"),
                 )
             })?;
-            Ok(RuntimeCommand::UpdatePersona(patch))
+            Ok(RuntimeCommand::UpdatePersona(Box::new(patch)))
         }
         x if x == PetsonaCommandKind::SavePersona as u32 => Ok(RuntimeCommand::SavePersona),
+        x if x == PetsonaCommandKind::RefreshPersonas as u32 => Ok(RuntimeCommand::RefreshPersonas),
+        x if x == PetsonaCommandKind::CreatePersona as u32 => {
+            let spec: PersonaCreate = serde_json::from_str(&text).map_err(|error| {
+                (
+                    PetsonaStatus::InvalidArgument,
+                    format!("persona create payload is not valid JSON: {error}"),
+                )
+            })?;
+            Ok(RuntimeCommand::CreatePersona(spec))
+        }
+        x if x == PetsonaCommandKind::DuplicatePersona as u32 => {
+            let spec: PersonaDuplicate = serde_json::from_str(&text).map_err(|error| {
+                (
+                    PetsonaStatus::InvalidArgument,
+                    format!("persona duplicate payload is not valid JSON: {error}"),
+                )
+            })?;
+            Ok(RuntimeCommand::DuplicatePersona(spec))
+        }
+        x if x == PetsonaCommandKind::SelectPersona as u32 => {
+            Ok(RuntimeCommand::SelectPersona(text))
+        }
+        x if x == PetsonaCommandKind::DeletePersona as u32 => {
+            Ok(RuntimeCommand::DeletePersona(text))
+        }
+        x if x == PetsonaCommandKind::ImportPersona as u32 => Ok(RuntimeCommand::ImportPersona {
+            path: PathBuf::from(text),
+            overwrite: command.value >= 0.5,
+        }),
+        x if x == PetsonaCommandKind::ExportPersona as u32 => {
+            let (id, path) = text.split_once('\n').ok_or_else(|| {
+                (
+                    PetsonaStatus::InvalidArgument,
+                    "persona export must be encoded as id\\npath".to_string(),
+                )
+            })?;
+            Ok(RuntimeCommand::ExportPersona {
+                id: id.to_string(),
+                path: PathBuf::from(path),
+            })
+        }
+        x if x == PetsonaCommandKind::UpdateDeepSeekConfig as u32 => {
+            let config: DeepSeekConfig = serde_json::from_str(&text).map_err(|error| {
+                (
+                    PetsonaStatus::InvalidArgument,
+                    format!("DeepSeek config is not valid JSON: {error}"),
+                )
+            })?;
+            Ok(RuntimeCommand::UpdateDeepSeekConfig(config))
+        }
+        x if x == PetsonaCommandKind::UpdateMemoryConfig as u32 => {
+            let config: MemoryConfig = serde_json::from_str(&text).map_err(|error| {
+                (
+                    PetsonaStatus::InvalidArgument,
+                    format!("memory config is not valid JSON: {error}"),
+                )
+            })?;
+            Ok(RuntimeCommand::UpdateMemoryConfig(config))
+        }
+        x if x == PetsonaCommandKind::RememberFact as u32 => {
+            let input: MemoryFactInput = serde_json::from_str(&text).map_err(|error| {
+                (
+                    PetsonaStatus::InvalidArgument,
+                    format!("memory fact is not valid JSON: {error}"),
+                )
+            })?;
+            Ok(RuntimeCommand::RememberFact(input))
+        }
+        x if x == PetsonaCommandKind::ForgetFact as u32 => Ok(RuntimeCommand::ForgetFact(text)),
+        x if x == PetsonaCommandKind::ClearMemory as u32 => Ok(RuntimeCommand::ClearMemory),
         x if x == PetsonaCommandKind::SaveDeepSeekKey as u32 => {
             Ok(RuntimeCommand::SaveDeepSeekKey(text))
         }

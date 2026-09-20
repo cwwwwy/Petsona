@@ -8,6 +8,7 @@ use petsona_core::persona::{Persona, PersonaStore};
 use petsona_core::pet::{PetEntry, PetLibrary};
 use petsona_core::state_server::{Health, StateEvent, StateServer};
 
+use crate::commands::ImportConflict;
 use crate::pet::PetSession;
 
 /// Shared text bubble state. The platform shell decides how to render it.
@@ -59,6 +60,7 @@ pub struct PetsonaRuntime {
     pub conversation_history: Vec<ConversationTurn>,
     pub conversation_rx: Option<Receiver<Result<String, String>>>,
     pub conversation_inflight: bool,
+    pub import_conflict: Option<ImportConflict>,
 }
 
 impl PetsonaRuntime {
@@ -145,6 +147,7 @@ impl PetsonaRuntime {
             conversation_history: Vec::new(),
             conversation_rx: None,
             conversation_inflight: false,
+            import_conflict: None,
         })
     }
 

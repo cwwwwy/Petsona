@@ -16,6 +16,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var conversationDraft = ""
     private var lastPetsMenuJSON = ""
     private var lastSelectedPetID = ""
+    private var lastScale = -1.0
     private var globalGazeActive = false
     private var lastGlobalCursor: NSPoint?
 
@@ -61,6 +62,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let petsItem = NSMenuItem(title: "选择宠物", action: nil, keyEquivalent: "")
         petsItem.submenu = NSMenu(title: "选择宠物")
         menu.addItem(petsItem)
+        let scaleItem = NSMenuItem(title: "缩放", action: nil, keyEquivalent: "")
+        scaleItem.submenu = makeScaleMenu()
+        menu.addItem(scaleItem)
         menu.addItem(.separator())
         menu.addItem(withTitle: "显示 / 隐藏宠物", action: #selector(togglePet), keyEquivalent: "")
         menu.addItem(withTitle: "立即活动", action: #selector(triggerActivity), keyEquivalent: "")
@@ -93,6 +97,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 self.updateOverlays()
                 self.updateGlobalGaze()
                 self.refreshPetMenu()
+                self.refreshScaleMenu()
                 self.scheduleTick()
             }
         }
@@ -139,6 +144,47 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc private func selectPetFromMenu(_ sender: NSMenuItem) {
         guard let id = sender.representedObject as? String else { return }
         engine.selectPet(id)
+    }
+
+    private func makeScaleMenu() -> NSMenu {
+        let menu = NSMenu(title: "缩放")
+        let values: [(Double, String)] = [
+            (0.5, "小（50%）"),
+            (0.75, "较小（75%）"),
+            (1.0, "中（100%）"),
+            (1.25, "较大（125%）"),
+            (1.5, "大（150%）"),
+            (1.75, "特大（175%）"),
+            (2.0, "超大（200%）"),
+        ]
+        for (value, title) in values {
+            let item = NSMenuItem(title: title,
+                                  action: #selector(setScaleFromMenu),
+                                  keyEquivalent: "")
+            item.target = self
+            item.representedObject = value
+            menu.addItem(item)
+        }
+        return menu
+    }
+
+    @objc private func setScaleFromMenu(_ sender: NSMenuItem) {
+        guard let value = sender.representedObject as? Double else { return }
+        engine.send(kind: PETSONA_COMMAND_SET_SCALE, value: value)
+        refreshScaleMenu()
+    }
+
+    private func refreshScaleMenu() {
+        let value = Double(engine.snapshot.scale)
+        guard abs(value - lastScale) > 0.001,
+              let menu = statusItem.menu,
+              let item = menu.items.first(where: { $0.title == "缩放" }),
+              let submenu = item.submenu else { return }
+        lastScale = value
+        for menuItem in submenu.items {
+            guard let represented = menuItem.representedObject as? Double else { continue }
+            menuItem.state = abs(represented - value) < 0.001 ? .on : .off
+        }
     }
 
     private func refreshPetMenu() {

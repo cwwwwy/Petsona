@@ -4,6 +4,7 @@ import Foundation
 final class EngineClient: ObservableObject {
     @Published private(set) var snapshot = PetsonaSnapshot()
     @Published private(set) var errorMessage = ""
+    @Published private(set) var statusMessage = ""
 
     func reportError(_ message: String) { errorMessage = message }
 
@@ -45,6 +46,8 @@ final class EngineClient: ObservableObject {
         var next = PetsonaSnapshot()
         let snapshotStatus = petsona_engine_snapshot(handle, &next)
         snapshot = next
+        let statusText = text(PETSONA_TEXT_STATUS)
+        if statusMessage != statusText { statusMessage = statusText }
         if snapshotStatus != PETSONA_OK && snapshotStatus != PETSONA_RUNTIME_FAILED {
             errorMessage = Self.lastError()
             return 0
@@ -118,6 +121,10 @@ final class EngineClient: ObservableObject {
              text: url.path)
     }
 
+    func clearImportConflict() {
+        send(kind: PETSONA_COMMAND_CLEAR_IMPORT_CONFLICT)
+    }
+
     func selectPet(_ id: String) {
         send(kind: PETSONA_COMMAND_SELECT_PET, text: id)
     }
@@ -126,22 +133,73 @@ final class EngineClient: ObservableObject {
         send(kind: PETSONA_COMMAND_DELETE_PET, text: id)
     }
 
-    func updatePersona(name: String,
-                       tone: String,
-                       language: String,
-                       greeting: String,
-                       systemPrompt: String) {
-        let patch: [String: String] = [
-            "name": name,
-            "tone": tone,
-            "language": language,
-            "greeting": greeting,
-            "system_prompt": systemPrompt,
-        ]
-        guard let data = try? JSONSerialization.data(withJSONObject: patch),
-              let text = String(data: data, encoding: .utf8) else { return }
-        send(kind: PETSONA_COMMAND_UPDATE_PERSONA, text: text)
+    func updatePersona(fields: [String: Any]) {
+        sendJSONObject(kind: PETSONA_COMMAND_UPDATE_PERSONA, object: fields)
         send(kind: PETSONA_COMMAND_SAVE_PERSONA)
+    }
+
+    func refreshPersonas() {
+        send(kind: PETSONA_COMMAND_REFRESH_PERSONAS)
+    }
+
+    func createPersona(id: String, name: String, template: String?) {
+        var object: [String: Any] = ["id": id, "name": name]
+        if let template { object["template"] = template }
+        sendJSONObject(kind: PETSONA_COMMAND_CREATE_PERSONA, object: object)
+    }
+
+    func duplicatePersona(sourceID: String, id: String, name: String) {
+        sendJSONObject(kind: PETSONA_COMMAND_DUPLICATE_PERSONA,
+                       object: ["source_id": sourceID, "id": id, "name": name])
+    }
+
+    func selectPersona(_ id: String) {
+        send(kind: PETSONA_COMMAND_SELECT_PERSONA, text: id)
+    }
+
+    func deletePersona(_ id: String) {
+        send(kind: PETSONA_COMMAND_DELETE_PERSONA, text: id)
+    }
+
+    func importPersona(_ url: URL, overwrite: Bool = false) {
+        send(kind: PETSONA_COMMAND_IMPORT_PERSONA,
+             value: overwrite ? 1 : 0,
+             text: url.path)
+    }
+
+    func exportPersona(_ id: String, to url: URL) {
+        send(kind: PETSONA_COMMAND_EXPORT_PERSONA, text: id + "\n" + url.path)
+    }
+
+    func updateDeepSeekConfig(_ object: [String: Any]) {
+        sendJSONObject(kind: PETSONA_COMMAND_UPDATE_DEEPSEEK_CONFIG, object: object)
+    }
+
+    func updateMemoryConfig(_ object: [String: Any]) {
+        sendJSONObject(kind: PETSONA_COMMAND_UPDATE_MEMORY_CONFIG, object: object)
+    }
+
+    func rememberFact(key: String, value: String, confidence: Double = 0.8) {
+        sendJSONObject(kind: PETSONA_COMMAND_REMEMBER_FACT,
+                       object: ["key": key, "value": value, "confidence": confidence])
+    }
+
+    func forgetFact(_ id: String) {
+        send(kind: PETSONA_COMMAND_FORGET_FACT, text: id)
+    }
+
+    func clearMemory() {
+        send(kind: PETSONA_COMMAND_CLEAR_MEMORY)
+    }
+
+    private func sendJSONObject(kind: PetsonaCommandKind, object: [String: Any]) {
+        guard JSONSerialization.isValidJSONObject(object),
+              let data = try? JSONSerialization.data(withJSONObject: object),
+              let text = String(data: data, encoding: .utf8) else {
+            errorMessage = "设置内容无法编码为 JSON"
+            return
+        }
+        send(kind: kind, text: text)
     }
 
     private static func lastError() -> String {

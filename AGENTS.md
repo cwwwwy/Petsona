@@ -80,12 +80,12 @@ MSVC 缺 `link.exe` 的 GNU 回退写在 `docs/WINDOWS_VERIFICATION.md`。
 - **完成**：所有本次范围内必需项通过、有证据、无未解决审查项才可宣布完成。必需测试受阻/跳过、人工检查未做时写“未完成/待验收”，不自行降低标准。
 - 新测试必须隔离数据目录、网络端口、自启项和凭据；应用宿主测试也必须在入口初始化前隔离。不得让测试启动默认用户实例。
 
-## 当前状态（2026-09-19）
+## 当前状态（2026-09-20）
 
 - 用户确认最终方向是共享 Rust 核心 + 原生前端：macOS SwiftUI/AppKit，Windows C#/WinUI 3/Win32；当前授权先实施 macOS 和必要共享层，Windows 后续，Linux 不在范围。
 - Git HEAD 为 `ad045bb`；原生重构位于未提交工作区。计划与执行记录见上，文档版本不能替代 Git/工作区基线。
 - 当前 macOS 原生入口已从骨架推进到可构建/可测试/可协议 smoke 的实施状态，但**仍未完成完整原生验收**；剩余功能和人工项以执行记录 REV-02/04/05/07/08 及 M-01～M-06 为准。旧入口暂留作行为对照；Windows 旧验证结论不代表新原生实现已通过。
-- 2026-09-19 执行：runtime worker + ABI3 FFI、原生 SwiftUI/AppKit 宠物窗/气泡/Composer/设置/宠物库命令、静态 `.a` 链接、原生 XCTest 和 native smoke 已接入；统一 `verify-macos-all.sh` 已通过，但不等于窗口视觉、IME、多屏、签名、公证人工通过。
+- 2026-09-20 执行：在已有 runtime worker + ABI3 FFI、原生 SwiftUI/AppKit 宠物窗/气泡/Composer/设置/宠物库命令基础上，完成 DeepSeek 全配置、记忆管理、人格 CRUD/模板/导入导出、明确偏好提取、重复导入确认、拖放导入和固定缩放档位/状态栏菜单；Rust workspace、原生 XCTest 5/5、native smoke 6/6、Release 静态链接与 arm64 打包门禁通过，但不等于窗口视觉、IME、Keychain/LaunchAgent 真实行为、多屏、签名、公证人工通过。
 
 ### 旧入口历史记录（非当前原生验收结论）
 
@@ -112,8 +112,7 @@ MSVC 缺 `link.exe` 的 GNU 回退写在 `docs/WINDOWS_VERIFICATION.md`。
   B7–B9/B11–B14、C3/C6/C7；受限会话无法写 HKCU 时 T4 明确 `[SKIP]`。
 - Windows 实机：A1–A7、A10–A12、B1–B6、B9、B12–B14、C1 已通过（B7 自动化 + 真实 SendInput 通过）；
   B5/B8/B10/B15/C4/C5 与 H1–H5 仍需实机确认，细节以 `docs/WINDOWS_VERIFICATION.md` 为准。
-- macOS 实机：A3、B1–B4、B6–B7 曾通过；B5 注视视觉、B8 缩放观感、B9 输入框动画 / caret gaze、
-  B11 Activity Monitor、A12 下一次登录启动仍待确认；多屏 / Retina 按用户决定暂缓，签名 / 公证待凭据。
+- macOS 实机：此前 A3、B1–B4、B6–B7 曾通过；本批次新增 A4/A6/A11、B8/B9 的完整设置和交互代码，仍需用户人工复验 DeepSeek/人格/记忆、拖放冲突确认、固定缩放菜单和 Keychain；B5 注视视觉、B11 Activity Monitor、A12 下一次登录启动仍待确认；多屏 / Retina 按用户决定暂缓，签名 / 公证待凭据。
 
 ### 旧入口阶段 7 剩余（历史待办）
 
@@ -134,7 +133,7 @@ MSVC 缺 `link.exe` 的 GNU 回退写在 `docs/WINDOWS_VERIFICATION.md`。
 - `contracts/petsona.h` 是跨语言边界；不跨边界传递 Rust 引用、容器或分配器所有权。
 - `PhysicalRect` 是跨混合 DPI 的唯一几何单位（物理像素）；逻辑点只在平台前端边界换算。
 - Windows 目标使用 WinUI 3 + Win32，macOS 使用 SwiftUI + AppKit；平台差异通过各自原生服务实现。
-- 接口清单与迁移历史见 `docs/PLATFORM_ARCHITECTURE.md` 和 `docs/NATIVE_REWRITE_PLAN.md`。
+- 接口清单与迁移历史见 `docs/PLATFORM_ARCHITECTURE.md` 和 `docs/plans/native-ui-rewrite.md`。
 
 ## GitHub 元数据
 

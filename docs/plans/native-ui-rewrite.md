@@ -3,7 +3,7 @@
 ## 1. 身份、授权与基线
 
 - 任务 ID：`native-ui-rewrite`；计划版本：`1.0`；整理日期：2026-09-19。
-- 本文整理先前对话中的完整计划和用户确认，取代 `docs/NATIVE_REWRITE_PLAN.md` 的概要。本文描述要求，不记录完成状态。
+- 本文整理先前对话中的完整计划和用户确认，取代旧的概要计划文档。本文描述要求，不记录完成状态。
 - 用户确认：采用共享 Rust 核心 + 平台原生 UI，不要求 Rust-only；直接面向最终架构，不发布中间混合产品。
 - 用户随后授权：先把计划写成文档，先实施 macOS 环境下的开发。当前范围为 macOS 及必要共享层；不是仅交付骨架。Windows 后续，Linux 不在范围。
 - 本轮用户授权仅整理协作文档；不能据此自动恢复产品代码实施。另一个执行对话引用本文并获得执行请求后按本文继续。
@@ -132,7 +132,7 @@
 | `scripts/package-macos.sh` | 构建同架构 Rust .a + Xcode app；使用最终版本/图标；复制可独立运行的新 app；检查所有 Mach-O 依赖 | 03/15 |
 | `scripts/sign-macos.sh`、`notarize-macos.sh` | 适配最终 bundle、内到外签名、公证/staple；凭据缺失如实记录 | 15 |
 | `scripts/install-macos-launch-agent.sh`、`packaging/macos/com.petsona.desktop.plist` | 保留 LaunchAgent 标识，更新最终可执行路径，不切换登录项机制 | 12 |
-| `packaging/macos/Info.plist` | 与 Xcode plist 统一来源，保留 bundle 身份和旧配置兼容 | 15 |
+| `packaging/macos/Info.plist` | 已清理：native Xcode plist `apps/macos/Petsona/Info.plist` 是唯一 bundle 信息源 | 15 |
 | `.github/workflows/ci.yml` | main push、Rust 两端检查和 macOS 原生 build/tests/ABI gates；Windows 旧入口暂保留 | 15/16 |
 | `.github/workflows/release-macos.yml` | 新产物/门禁；手动产 artifact，正式 tag 发布；真实签名与未签名包区分 | 15 |
 | `AGENTS.md`、`README.md`、`docs/PLATFORM_ARCHITECTURE.md`、`docs/MACOS_VERIFICATION.md` | 更新长期决策/入口/环境要求，目标与现状分开，引用执行记录 | 17 |

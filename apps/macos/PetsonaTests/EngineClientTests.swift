@@ -40,6 +40,45 @@ final class EngineClientTests: XCTestCase {
         XCTAssertEqual(client.text(PETSONA_TEXT_BUBBLE), "")
     }
 
+    func testSettingsMemoryAndPersonaCommandsRoundTrip() {
+        let client = EngineClient(home: makeIsolatedHome())
+        waitUntilReady(client)
+
+        client.updateDeepSeekConfig([
+            "baseUrl": "https://example.invalid/v1",
+            "model": "test-model",
+            "apiKeyEnv": "TEST_DEEPSEEK_KEY",
+            "timeoutSeconds": 9,
+            "maxTokens": 64,
+            "temperature": 0.4,
+            "thinkingDisabled": true,
+        ])
+        client.updateMemoryConfig([
+            "enabled": true,
+            "recentEvents": 7,
+            "retentionDays": 30,
+            "factLimit": 12,
+        ])
+        client.createPersona(id: "native-test", name: "原生测试", template: nil)
+
+        for _ in 0..<40 {
+            _ = client.tick()
+            if client.text(PETSONA_TEXT_PERSONA_ID) == "native-test" { break }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.01))
+        }
+        client.rememberFact(key: "喜欢", value: "安静音乐")
+        for _ in 0..<40 {
+            _ = client.tick()
+            if client.text(PETSONA_TEXT_MEMORY).contains("安静音乐") { break }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.01))
+        }
+
+        XCTAssertEqual(client.text(PETSONA_TEXT_PERSONA_ID), "native-test")
+        XCTAssertTrue(client.text(PETSONA_TEXT_PERSONAS).contains("原生测试"))
+        XCTAssertTrue(client.text(PETSONA_TEXT_DEEPSEEK_CONFIG).contains("test-model"))
+        XCTAssertTrue(client.text(PETSONA_TEXT_MEMORY).contains("安静音乐"))
+    }
+
     private func waitUntilReady(_ client: EngineClient) {
         for _ in 0..<100 {
             _ = client.tick()

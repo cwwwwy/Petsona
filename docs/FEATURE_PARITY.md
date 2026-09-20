@@ -7,18 +7,18 @@
 | 功能 | REQ | macOS 当前实现 | 自动/人工验证 | 缺口 / 审查项 |
 |---|---|---|---|---|
 | V1/V2资源与动画帧 | 03/05/07 | Rust worker 负责加载/校验，原生按快照绘制 V2 atlas | E-15/E-18 自动通过；真实视觉待人工 | Swift 仍按 atlas path 读图，需迁移为字节/缓存服务；REV-02 部分 |
-| 宠物库与空库首启 | 05/06 | worker 支持本地导入/覆盖/切换/删除/导出命令；空库原生自动打开设置 | E-15/E-18；导出/删除 UI 与 M-01 待人工 | 原生设置尚未提供导出/删除确认完整界面；REV-07 部分 |
+| 宠物库与空库首启 | 05/06 | worker 支持本地导入/覆盖/切换/删除/导出；原生设置支持 Codex 预览、文件夹/zip 拖放、重复 ID 覆盖确认、导出/删除 | Rust library tests、E-15/E-18；本批次自动导入冲突覆盖待人工 | 多屏等延期项不在本批次；M-01 仍需人工 |
 | 注视、caret、跨行过渡 | 07/10 | FFI/worker 支持 caret dx/dy 与清除注视；原生 NSTextView 已接 caret 回调 | Rust 状态测试、E-18；中文 IME/视觉待人工 | 全局鼠标注视与 native UI 视觉待 M-02/M-04 |
 | 状态协议与TTL | 07/12 | 新原生 app 通过 worker 执行 TTL，并刷新 `/health` | E-17/E-18 waiting→idle | 协议全字段与人工协议兼容待补 |
 | 透明窗口与焦点 | 08 | 原生非激活 NSPanel；Composer 独立可激活 | E-15 编译；焦点/穿透待 M-02/M-04 | 多屏/Spaces 和实际前台规则待验 |
 | 像素级穿透 | 08 | `PetView.hitTest` 当前帧 alpha + idle 行并集；整窗不再忽略鼠标 | Rust旧规则 + 原生编译；人工待验 | Retina alpha 坐标和桌面实际穿透待 M-02 |
-| 单双击与拖动 | 08/09 | 原生区分单击延迟、双击打开 Composer、拖动运行姿势并保存位置 | E-15 编译；人工待 M-02/M-03 | 原生事件肉眼验收尚未完成 |
-| 缩放、位置、多屏、重力 | 09 | 原生按快照调整 sprite 窗口大小；物理像素位置命令已接；重力/多屏仍待 | E-18 构建/smoke；人工待 M-03 | MonitorService、工作区夹取、重力调度尚未迁移 |
+| 单双击与拖动 | 08/09 | 原生区分单击/双击跳跃/拖动运行姿势并保存位置；输入入口为编辑按钮或气泡 | E-15 编译；人工待 M-02/M-03 | 原生事件肉眼验收尚未完成 |
+| 缩放、位置、多屏、重力 | 09 | 原生固定缩放档位 0.5–2.0，设置与状态栏菜单共用；物理像素位置命令已接；重力/多屏延期 | runtime scale normalization、E-18；档位与保存待人工 | 连续缩放已移除；多屏/重力属于延期范围 |
 | 自动活动/立即活动 | 09 | 原生菜单仍为基础立即 running；配置命令已接 worker | 自动尚未覆盖；人工未做 | auto-walk scheduler 与原生菜单完整接入待补 |
-| 气泡/影子/编辑按钮 | 10 | 原生 BubblePanel + hover 回复按钮；Composer 从宠物下方出现 | E-15 编译；视觉待 M-04 | 影子/按钮形态动画尚未完全对齐旧入口 |
+| 气泡/影子/编辑按钮 | 10 | 原生 BubblePanel 点击打开 Composer；宠物下方编辑按钮打开 Composer；气泡不再内置回复按钮 | E-15 编译；视觉待 M-04 | 影子到编辑动画属于延期范围 |
 | 对话输入/IME/草稿 | 10/11 | 原生 NSTextView、Enter/Shift+Enter、Esc、草稿保留、后台 DeepSeek/fallback | E-15 XCTest worker 命令；IME/网络人工待 M-04 | caret 方向已接，候选确认和撤销需人工 |
-| 设置、人格、记忆、DeepSeek | 11 | 原生设置支持行为、人格 patch/save；worker 读记忆并后台生成回复 | E-18 health/命令基础；完整设置人工待 M-01/M-04 | 记忆事实编辑、DeepSeek key UI 尚未完整 |
-| 托盘与菜单 | 12 | 原生 NSStatusItem 基础菜单、设置/显示隐藏/立即活动/退出 | E-18 通过协议 app；菜单外观待人工 | 当前菜单未列全部宠物/当前勾选；待补 |
+| 设置、人格、记忆、DeepSeek | 11 | 原生设置支持 DeepSeek 全配置/Keychain、人格 CRUD/模板/导入导出、记忆配置/事实/事件清理；对话显式偏好自动入记忆并参与提示 | runtime projection/command tests、原生 EngineClient 往返测试；M-01/M-04 待人工 | 网络真实回复、IME 和长时间资源验收仍待；自动偏好只接受明确第一人称表达 |
+| 托盘与菜单 | 12 | 原生 NSStatusItem 菜单含设置、宠物选择、固定缩放档位、显示隐藏、立即活动和退出；当前宠物有状态标识 | E-18；菜单交互待人工 | 宠物图标托盘化属于延期范围 |
 | Keychain/LaunchAgent | 04/12 | Rust worker 已有 Keychain API/保存命令；旧 LaunchAgent 模板保留 | E-18 模板检查；原生设置接入待人工 | 原生 LaunchAgent 开关和 Keychain UI 待补 |
 | 单实例/日志/退出 | 12/13 | worker 持有 InstanceLock，日志在 worker，FFI destroy join | E-14/E-17/E-18 | fault 注入、资源增长、5分钟 CPU 待 M-05/M-06 |
 | FFI/线程/故障 | 01/02 | ABI 3 薄转换 + worker、ready/faulted、panic terminal 状态 | E-13/E-14/E-15 layout/lifecycle | panic 注入与跨语言 fault UI 待补 |

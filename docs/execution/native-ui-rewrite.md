@@ -154,6 +154,19 @@ E-07 的 xcresult 摘要在上一只读审查中因 TestReport 临时写入权�
 - 本结论关闭本轮针对性人工反馈；不等同于 M-01～M-06、签名/公证、多屏/Retina/Spaces 和完整发布验收全部完成。
 - 本轮 Git 操作：无。工作区改动保留给用户手动审查、暂存、提交和推送。
 
+### 8.8 清理记录（2026-09-20）
+
+- 删除 `docs/NATIVE_REWRITE_PLAN.md`：其内容明确声明已被计划 v1.0 取代，且旧结论会误导当前状态。
+- 删除 `packaging/macos/Info.plist`：没有工程或脚本引用；native bundle 唯一 plist 为 `apps/macos/Petsona/Info.plist`。
+- 修正 `AGENTS.md`、`docs/MACOS_VERIFICATION.md`、`docs/PLATFORM_ARCHITECTURE.md` 中的旧计划引用。
+- 删除根目录和 `dist/` 下生成的 `.DS_Store`；保留旧 Windows/egui 对照入口、签名/公证/LaunchAgent 脚本、模板、执行记录和当前 native 工程。
+
+### 8.9 短期执行范围确认（2026-09-20）
+
+- 用户确认本批次继续实施剩余功能 4–10：DeepSeek 完整设置、记忆管理、人格管理/偏好记忆、宠物重复导入覆盖确认、拖放导入、快捷菜单缩放档位。
+- 用户明确暂缓功能 1/2/3/11/12/13/14：自动活动提醒、重力、native 状态协议设置界面、宠物图标托盘化、影子到编辑按钮动画、透明度设置、多屏/Retina/Spaces/工作区适配。
+- 该范围过滤只影响短期执行顺序，不把正式计划中的后续 REQ 标记为完成；暂缓项保留在计划和功能表中。
+
 ### 8.4 后续证据（2026-09-19）
 
 | 证据ID | REQ/REV | cwd/目标 | 完整命令 | 退出码/测试数 | 结果与限制 |
@@ -176,3 +189,28 @@ E-07 的 xcresult 摘要在上一只读审查中因 TestReport 临时写入权�
 - REV-07：**部分关闭**。原生入口已接空库自动设置、导入/切换、缩放、行为、人格、气泡/对话、单双击/拖动和协议；导出/删除/完整菜单/LaunchAgent/Keychain UI 仍待。
 - REV-08：**部分关闭**。统一脚本现在实际构建/测试/启动/打包 native app，E-18 通过；原生 UI/XCTest 覆盖仍少于完整 M-01～M-06，签名/公证未做。
 - REV-09：**关闭**。XCTest 入口不创建默认 `EngineClient` 宿主；每个测试先写临时 home 并关闭状态服务，E-15 3/3 通过。
+
+### 8.10 短期功能批次实现与验证（2026-09-20）
+
+本批次按用户确认的 4–10 执行，未恢复已暂缓的 1/2/3/11/12/13/14。
+
+- 4 DeepSeek 完整设置：runtime 投影非敏感配置，支持 Base URL、模型、环境变量名、超时、最大 token、温度和思考模式；macOS 设置页保存配置，Keychain 支持保存、存在性显示和清除。密钥不进入 runtime snapshot。
+- 5 记忆管理：新增当前人格的记忆配置、事实列表、近期事件展示、手工添加/删除事实和清空入口；projection 包含配置但不含凭据。
+- 6 人格管理：新增人格列表、切换、新建模板、复制、删除、JSON 导入导出和全字段编辑；删除默认人格仍由 core 拒绝。
+- 7 偏好提取：对话输入记录事件，并仅从明确的第一人称表达（如“我喜欢… / 我不喜欢… / 请叫我…”及对应英文表达）生成事实；事实进入后续 DeepSeek prompt 上下文，不做不确定推断。
+- 8 重复导入确认：runtime 在复制本地文件前读取目录或 zip 的 `pet.json` 身份；同 ID 时发布待确认路径，macOS 设置页明确“覆盖导入/取消”，确认后才替换本地包。
+- 9 拖放导入：设置页接受宠物目录或 zip 的 file URL drop，并复用同一导入/冲突确认流程。
+- 10 固定缩放档位：移除连续 slider，统一使用 0.5/0.75/1.0/1.25/1.5/1.75/2.0；runtime 归一化任意调用值，设置页和状态栏快捷菜单共用同一档位语义。
+
+共享/原生接线文件：`crates/petsona-core/src/memory.rs`、`crates/petsona-core/src/pet/library.rs`、`crates/petsona-runtime/src/{commands,engine,session,snapshot}.rs`、`crates/petsona-ffi/src/{commands,render,types}.rs`、`contracts/petsona.h`、`apps/macos/Petsona/Sources/{EngineClient,SettingsView,AppDelegate,SystemServices}.swift`、`apps/macos/PetsonaTests/EngineClientTests.swift`。功能表、ABI 说明和 macOS 验收清单同步更新。
+
+| 证据ID | REQ/批次 | cwd/目标 | 完整命令 | 退出码/测试数 | 结果与限制 |
+|---|---|---|---|---|---|
+| E-20a | 4–10 / SHARED，macOS arm64 | `/Users/book/Desktop/Petsona` | `cargo fmt --all -- --check && cargo clippy --workspace --all-targets --locked -- -D warnings` | exit 0 | workspace clippy 无诊断 |
+| E-20b | 4–10 / SHARED，macOS arm64 | `/Users/book/Desktop/Petsona` | `cargo test --workspace --locked` | exit 0；app25/core56/ffi3/runtime4/mac-shell7 | 状态协议测试在允许回环端口的执行权限下通过；新增偏好、导入身份、runtime 设置投影测试通过 |
+| E-20c | 4–10 / ABI，macOS arm64 | `/Users/book/Desktop/Petsona` | `clang -fsyntax-only -x c contracts/petsona.h`；`cargo test -p petsona-ffi -p petsona-runtime --offline` | exit 0；FFI3/runtime4 | 新文本字段与命令枚举保持 ABI 3 结构布局；不含密钥 |
+| E-20d | 4–10 / macOS Debug | `/Users/book/Desktop/Petsona` | `xcodebuild -quiet -project apps/macos/Petsona.xcodeproj -scheme Petsona -configuration Debug -destination 'platform=macOS,arch=arm64' -derivedDataPath .scratch/native-settings-tests -only-testing:PetsonaTests/EngineClientTests -only-testing:PetsonaTests/AbiTests -only-testing:PetsonaTests/SystemServiceTests CODE_SIGNING_ALLOWED=NO test` | exit 0；5/5 | xcresult：`.scratch/native-settings-tests/Logs/Test/Test-Petsona-2026.09.20_01-54-25-+0800.xcresult`；MacBook Air arm64 / macOS 27 |
+| E-20e | 4–10 / REQ-03/14/15，MacBook Air arm64 / macOS 27 | `/Users/book/Desktop/Petsona` | `bash scripts/verify-macos-all.sh` | exit 0；XCTest5/5、native smoke6/6 | 原生 Release、workspace Rust、协议/TTL、安全退出、静态依赖、arm64 bundle/zip、Info.plist 和 LaunchAgent 模板均通过；真实窗口/Keychain/拖放/菜单仍需人工 |
+| E-20f | 4–10 / 交付包，MacBook Air arm64 / macOS 27 | `/Users/book/Desktop/Petsona` | `bash scripts/package-macos.sh`；`PETSONA_NATIVE_APP=dist/Petsona.app PETSONA_SMOKE_STATE_PORT=17972 PETSONA_SMOKE_HOOK_PORT=17973 bash scripts/macos-smoke.sh` | exit 0；dist smoke6/6 | 刷新 `/Users/book/Desktop/Petsona/dist/Petsona.app` 与 `dist/Petsona-macos-arm64.zip`；未签名，未内置 `pet.json`，最终包可启动并安全退出 |
+
+本批次未执行 Git add/commit/push；工作区既有改动及本批次改动均保留给用户审查。人工验收按 `docs/MACOS_VERIFICATION.md` 的 A4/A6/A11、B8/B9 及 M-01/M-04 进行；多屏/Retina/Spaces、重力、自动活动、透明度、签名/公证和宠物图标托盘化保持暂缓或待凭据。

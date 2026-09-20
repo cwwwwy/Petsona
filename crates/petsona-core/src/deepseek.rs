@@ -104,7 +104,7 @@ impl DeepSeekClient {
                 { "role": "user", "content": user }
             ],
             "stream": false,
-            "max_tokens": self.config.max_tokens.clamp(16, 400),
+            "max_tokens": self.config.max_tokens.clamp(16, 4000),
             "temperature": self.config.temperature.clamp(0.0, 2.0),
         });
         if self.config.thinking_disabled {
