@@ -163,6 +163,39 @@ private struct ImportConflictProjection: Decodable {
     let path: String
 }
 
+private enum SettingsSection: String, CaseIterable, Identifiable {
+    case library
+    case behavior
+    case deepSeek
+    case persona
+    case memory
+    case startup
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .library: return "宠物库"
+        case .behavior: return "外观与交互"
+        case .deepSeek: return "DeepSeek"
+        case .persona: return "人格"
+        case .memory: return "记忆"
+        case .startup: return "启动"
+        }
+    }
+
+    var systemImage: String {
+        switch self {
+        case .library: return "pawprint.fill"
+        case .behavior: return "slider.horizontal.3"
+        case .deepSeek: return "sparkles"
+        case .persona: return "person.crop.circle"
+        case .memory: return "clock.arrow.circlepath"
+        case .startup: return "power"
+        }
+    }
+}
+
 struct SettingsView: View {
     @ObservedObject var engine: EngineClient
 
@@ -223,6 +256,7 @@ struct SettingsView: View {
     @State private var factKey = ""
     @State private var factValue = ""
     @State private var autostart = false
+    @State private var selectedSection: SettingsSection = .library
 
     private var pets: [PetChoice] { decode(PETSONA_TEXT_PETS, as: [PetChoice].self) ?? [] }
     private var codexPets: [CodexPetChoice] { decode(PETSONA_TEXT_CODEX_PETS, as: [CodexPetChoice].self) ?? [] }
@@ -241,28 +275,60 @@ struct SettingsView: View {
     }
 
     var body: some View {
-        Form {
-            petLibrarySection
-            personaSection
-            deepSeekSection
-            memorySection
-            behaviorSection
-            startupSection
+        NavigationSplitView {
+            List(SettingsSection.allCases, selection: $selectedSection) { section in
+                Label(section.title, systemImage: section.systemImage)
+                    .tag(section)
+            }
+            .listStyle(.sidebar)
+            .navigationTitle("Petsona 设置")
+            .navigationSplitViewColumnWidth(min: 180, ideal: 210, max: 260)
+        } detail: {
+            settingsDetail
+        }
+        .frame(minWidth: 920, minHeight: 680)
+        .onAppear { reloadForm() }
+    }
 
+    @ViewBuilder
+    private var settingsDetail: some View {
+        switch selectedSection {
+        case .library:
+            settingsForm(title: "宠物库") { petLibrarySection }
+        case .behavior:
+            settingsForm(title: "外观与交互") { behaviorSection }
+        case .deepSeek:
+            settingsForm(title: "DeepSeek") { deepSeekSection }
+        case .persona:
+            settingsForm(title: "人格") { personaSection }
+        case .memory:
+            settingsForm(title: "记忆") { memorySection }
+        case .startup:
+            settingsForm(title: "启动") { startupSection }
+        }
+    }
+
+    @ViewBuilder
+    private func settingsForm<Content: View>(title: String,
+                                               @ViewBuilder content: () -> Content) -> some View {
+        Form {
+            content()
             if !engine.errorMessage.isEmpty {
                 Section("错误") {
                     Text(engine.errorMessage).foregroundStyle(.red)
                 }
             }
             if !engine.statusMessage.isEmpty {
-                Text(engine.statusMessage)
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
+                Section {
+                    Text(engine.statusMessage)
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                }
             }
         }
-        .padding()
-        .frame(minWidth: 620, minHeight: 760)
-        .onAppear { reloadForm() }
+        .formStyle(.grouped)
+        .navigationTitle(title)
+        .padding(.vertical, 8)
     }
 
     private var petLibrarySection: some View {

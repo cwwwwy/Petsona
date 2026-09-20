@@ -2,6 +2,12 @@ import AppKit
 import SwiftUI
 
 @MainActor
+private final class SettingsWindow: NSWindow {
+    override var canBecomeKey: Bool { true }
+    override var canBecomeMain: Bool { true }
+}
+
+@MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     let engine = EngineClient()
 
@@ -28,6 +34,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         petWindow = PetWindowController(engine: engine)
         petWindow.onDoubleClick = { [weak self] in
             self?.engine.send(kind: PETSONA_COMMAND_SET_STATE, text: "jumping")
+        }
+        petWindow.onRightClick = { [weak self] event, view in
+            self?.showPetContextMenu(with: event, in: view)
         }
         bubblePanel = BubblePanel()
         bubblePanel.onReply = { [weak self] in self?.openComposer() }
@@ -107,18 +116,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if settingsWindow == nil {
             let root = SettingsView(engine: engine)
             let hosting = NSHostingView(rootView: root)
-            let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 520, height: 560),
-                                  styleMask: [.titled, .closable, .resizable],
-                                  backing: .buffered,
-                                  defer: false)
+            let window = SettingsWindow(contentRect: NSRect(x: 0, y: 0, width: 960, height: 700),
+                                        styleMask: [.titled, .closable, .resizable],
+                                        backing: .buffered,
+                                        defer: false)
             window.title = "Petsona 设置"
             window.contentView = hosting
+            window.minSize = NSSize(width: 820, height: 600)
+            window.collectionBehavior = [.moveToActiveSpace]
             window.center()
             window.isReleasedWhenClosed = false
             settingsWindow = window
         }
-        settingsWindow?.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
+        settingsWindow?.makeKeyAndOrderFront(nil)
+        settingsWindow?.orderFrontRegardless()
+        settingsWindow?.makeKey()
+        settingsWindow?.makeMain()
     }
 
     @objc private func togglePet() {
@@ -144,6 +158,67 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc private func selectPetFromMenu(_ sender: NSMenuItem) {
         guard let id = sender.representedObject as? String else { return }
         engine.selectPet(id)
+    }
+
+    private func showPetContextMenu(with event: NSEvent, in view: NSView) {
+        let menu = NSMenu(title: "Petsona")
+        let settings = NSMenuItem(title: "设置…", action: #selector(openSettings), keyEquivalent: ",")
+        settings.target = self
+        menu.addItem(settings)
+
+        let pets = NSMenuItem(title: "选择宠物", action: nil, keyEquivalent: "")
+        pets.submenu = makePetSelectionMenu()
+        menu.addItem(pets)
+
+        let scale = NSMenuItem(title: "缩放", action: nil, keyEquivalent: "")
+        scale.submenu = makeScaleMenu()
+        menu.addItem(scale)
+        menu.addItem(.separator())
+
+        let visibility = NSMenuItem(title: "显示 / 隐藏宠物",
+                                    action: #selector(togglePet),
+                                    keyEquivalent: "")
+        visibility.target = self
+        menu.addItem(visibility)
+
+        let activity = NSMenuItem(title: "立即活动",
+                                  action: #selector(triggerActivity),
+                                  keyEquivalent: "")
+        activity.target = self
+        menu.addItem(activity)
+        menu.addItem(.separator())
+
+        let quit = NSMenuItem(title: "退出 Petsona", action: #selector(quit), keyEquivalent: "q")
+        quit.target = self
+        menu.addItem(quit)
+
+        NSMenu.popUpContextMenu(menu, with: event, for: view)
+    }
+
+    private func makePetSelectionMenu() -> NSMenu {
+        let submenu = NSMenu(title: "选择宠物")
+        let selectedID = engine.text(PETSONA_TEXT_PET_ID)
+        guard let data = engine.text(PETSONA_TEXT_PETS).data(using: .utf8),
+              let values = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] else {
+            return submenu
+        }
+        for value in values {
+            guard let id = value["id"] as? String,
+                  let name = value["name"] as? String else { continue }
+            let item = NSMenuItem(title: name,
+                                  action: #selector(selectPetFromMenu),
+                                  keyEquivalent: "")
+            item.target = self
+            item.representedObject = id
+            item.state = id == selectedID ? .on : .off
+            submenu.addItem(item)
+        }
+        if submenu.items.isEmpty {
+            let empty = NSMenuItem(title: "本地库为空", action: nil, keyEquivalent: "")
+            empty.isEnabled = false
+            submenu.addItem(empty)
+        }
+        return submenu
     }
 
     private func makeScaleMenu() -> NSMenu {

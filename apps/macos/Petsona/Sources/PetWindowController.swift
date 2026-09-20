@@ -10,6 +10,7 @@ final class PetWindowController: NSObject {
     private var hasAppliedInitialPosition = false
     private var targetSize: NSSize?
     var onDoubleClick: (() -> Void)?
+    var onRightClick: ((NSEvent, NSView) -> Void)?
 
     init(engine: EngineClient) {
         self.engine = engine
@@ -20,6 +21,9 @@ final class PetWindowController: NSObject {
                               defer: false)
         super.init()
         view.onDoubleClick = { [weak self] in self?.onDoubleClick?() }
+        view.onRightClick = { [weak self] event, view in
+            self?.onRightClick?(event, view)
+        }
         window.contentView = view
         window.isOpaque = false
         window.backgroundColor = .clear
@@ -90,6 +94,7 @@ private final class PetView: NSView {
     private var lastDragStateAt = Date.distantPast
     var clickThrough = true
     var onDoubleClick: (() -> Void)?
+    var onRightClick: ((NSEvent, NSView) -> Void)?
 
     init(engine: EngineClient) {
         self.engine = engine
@@ -150,6 +155,10 @@ private final class PetView: NSView {
                              ttlMilliseconds: 5_000,
                              text: "你好，我在这里")
         }
+    }
+
+    override func rightMouseDown(with event: NSEvent) {
+        onRightClick?(event, self)
     }
 
     override func mouseDragged(with event: NSEvent) {

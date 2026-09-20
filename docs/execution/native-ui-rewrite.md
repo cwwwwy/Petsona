@@ -215,6 +215,21 @@ E-07 的 xcresult 摘要在上一只读审查中因 TestReport 临时写入权�
 
 本批次未执行 Git add/commit/push；工作区既有改动及本批次改动均保留给用户审查。人工验收按 `docs/MACOS_VERIFICATION.md` 的 A4/A6/A11、B8/B9 及 M-01/M-04 进行；多屏/Retina/Spaces、重力、自动活动、透明度、签名/公证和宠物图标托盘化保持暂缓或待凭据。
 
+### 8.12 macOS 设置页侧边栏布局（2026-09-20）
+
+- 用户要求设置菜单改为侧边栏布局。
+- `SettingsView.swift` 改用 `NavigationSplitView`：左侧分为“宠物库 / 外观与交互 / DeepSeek / 人格 / 记忆 / 启动”，右侧显示对应原有设置内容；保留现有命令、表单绑定、导入导出和人格 sheet 行为。
+- `AppDelegate.swift` 将设置窗口初始尺寸调整为 960×700、最小尺寸 820×600，适配侧边栏与详情页。
+- 自动验证：`xcodebuild` Debug 编译 exit 0；`bash scripts/verify-macos-all.sh` exit 0；原生 XCTest 5/5；native smoke 6/6；`bash scripts/package-macos.sh` exit 0；最终 `dist/Petsona.app` smoke 6/6。
+- 当前仍需人工确认：侧边栏选中态、窗口缩放/滚动、各分区表单操作，以及设置窗口重新打开后的选中分区体验。
+
+### 8.13 macOS 设置焦点与宠物右键菜单修复（2026-09-20）
+
+- 根因：侧边栏选择使用可选值绑定，交互反馈不稳定；设置窗口未显式声明可成为 Key/Main Window；宠物视图只有左键/拖动事件，没有 `rightMouseDown` 到原生菜单的接线。
+- 修复：`SettingsView` 改为非可选 `SettingsSection` 选择绑定；新增可成为 Key/Main 的设置窗口并在打开时显式激活；`PetView` 增加右键事件，AppDelegate 弹出原生上下文菜单，包含设置、宠物选择、缩放、显示/隐藏、立即活动和退出。
+- 自动验证：Debug build exit 0；`bash scripts/verify-macos-all.sh` exit 0；workspace app25/core57/ffi3/runtime5/mac-shell7；原生 XCTest 5/5；native smoke 6/6；最终 `dist/Petsona.app` smoke 6/6；`git diff --check` 通过。
+- 人工待验：点击侧边栏切换六个分区、设置窗口焦点/按钮交互，以及真实鼠标和触控板右键菜单位置、点外关闭与 Esc 关闭。
+
 ### 8.11 范围决定：Windows 线并行启动（2026-09-20）
 
 - 用户决定：Windows 原生线（C# / WinUI 3 + Win32）与 macOS 线**并行推进**；旧 Windows 线（egui/Win32 外壳）的 W-* 实机复测**冻结**。
