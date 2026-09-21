@@ -6,6 +6,23 @@ private struct PetChoice: Decodable, Identifiable {
     let id: String
     let name: String
     let v2: Bool
+    let spritesheet: String?
+    let cellWidth: Int?
+    let cellHeight: Int?
+
+    enum CodingKeys: String, CodingKey {
+        case id, name, v2, spritesheet, cellWidth, cellHeight
+    }
+
+    init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        id = try values.decode(String.self, forKey: .id)
+        name = try values.decode(String.self, forKey: .name)
+        v2 = try values.decodeIfPresent(Bool.self, forKey: .v2) ?? false
+        spritesheet = try values.decodeIfPresent(String.self, forKey: .spritesheet)
+        cellWidth = try values.decodeIfPresent(Int.self, forKey: .cellWidth)
+        cellHeight = try values.decodeIfPresent(Int.self, forKey: .cellHeight)
+    }
 }
 
 private struct CodexPetChoice: Decodable, Identifiable {
@@ -163,7 +180,7 @@ private struct ImportConflictProjection: Decodable {
     let path: String
 }
 
-private enum SettingsSection: String, CaseIterable, Identifiable {
+enum SettingsSection: String, CaseIterable, Identifiable {
     case library
     case behavior
     case deepSeek
@@ -394,6 +411,14 @@ struct SettingsView: View {
             }
             ForEach(pets) { pet in
                 HStack {
+                    if let spritesheet = pet.spritesheet,
+                       let cellWidth = pet.cellWidth,
+                       let cellHeight = pet.cellHeight {
+                        CodexPreview(path: spritesheet,
+                                     cellWidth: cellWidth,
+                                     cellHeight: cellHeight,
+                                     columns: 8)
+                    }
                     Text(pet.name)
                     if pet.v2 { Text("V2").foregroundStyle(.secondary) }
                     Spacer()
@@ -856,11 +881,26 @@ private struct PreviewImage: NSViewRepresentable {
     func makeNSView(context: Context) -> PreviewImageView { PreviewImageView() }
 
     func updateNSView(_ view: PreviewImageView, context: Context) {
-        view.image = NSImage(contentsOfFile: path)
+        view.image = PreviewImageCache.image(at: path)
         view.cellWidth = cellWidth
         view.cellHeight = cellHeight
         view.columns = columns
         view.needsDisplay = true
+    }
+}
+
+@MainActor
+private enum PreviewImageCache {
+    private static let images = NSCache<NSString, NSImage>()
+
+    static func image(at path: String) -> NSImage? {
+        let key = path as NSString
+        if let cached = images.object(forKey: key) {
+            return cached
+        }
+        guard let image = NSImage(contentsOfFile: path) else { return nil }
+        images.setObject(image, forKey: key)
+        return image
     }
 }
 

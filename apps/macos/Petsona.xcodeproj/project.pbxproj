@@ -7,16 +7,20 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		0D18B1201269920CF5C5415E /* GazeStabilizerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4FD5B4969C41CBAB727FFA6A /* GazeStabilizerTests.swift */; };
 		2332E93B0191A553BB1F641A /* EngineClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 763D809BA2FC73283C125DC5 /* EngineClient.swift */; };
 		23508CB364F319CE2F2CD500 /* SystemServiceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8CC244EC9E477167C0553970 /* SystemServiceTests.swift */; };
+		298C2A8618E2B86C5C69C3E3 /* NativeLifecycleTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 02B74F97053C957608C1CCFB /* NativeLifecycleTests.swift */; };
 		379E86A5B930C3A7B88C7455 /* SystemServices.swift in Sources */ = {isa = PBXBuildFile; fileRef = D0AB9E3FE607652338B00325 /* SystemServices.swift */; };
 		749EE7505E91D13AF66497FD /* EngineClientTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = CBAAB991C83D8029F16555FE /* EngineClientTests.swift */; };
 		86618A6B1CDA37ACAA726A71 /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7A83CD3E29FB23450E39A3E3 /* AppDelegate.swift */; };
 		8AD5B1925B5D159AE42C66F6 /* OverlayPanels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 94CB3F7D16E9E533E8CFADF7 /* OverlayPanels.swift */; };
+		90BA0F54F693FD03B21349C6 /* GazeStabilizer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9E716367398534B7FFD547E0 /* GazeStabilizer.swift */; };
 		9B42BB269AA0817C404DC6FA /* PetsonaApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 47D5B033934AC70BABDACE1A /* PetsonaApp.swift */; };
 		B526334FBBC4ACEB9EB3C442 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D1715372BAF34458F42E576A /* SettingsView.swift */; };
 		B9E1FDB0402A601CA55CC515 /* PetWindowController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0C86F7D7EEB6FC8891B28B84 /* PetWindowController.swift */; };
 		F035BB1686BC62D9643E29E9 /* AbiTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2642B1511D79F30A5133D43 /* AbiTests.swift */; };
+		F194899A94C4762D56F40F52 /* PetResourceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 803D6781618C2BB990D48F65 /* PetResourceTests.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -30,13 +34,17 @@
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
+		02B74F97053C957608C1CCFB /* NativeLifecycleTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeLifecycleTests.swift; sourceTree = "<group>"; };
 		0C86F7D7EEB6FC8891B28B84 /* PetWindowController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PetWindowController.swift; sourceTree = "<group>"; };
 		47D5B033934AC70BABDACE1A /* PetsonaApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PetsonaApp.swift; sourceTree = "<group>"; };
+		4FD5B4969C41CBAB727FFA6A /* GazeStabilizerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GazeStabilizerTests.swift; sourceTree = "<group>"; };
 		763D809BA2FC73283C125DC5 /* EngineClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EngineClient.swift; sourceTree = "<group>"; };
 		7A83CD3E29FB23450E39A3E3 /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
+		803D6781618C2BB990D48F65 /* PetResourceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PetResourceTests.swift; sourceTree = "<group>"; };
 		828292AC9AF72549A7290581 /* PetsonaTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = PetsonaTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		8CC244EC9E477167C0553970 /* SystemServiceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SystemServiceTests.swift; sourceTree = "<group>"; };
 		94CB3F7D16E9E533E8CFADF7 /* OverlayPanels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OverlayPanels.swift; sourceTree = "<group>"; };
+		9E716367398534B7FFD547E0 /* GazeStabilizer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GazeStabilizer.swift; sourceTree = "<group>"; };
 		A2642B1511D79F30A5133D43 /* AbiTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AbiTests.swift; sourceTree = "<group>"; };
 		CBAAB991C83D8029F16555FE /* EngineClientTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EngineClientTests.swift; sourceTree = "<group>"; };
 		D0AB9E3FE607652338B00325 /* SystemServices.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SystemServices.swift; sourceTree = "<group>"; };
@@ -68,6 +76,9 @@
 			children = (
 				A2642B1511D79F30A5133D43 /* AbiTests.swift */,
 				CBAAB991C83D8029F16555FE /* EngineClientTests.swift */,
+				4FD5B4969C41CBAB727FFA6A /* GazeStabilizerTests.swift */,
+				02B74F97053C957608C1CCFB /* NativeLifecycleTests.swift */,
+				803D6781618C2BB990D48F65 /* PetResourceTests.swift */,
 				8CC244EC9E477167C0553970 /* SystemServiceTests.swift */,
 			);
 			path = PetsonaTests;
@@ -78,6 +89,7 @@
 			children = (
 				7A83CD3E29FB23450E39A3E3 /* AppDelegate.swift */,
 				763D809BA2FC73283C125DC5 /* EngineClient.swift */,
+				9E716367398534B7FFD547E0 /* GazeStabilizer.swift */,
 				94CB3F7D16E9E533E8CFADF7 /* OverlayPanels.swift */,
 				47D5B033934AC70BABDACE1A /* PetsonaApp.swift */,
 				0C86F7D7EEB6FC8891B28B84 /* PetWindowController.swift */,
@@ -187,6 +199,7 @@
 			files = (
 				86618A6B1CDA37ACAA726A71 /* AppDelegate.swift in Sources */,
 				2332E93B0191A553BB1F641A /* EngineClient.swift in Sources */,
+				90BA0F54F693FD03B21349C6 /* GazeStabilizer.swift in Sources */,
 				8AD5B1925B5D159AE42C66F6 /* OverlayPanels.swift in Sources */,
 				B9E1FDB0402A601CA55CC515 /* PetWindowController.swift in Sources */,
 				9B42BB269AA0817C404DC6FA /* PetsonaApp.swift in Sources */,
@@ -201,6 +214,9 @@
 			files = (
 				F035BB1686BC62D9643E29E9 /* AbiTests.swift in Sources */,
 				749EE7505E91D13AF66497FD /* EngineClientTests.swift in Sources */,
+				0D18B1201269920CF5C5415E /* GazeStabilizerTests.swift in Sources */,
+				298C2A8618E2B86C5C69C3E3 /* NativeLifecycleTests.swift in Sources */,
+				F194899A94C4762D56F40F52 /* PetResourceTests.swift in Sources */,
 				23508CB364F319CE2F2CD500 /* SystemServiceTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;

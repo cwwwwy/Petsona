@@ -230,9 +230,87 @@ E-07 的 xcresult 摘要在上一只读审查中因 TestReport 临时写入权�
 - 自动验证：Debug build exit 0；`bash scripts/verify-macos-all.sh` exit 0；workspace app25/core57/ffi3/runtime5/mac-shell7；原生 XCTest 5/5；native smoke 6/6；最终 `dist/Petsona.app` smoke 6/6；`git diff --check` 通过。
 - 人工待验：点击侧边栏切换六个分区、设置窗口焦点/按钮交互，以及真实鼠标和触控板右键菜单位置、点外关闭与 Esc 关闭。
 
+### 8.14 macOS 对齐 Windows 阶段一：注视稳定器与拖动刷新（2026-09-20）
+
+- 新增 `apps/macos/Petsona/Sources/GazeStabilizer.swift`，对齐 Windows 的官方 16 向方向量化、7° 迟滞、2px 最小移动和单位向量回环。
+- `AppDelegate` 采用 80%/100% 进入/退出注视余量、35% 内死区，并在每个 gaze poll 重发稳定方向；拖动期间暂停注视。
+- `PetWindowController` 增加拖动开始/移动/结束事件；AppDelegate 以 8ms 限流主动刷新 engine/window，降低 AppKit 事件跟踪模式下的拖动首帧停滞风险。
+- 首次稳定器测试使用了已越过迟滞边界的输入，记录为失败后修正测试边界；实现未改变。该失败保留如下。
+
+| 证据ID | 目标 | 命令 | 结果 |
+|---|---|---|---|
+| E-21a | 注视稳定器初次 XCTest | `xcodebuild ... -only-testing:PetsonaTests/GazeStabilizerTests ... test` | exit 65；`testHysteresisAndMinimumMovementHoldDirection` 的测试输入实际越过 22.5°+7° 边界，已修正为边界内输入 |
+| E-21b | 注视/ABI/worker 原生测试 | `xcodebuild ... -only-testing:PetsonaTests/GazeStabilizerTests -only-testing:PetsonaTests/EngineClientTests -only-testing:PetsonaTests/AbiTests -only-testing:PetsonaTests/SystemServiceTests ... test` | exit 0；包含 GazeStabilizer 2 项，原生测试合计 7/7 |
+| E-21c | Mac 完整门禁 | `bash scripts/verify-macos-all.sh` | exit 0；workspace app25/core57/ffi3/runtime5/mac-shell7；XCTest 7/7；native smoke 6/6；Release/静态依赖/arm64/包结构通过 |
+| E-21d | 最终交付包 | `PETSONA_NATIVE_APP=dist/Petsona.app PETSONA_SMOKE_STATE_PORT=17972 PETSONA_SMOKE_HOOK_PORT=17973 bash scripts/macos-smoke.sh` | exit 0；dist smoke 6/6 |
+
+本阶段仍需人工复验：光标停住时的跨行注视完成、迟滞边界不抖动、拖动时左右反向与连续帧，以及此前已通过的侧边栏和宠物右键菜单。未执行 Git add/commit/push。
+
 ### 8.11 范围决定：Windows 线并行启动（2026-09-20）
 
 - 用户决定：Windows 原生线（C# / WinUI 3 + Win32）与 macOS 线**并行推进**；旧 Windows 线（egui/Win32 外壳）的 W-* 实机复测**冻结**。
 - 本记录（macOS 线）状态不变：**代码完成、人工验收未完成**（REV-02/04/05/07/08 部分未关闭；M-01～M-06 人工项待做；签名/公证待凭据）。
 - Windows 线契约：[windows-native-rewrite 计划](../plans/windows-native-rewrite.md) v1.0；执行记录：[windows-native-rewrite](../execution/windows-native-rewrite.md)。
 - 并行规则（对两条线生效）：共享层/ABI/契约变更须双端回归（Rust 门禁 + macOS 原生门禁 + Windows 构建/测试）；`apps/macos/**` 仅允许共享层接口同步适配；任一端未回归前不得发布该端。
+
+### 8.15 macOS 对齐 Windows 阶段二：资源与宠物库体验（2026-09-21）
+
+- 本地宠物列表读取 runtime 已有的 `spritesheet`、`cellWidth`、`cellHeight` 投影，显示首帧缩略图，与 Windows 宠物列表预览路径对齐。
+- 设置页缩略图新增主线程 `NSCache`，避免 engine tick 导致 SwiftUI 重绘时重复从磁盘读取同一张图。
+- 新增 `PetResourceTests`，使用 `crates/petsona-core/testdata/v2-test-pet-webp/spritesheet.webp` 验证 AppKit `NSBitmapImageRep` 能读取 V2 WebP 图集。
+- WebP 解码失败的 Release 根因是 Swift 6 将共享 `NSCache` 判为非并发安全；已将缓存限定到 `MainActor`，未改变资源数据或线程边界。
+
+| 证据ID | 目标 | 命令 | 结果 |
+|---|---|---|---|
+| E-22a | 阶段二首次完整门禁 | `bash scripts/verify-macos-all.sh` | exit 65；Rust/Debug 路径通过，Release Swift 编译因 `NSCache` 缺少 `MainActor` 标注失败；失败日志保留在 `.scratch/phase2-verify.log` |
+| E-22b | 修复后 Release | `xcodebuild -quiet -project apps/macos/Petsona.xcodeproj -scheme Petsona -configuration Release -arch arm64 -derivedDataPath .scratch/native-resource-release CODE_SIGNING_ALLOWED=NO build` | exit 0 |
+| E-22c | WebP/注视原生测试 | `xcodebuild ... -only-testing:PetsonaTests/PetResourceTests -only-testing:PetsonaTests/GazeStabilizerTests ... test` | exit 0；目标测试通过 |
+| E-22d | 阶段二原生测试摘要 | `xcodebuild ... -only-testing:PetsonaTests/EngineClientTests -only-testing:PetsonaTests/AbiTests -only-testing:PetsonaTests/GazeStabilizerTests -only-testing:PetsonaTests/PetResourceTests -only-testing:PetsonaTests/SystemServiceTests ... test` | exit 0；XCTest 8/8；xcresult：`.scratch/native-resource-tests-final/Logs/Test/Test-Petsona-2026.09.21_00-18-18-+0800.xcresult` |
+| E-22e | 阶段二交付包 | `PETSONA_SKIP_BUILD=1 PETSONA_NATIVE_DERIVED_DATA=.scratch/macos-native-gates bash scripts/package-macos.sh`；`PETSONA_NATIVE_APP=dist/Petsona.app PETSONA_SMOKE_STATE_PORT=17972 PETSONA_SMOKE_HOOK_PORT=17973 bash scripts/macos-smoke.sh` | exit 0；dist smoke 6/6；arm64 包刷新 |
+| E-22f | 阶段二最终完整门禁 | `bash scripts/verify-macos-all.sh > .scratch/phase2-final.log 2>&1` | exit 0；最终日志保留在 `.scratch/phase2-final.log`；XCTest 8/8、native smoke 6/6、Release/静态依赖/包结构全绿 |
+
+本阶段仍需人工复验：设置页本地宠物缩略图观感、WebP 用户宠物显示、切换宠物后图集更新，以及阶段一注视/拖动行为在最新包中的稳定性。
+
+### 8.16 macOS 对齐 Windows 阶段三：生命周期与原生 UI 契约测试（2026-09-21）
+
+- `EngineClientTests` 新增同一隔离数据目录下的引擎销毁/重建和 DeepSeek 配置持久化测试。
+- 新增 `NativeLifecycleTests`：验证设置侧边栏六个稳定分区，以及 BubblePanel 非激活、Composer 可激活的窗口焦点契约。
+- 统一 macOS XCTest 纳入 EngineClient、ABI、GazeStabilizer、PetResource、NativeLifecycle、SystemService 六类测试，共 11 项。
+- 本阶段仍不使用坐标驱动的脆弱 UI 自动化；右键、IME、窗口视觉和多次开关长测继续保留人工验收。
+
+| 证据ID | 目标 | 命令 | 结果 |
+|---|---|---|---|
+| E-23a | 生命周期/UI 契约测试 | `xcodebuild ... -only-testing:PetsonaTests/EngineClientTests -only-testing:PetsonaTests/AbiTests -only-testing:PetsonaTests/GazeStabilizerTests -only-testing:PetsonaTests/PetResourceTests -only-testing:PetsonaTests/NativeLifecycleTests -only-testing:PetsonaTests/SystemServiceTests ... test` | exit 0；XCTest 11/11；xcresult：`.scratch/native-lifecycle-tests/Logs/Test/Test-Petsona-2026.09.21_00-33-48-+0800.xcresult` |
+| E-23b | 阶段三完整门禁 | `bash scripts/verify-macos-all.sh > .scratch/phase3-final.log 2>&1` | exit 0；统一脚本显示 XCTest 11/11、native smoke 6/6、Release/静态依赖/包结构全绿 |
+| E-23c | 阶段三交付包 | `PETSONA_SKIP_BUILD=1 PETSONA_NATIVE_DERIVED_DATA=.scratch/macos-native-gates bash scripts/package-macos.sh`；`PETSONA_NATIVE_APP=dist/Petsona.app PETSONA_SMOKE_STATE_PORT=17972 PETSONA_SMOKE_HOOK_PORT=17973 bash scripts/macos-smoke.sh` | exit 0；dist smoke 6/6 |
+
+阶段三人工待验：设置分区切换和重开窗口、输入框/气泡焦点、IME、右键菜单、连续开关 100 次、第二实例、空闲 CPU 与资源释放。
+
+### 8.17 macOS 对齐 Windows 阶段四：生命周期与第二实例门禁（2026-09-21）
+
+- `AppDelegate` 在 runtime fault（包括数据目录锁冲突）时自动退出，避免第二实例留下无响应菜单栏进程。
+- `EngineClientTests` 新增同一隔离目录下反复启动/销毁并验证 state server 端口与实例锁释放；`NativeLifecycleTests` 新增浮层反复创建/关闭测试。
+- `macos-smoke.sh` 新增同一 `PETSONA_HOME` 第二实例自动退出检查，smoke 从 6 项扩展为 7 项。
+
+| 证据ID | 目标 | 命令 | 结果 |
+|---|---|---|---|
+| E-24a | 第二实例初次包 smoke | `PETSONA_NATIVE_APP=dist/Petsona.app ... bash scripts/macos-smoke.sh` | exit 1；当时 dist 尚未刷新到本阶段 fault 自动退出实现，第二实例仍存活；失败日志已保留在本轮工具输出 |
+| E-24b | 最新包第二实例 smoke | `bash scripts/package-macos.sh`；`PETSONA_NATIVE_APP=dist/Petsona.app ... bash scripts/macos-smoke.sh` | exit 0；7/7，第二实例自动退出通过 |
+| E-24c | 阶段四完整门禁 | `bash scripts/verify-macos-all.sh > .scratch/phase4-final.log 2>&1` | exit 0；XCTest 13/13、native smoke 7/7、Release/静态依赖/包结构全绿 |
+
+阶段四仍需人工确认：设置/Composer/气泡反复开关 100 次、第二实例真实桌面提示、Activity Monitor 5 分钟 CPU、退出后无残留窗口/端口/锁文件。
+
+### 8.18 macOS 对齐 Windows 阶段五：发布前审计与交付包验证（2026-09-21）
+
+- 发布工作流改为先运行完整 `verify-macos-all.sh`，再构建真实 `dist/Petsona.app`，最后对该 dist 包运行 `macos-smoke.sh`；artifact 名称明确带 `unsigned`，避免把未签名包误认为可发布包。
+- 旧 `petsona-app`、旧 macOS/Windows shell 和相关 egui/winit 依赖完成只读引用审计后保留：REQ-16 要求 Windows 原生对等验收和两端发布包通过后才能清理，本阶段没有越过该前置条件删除文件。
+- `actionlint` 在当前 Mac 未安装，未将其缺失伪装为 YAML 已通过；shell 语法、diff 空白和真实 Xcode/运行门禁替代验证已执行。
+
+| 证据ID | 目标 | 命令 | 结果 |
+|---|---|---|---|
+| E-25a | 阶段五首次完整门禁 | `bash scripts/verify-macos-all.sh > .scratch/phase5-final.log 2>&1` | exit 101；受限执行环境禁止状态协议测试绑定 `127.0.0.1:0`，4 个 core 状态服务测试报 `Operation not permitted`；失败日志保留在 `.scratch/phase5-final.log` |
+| E-25b | 发布链路语法/空白 | `bash -n scripts/verify-macos-all.sh scripts/macos-smoke.sh scripts/package-macos.sh scripts/sign-macos.sh scripts/notarize-macos.sh`；`git diff --check` | exit 0；`actionlint` 不可用，已明确记录为 SKIP |
+| E-25c | 允许回环端口后的完整门禁 | `bash scripts/verify-macos-all.sh > .scratch/phase5-final.log 2>&1` | exit 0；原生 XCTest 13/13、native smoke 7/7、Release/静态依赖/arm64/包结构全绿；日志：`.scratch/phase5-final.log` |
+| E-25d | 最终 dist 交付包 | `bash scripts/package-macos.sh dist`；`PETSONA_NATIVE_APP=dist/Petsona.app PETSONA_SMOKE_STATE_PORT=17972 PETSONA_SMOKE_HOOK_PORT=17973 bash scripts/macos-smoke.sh` | 两条命令均 exit 0；`dist/Petsona.app` 与 `dist/Petsona-macos-arm64.zip` 刷新，dist smoke 7/7；包仍明确为未签名 |
+
+阶段五结论：发布链路代码和未签名交付包自动验证通过；真实 Developer ID 签名、公证、目标机器安装仍待凭据与人工验收。旧入口清理继续等待 REQ-16，不因本阶段自动门禁通过而提前删除。未执行 Git add/commit/push。

@@ -79,7 +79,7 @@ curl -XPOST http://127.0.0.1:17872/state \
 | B9 | 状态 message / 编辑按钮 / 输入框 | 气泡点击打开 Composer；宠物下方编辑按钮打开 Composer；无气泡回复按钮；Composer 使用 NSTextView，Enter/Shift+Enter/Esc、草稿、caret 注视；输入框在宠物下方 | 原生编译与 worker smoke 通过；IME、位置和视觉待实测 |
 | B10 | 在副屏右键 | 菜单出现在该屏并夹在工作区内 | 待实测（当前无副屏条件） |
 | B11 | 空闲看 Activity Monitor | CPU 接近 0–1%（允许偶发波动） | 修复前 8–10%；低频采样 smoke 通过，待复测 |
-| B12 | 启动第二个实例 | 不出现第二只宠物 | 待实测（锁已实现） |
+| B12 | 启动第二个实例 | 不出现第二只宠物；第二进程自动退出 | native smoke 已验证第二实例退出；真实桌面提示观感待实测 |
 | B13 | 注销 / 重启后登录 | 宠物自动出现 | 设置与 LaunchAgent 脚本均已实现；真实登录后待实测 |
 
 ## C. 多屏 / Spaces / 窗口系统
@@ -100,8 +100,11 @@ curl -XPOST http://127.0.0.1:17872/state \
 - [x] `LSUIElement = true`，默认不显示 Dock 图标
 - [x] `scripts/install-macos-launch-agent.sh` 安装 / 卸载 LaunchAgent
 - [x] `scripts/sign-macos.sh`、`scripts/notarize-macos.sh` 流程就绪（ad-hoc 签名验证过）
-- [x] `.github/workflows/release-macos.yml` tag / 手动触发生成架构包
+- [x] `.github/workflows/release-macos.yml` tag / 手动触发运行完整原生门禁、对最终 dist 包 smoke，并以 `unsigned` 标记产物
 - [ ] 真实 Developer ID 签名 + 公证 + 目标 Mac 实机验证
+
+> 当前发布工作流故意只生成并上传未签名产物；没有 Developer ID 证书和
+> `notarytool` profile 时不得把 CI 绿灯解释为签名或公证通过。
 
 ```bash
 ./scripts/package-macos.sh

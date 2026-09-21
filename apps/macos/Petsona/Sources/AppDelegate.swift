@@ -25,6 +25,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var lastScale = -1.0
     private var globalGazeActive = false
     private var lastGlobalCursor: NSPoint?
+    private let gazeStabilizer = GazeStabilizer()
+    private var draggingPet = false
+    private var lastDragRefreshTime = 0.0
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
@@ -37,6 +40,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         petWindow.onRightClick = { [weak self] event, view in
             self?.showPetContextMenu(with: event, in: view)
+        }
+        petWindow.onDragBegan = { [weak self] in
+            guard let self else { return }
+            draggingPet = true
+            gazeStabilizer.reset()
+            if globalGazeActive {
+                engine.clearGaze()
+                globalGazeActive = false
+            }
+        }
+        petWindow.onDragMoved = { [weak self] in self?.refreshDuringDrag() }
+        petWindow.onDragEnded = { [weak self] in
+            self?.draggingPet = false
+            self?.gazeStabilizer.reset()
         }
         bubblePanel = BubblePanel()
         bubblePanel.onReply = { [weak self] in self?.openComposer() }
@@ -86,6 +103,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func scheduleTick() {
         tickTimer?.invalidate()
         let nextMilliseconds = engine.tick()
+        if engine.snapshot.faulted != 0 {
+            // A second instance or an unrecoverable worker fault must not
+            // leave an inert menu-bar process behind.
+            NSApp.terminate(nil)
+            return
+        }
         if engine.snapshot.ready != 0,
            engine.snapshot.has_pet == 0,
            !didPresentEmptyLibrary {
@@ -313,17 +336,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func updateGlobalGaze() {
         guard !composerPanel.isVisible,
+              !draggingPet,
               engine.snapshot.pet_visible != 0,
               engine.snapshot.has_pet != 0 else {
             if globalGazeActive {
                 engine.clearGaze()
                 globalGazeActive = false
             }
+            gazeStabilizer.reset()
             return
         }
         let frame = petWindow.screenFrame()
         let cursor = NSEvent.mouseLocation
-        let moved = lastGlobalCursor.map { hypot(cursor.x - $0.x, cursor.y - $0.y) > 1 } ?? false
         lastGlobalCursor = cursor
         let dx = cursor.x - frame.midX
         // Core gaze coordinates use screen Y (positive below); AppKit's
@@ -334,24 +358,33 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Keep gaze local, but make the native trigger forgiving enough for
         // normal mouse motion. Once active, use a larger release radius so a
         // one-pixel edge fluctuation does not cancel the gaze.
-        let margin = min(width, height) * (globalGazeActive ? 0.50 : 0.40)
+        let margin = min(width, height) * (globalGazeActive ? 1.00 : 0.80)
         let radiusX = width * 0.5 + margin
         let radiusY = height * 0.5 + margin
         let near = (dx * dx) / (radiusX * radiusX) + (dy * dy) / (radiusY * radiusY) <= 1
-        let deadZone = min(width, height) * 0.22
+        let deadZone = min(width, height) * 0.35
         if near && hypot(dx, dy) > deadZone {
-            if moved {
-                engine.setGazeTarget(dx: dx, dy: dy)
-                globalGazeActive = true
-            }
-            // A stationary cursor inside the active range keeps the current
-            // pose. Do not clear it merely because this timer tick had no
-            // pointer movement.
+            let direction = gazeStabilizer.update(dx: dx, dy: dy)
+            let vector = GazeStabilizer.unitVector(direction: direction)
+            // Re-send the held direction every poll so a cross-row transition
+            // can finish even when the cursor stops moving.
+            engine.setGazeTarget(dx: vector.x, dy: vector.y)
+            globalGazeActive = true
             return
         }
         if globalGazeActive {
             engine.clearGaze()
             globalGazeActive = false
         }
+        gazeStabilizer.reset()
+    }
+
+    private func refreshDuringDrag() {
+        let now = CACurrentMediaTime()
+        guard now - lastDragRefreshTime >= 0.008 else { return }
+        lastDragRefreshTime = now
+        _ = engine.tick()
+        petWindow.update()
+        updateOverlays()
     }
 }

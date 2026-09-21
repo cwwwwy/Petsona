@@ -79,6 +79,43 @@ final class EngineClientTests: XCTestCase {
         XCTAssertTrue(client.text(PETSONA_TEXT_MEMORY).contains("安静音乐"))
     }
 
+    func testEngineCanBeDestroyedAndRecreatedWithPersistedSettings() {
+        let home = makeIsolatedHome()
+        do {
+            let client = EngineClient(home: home)
+            waitUntilReady(client)
+            client.updateDeepSeekConfig([
+                "baseUrl": "https://example.invalid/v1",
+                "model": "persisted-model",
+                "apiKeyEnv": "PERSISTED_KEY",
+                "timeoutSeconds": 12,
+                "maxTokens": 96,
+                "temperature": 0.6,
+                "thinkingDisabled": true,
+            ])
+            for _ in 0..<20 {
+                _ = client.tick()
+                RunLoop.current.run(until: Date().addingTimeInterval(0.01))
+            }
+        }
+
+        let recreated = EngineClient(home: home)
+        waitUntilReady(recreated)
+        XCTAssertTrue(recreated.text(PETSONA_TEXT_DEEPSEEK_CONFIG).contains("persisted-model"))
+        XCTAssertEqual(recreated.snapshot.faulted, 0)
+    }
+
+    func testRepeatedRestartReleasesTheInstanceLockAndStatePort() {
+        let home = makeIsolatedHome(stateServerEnabled: true)
+        for _ in 0..<5 {
+            var client: EngineClient? = EngineClient(home: home)
+            waitUntilReady(client!)
+            XCTAssertNotEqual(client?.snapshot.state_server_port, 0)
+            client = nil
+            RunLoop.current.run(until: Date().addingTimeInterval(0.08))
+        }
+    }
+
     private func waitUntilReady(_ client: EngineClient) {
         for _ in 0..<100 {
             _ = client.tick()
@@ -88,11 +125,13 @@ final class EngineClientTests: XCTestCase {
         XCTFail("isolated runtime did not become ready")
     }
 
-    private func makeIsolatedHome() -> URL {
+    private func makeIsolatedHome(stateServerEnabled: Bool = false) -> URL {
         let home = FileManager.default.temporaryDirectory
             .appendingPathComponent("petsona-native-test-\(UUID().uuidString)", isDirectory: true)
         try! FileManager.default.createDirectory(at: home, withIntermediateDirectories: true)
-        let config = "{\"stateServer\":{\"enabled\":false}}"
+        let config = stateServerEnabled
+            ? "{\"stateServer\":{\"enabled\":true,\"port\":0}}"
+            : "{\"stateServer\":{\"enabled\":false}}"
         try! config.data(using: .utf8)!.write(to: home.appendingPathComponent("config.json"), options: .atomic)
         return home
     }

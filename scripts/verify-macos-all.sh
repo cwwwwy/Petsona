@@ -131,6 +131,9 @@ xcodebuild \
   -derivedDataPath "$PETSONA_NATIVE_TEST_DATA" \
   -only-testing:PetsonaTests/EngineClientTests \
   -only-testing:PetsonaTests/AbiTests \
+  -only-testing:PetsonaTests/GazeStabilizerTests \
+  -only-testing:PetsonaTests/PetResourceTests \
+  -only-testing:PetsonaTests/NativeLifecycleTests \
   -only-testing:PetsonaTests/SystemServiceTests \
   CODE_SIGNING_ALLOWED=NO \
   test
@@ -139,7 +142,7 @@ PETSONA_TEST_RESULT="$(find "$PETSONA_NATIVE_TEST_DATA/Logs/Test" -maxdepth 1 -t
 if command -v xcrun >/dev/null 2>&1; then
   xcrun xcresulttool get test-results summary --path "$PETSONA_TEST_RESULT" > "$PETSONA_NATIVE_TEST_DATA/test-summary.json"
   grep -q '"result" : "Passed"' "$PETSONA_NATIVE_TEST_DATA/test-summary.json" || fail '原生 XCTest 结果不是 Passed'
-  pass '原生 XCTest 5 项通过（摘要已保存）'
+  pass '原生 XCTest 13 项通过（摘要已保存）'
 fi
 
 if [[ "$PETSONA_GATES_ONLY" == "1" ]]; then

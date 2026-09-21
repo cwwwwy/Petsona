@@ -11,6 +11,9 @@ final class PetWindowController: NSObject {
     private var targetSize: NSSize?
     var onDoubleClick: (() -> Void)?
     var onRightClick: ((NSEvent, NSView) -> Void)?
+    var onDragBegan: (() -> Void)?
+    var onDragMoved: (() -> Void)?
+    var onDragEnded: (() -> Void)?
 
     init(engine: EngineClient) {
         self.engine = engine
@@ -24,6 +27,9 @@ final class PetWindowController: NSObject {
         view.onRightClick = { [weak self] event, view in
             self?.onRightClick?(event, view)
         }
+        view.onDragBegan = { [weak self] in self?.onDragBegan?() }
+        view.onDragMoved = { [weak self] in self?.onDragMoved?() }
+        view.onDragEnded = { [weak self] in self?.onDragEnded?() }
         window.contentView = view
         window.isOpaque = false
         window.backgroundColor = .clear
@@ -95,6 +101,9 @@ private final class PetView: NSView {
     var clickThrough = true
     var onDoubleClick: (() -> Void)?
     var onRightClick: ((NSEvent, NSView) -> Void)?
+    var onDragBegan: (() -> Void)?
+    var onDragMoved: (() -> Void)?
+    var onDragEnded: (() -> Void)?
 
     init(engine: EngineClient) {
         self.engine = engine
@@ -166,11 +175,15 @@ private final class PetView: NSView {
         let current = NSEvent.mouseLocation
         let delta = NSPoint(x: current.x - dragStart.x, y: current.y - dragStart.y)
         if hypot(delta.x, delta.y) > 4 {
-            isDragging = true
-            clickGeneration += 1
+            if !isDragging {
+                isDragging = true
+                clickGeneration += 1
+                onDragBegan?()
+            }
         }
         guard isDragging else { return }
         window.setFrameOrigin(NSPoint(x: windowStart.x + delta.x, y: windowStart.y + delta.y))
+        onDragMoved?()
         let state = delta.x >= 0 ? "running-right" : "running-left"
         if state != lastDragState || Date().timeIntervalSince(lastDragStateAt) >= 0.08 {
             engine.send(kind: PETSONA_COMMAND_SET_STATE, ttlMilliseconds: 300, text: state)
@@ -183,6 +196,7 @@ private final class PetView: NSView {
         let dragged = isDragging
         if dragged {
             engine.send(kind: PETSONA_COMMAND_SET_STATE, ttlMilliseconds: 1, text: "idle")
+            onDragEnded?()
         }
         rememberPosition()
         defer {

@@ -9,6 +9,7 @@ PETSONA_BINARY="$PETSONA_APP/Contents/MacOS/Petsona"
 PETSONA_SMOKE_HOME="$(mktemp -d "${TMPDIR:-/tmp}/petsona-native-smoke.XXXXXX")"
 PETSONA_STATE_PORT="${PETSONA_SMOKE_STATE_PORT:-17872}"
 PETSONA_PID=""
+PETSONA_SECOND_PID=""
 PETSONA_PASS_COUNT=0
 
 cleanup() {
@@ -21,6 +22,10 @@ cleanup() {
       sleep 0.1
     done
     kill -9 "$PETSONA_PID" 2>/dev/null || true
+  fi
+  if [[ -n "$PETSONA_SECOND_PID" ]] && kill -0 "$PETSONA_SECOND_PID" 2>/dev/null; then
+    kill "$PETSONA_SECOND_PID" 2>/dev/null || true
+    kill -9 "$PETSONA_SECOND_PID" 2>/dev/null || true
   fi
   if [[ "${PETSONA_SMOKE_KEEP_ARTIFACTS:-0}" == "1" ]]; then
     printf 'Kept native smoke artifacts at %s\n' "$PETSONA_SMOKE_HOME"
@@ -108,6 +113,21 @@ pass '原生入口接收状态协议事件'
 sleep 1.4
 wait_for_health state idle
 pass '原生入口执行 TTL 回退'
+
+PETSONA_FIRST_HOME="$PETSONA_SMOKE_HOME"
+PETSONA_SECOND_STDERR="$PETSONA_SMOKE_HOME/second-stderr.log"
+PETSONA_HOME="$PETSONA_FIRST_HOME" RUST_LOG=info "$PETSONA_BINARY" \
+  >"$PETSONA_SMOKE_HOME/second-stdout.log" 2>"$PETSONA_SECOND_STDERR" &
+PETSONA_SECOND_PID=$!
+for _ in {1..80}; do
+  kill -0 "$PETSONA_SECOND_PID" 2>/dev/null || break
+  sleep 0.1
+done
+if kill -0 "$PETSONA_SECOND_PID" 2>/dev/null; then
+  fail '同一数据目录的第二个原生实例未自动退出'
+fi
+PETSONA_SECOND_PID=""
+pass '同一数据目录的第二实例自动退出'
 
 kill "$PETSONA_PID" 2>/dev/null || true
 for _ in {1..30}; do

@@ -13,7 +13,7 @@ permissions:
 jobs:
   package:
     runs-on: macos-latest
-    timeout-minutes: 45
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
 
@@ -23,8 +23,8 @@ jobs:
           toolchain: 1.98.0
           components: rustfmt, clippy
 
-      - name: Fast gates
-        run: bash scripts/verify-macos-all.sh --gates-only
+      - name: Full native gates
+        run: bash scripts/verify-macos-all.sh
 
       - name: Package app bundle
         run: |
@@ -37,9 +37,16 @@ jobs:
             ./scripts/package-macos.sh dist
           fi
 
+      - name: Smoke packaged app
+        env:
+          PETSONA_NATIVE_APP: dist/Petsona.app
+          PETSONA_SMOKE_STATE_PORT: 17872
+          PETSONA_SMOKE_HOOK_PORT: 17873
+        run: bash scripts/macos-smoke.sh
+
       - name: Upload macOS artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: Petsona-macos-${{ runner.arch }}
+          name: Petsona-macos-${{ runner.arch }}-unsigned
           path: dist/
           if-no-files-found: error
