@@ -3,14 +3,13 @@
 use std::path::PathBuf;
 use std::time::Duration;
 
-use petsona_core::config::{DeepSeekConfig, MemoryConfig};
+use petsona_core::config::{DeepSeekConfig, GreetingConfig, MemoryConfig};
 use petsona_core::pet::PetState;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct PersonaPatch {
     pub description: Option<String>,
-    pub avatar_pet: Option<String>,
     pub name: Option<String>,
     pub tone: Option<String>,
     pub verbosity: Option<String>,
@@ -18,19 +17,6 @@ pub struct PersonaPatch {
     pub emoji: Option<bool>,
     pub greeting: Option<String>,
     pub system_prompt: Option<String>,
-    pub temperature: Option<f32>,
-    pub max_tokens: Option<u32>,
-    pub model_provider: Option<String>,
-    pub model: Option<String>,
-    pub memory_enabled: Option<bool>,
-    pub memory_window_turns: Option<u32>,
-    pub memory_long_term: Option<bool>,
-    pub memory_summarize_after_turns: Option<u32>,
-    pub tts_enabled: Option<bool>,
-    pub tts_voice: Option<String>,
-    pub tts_rate: Option<f32>,
-    pub proactive_enabled: Option<bool>,
-    pub proactive_idle_minutes: Option<u32>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -131,11 +117,13 @@ pub enum RuntimeCommand {
     },
     UpdateDeepSeekConfig(DeepSeekConfig),
     UpdateMemoryConfig(MemoryConfig),
+    UpdateGreetingConfig(GreetingConfig),
     RememberFact(MemoryFactInput),
     ForgetFact(String),
     ClearMemory,
     SaveDeepSeekKey(String),
     SendConversation(String),
     ConversationResult(Result<String, String>),
+    GreetingResult(Result<String, String>),
     Stop,
 }

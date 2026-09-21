@@ -54,6 +54,10 @@ pub struct PetsonaRuntime {
     pub pending_single_click: bool,
     pub glance_side: i8,
     pub last_glance_at: Option<Instant>,
+    /// Legacy egui shell channel: it polls this receiver for a greeting
+    /// result. The native worker answers through `RuntimeCommand::GreetingResult`
+    /// instead, so this stays `None` there. Removing it is part of the frozen-line
+    /// cleanup (REQ-W15).
     pub greeting_rx: Option<Receiver<Result<String, String>>>,
     pub greeting_inflight: bool,
     pub last_greeting_at: Option<Instant>,
@@ -233,6 +237,25 @@ impl PetsonaRuntime {
 
         let mut processed = 0usize;
         for event in events {
+            let source = format!("hook:{}", event.source);
+            if event.is_clear() {
+                // `action:"clear"` retracts this source's own override — the
+                // escape hatch for a hook that raised `ttlMs: 0` and stopped.
+                processed += 1;
+                tracing::info!(source = %event.source, "state clear");
+                if let Some(pet) = &mut self.pet {
+                    let now = Instant::now();
+                    let before = pet.engine.current();
+                    let cleared = pet.engine.clear_source(&source, now).is_some();
+                    let current = pet.engine.current();
+                    if cleared && current != before {
+                        pet.anim_started = now;
+                        pet.last_state = current;
+                    }
+                }
+                self.last_user_action = Instant::now();
+                continue;
+            }
             let Some(state) = event.pet_state() else {
                 continue;
             };
@@ -243,7 +266,6 @@ impl PetsonaRuntime {
                 self.show_bubble(text.clone(), Duration::from_secs(8));
             }
             if let Some(pet) = &mut self.pet {
-                let source = format!("hook:{}", event.source);
                 let before = pet.engine.current();
                 let transition =
                     pet.engine

@@ -111,6 +111,7 @@ pub enum PetsonaCommandKind {
     ImportPersona = 33,
     ExportPersona = 34,
     ClearImportConflict = 35,
+    UpdateGreetingConfig = 36,
 }
 
 #[repr(C)]

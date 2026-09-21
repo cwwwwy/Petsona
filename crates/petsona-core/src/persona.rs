@@ -1,5 +1,8 @@
-//! Personas: system prompt, style traits, sampling, model binding, memory and
-//! TTS settings. A persona is the unit of "customisation" the user edits.
+//! Personas: system prompt, style traits and greeting. A persona is the unit of
+//! "customisation" the user edits. Sampling / model binding / TTS / proactive
+//! fields were removed in the settings-consolidation batch (REQ-S01) because
+//! nothing consumed them: sampling and model come from the global DeepSeek
+//! config, and idle greetings use `GreetingConfig` in `config.rs`.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -7,7 +10,6 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 
 use crate::error::{Error, Result};
-use crate::pet::manifest::validate_pet_id;
 
 pub const DEFAULT_PERSONA_ID: &str = "default";
 
@@ -36,99 +38,13 @@ impl Default for PersonaTraits {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase", default)]
-pub struct SamplingConfig {
-    pub temperature: f32,
-    pub max_tokens: u32,
-}
-
-impl Default for SamplingConfig {
-    fn default() -> Self {
-        Self {
-            temperature: 0.8,
-            max_tokens: 800,
-        }
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
-pub struct ModelRef {
-    pub provider: String,
-    pub model: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[serde(rename_all = "camelCase", default)]
-pub struct PersonaMemoryConfig {
-    pub enabled: bool,
-    /// How many recent turns are sent verbatim.
-    pub window_turns: u32,
-    pub long_term: bool,
-    /// Generate a summary once this many turns are unsummarized.
-    pub summarize_after_turns: u32,
-}
-
-impl Default for PersonaMemoryConfig {
-    fn default() -> Self {
-        Self {
-            enabled: true,
-            window_turns: 12,
-            long_term: true,
-            summarize_after_turns: 20,
-        }
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[serde(rename_all = "camelCase", default)]
-pub struct PersonaTtsConfig {
-    pub enabled: bool,
-    pub voice: Option<String>,
-    pub rate: f32,
-}
-
-impl Default for PersonaTtsConfig {
-    fn default() -> Self {
-        Self {
-            enabled: false,
-            voice: None,
-            rate: 1.0,
-        }
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[serde(rename_all = "camelCase", default)]
-pub struct ProactiveConfig {
-    pub enabled: bool,
-    pub idle_minutes: u32,
-}
-
-impl Default for ProactiveConfig {
-    fn default() -> Self {
-        Self {
-            enabled: false,
-            idle_minutes: 30,
-        }
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[serde(rename_all = "camelCase", default)]
 pub struct Persona {
     pub id: String,
     pub name: String,
     pub description: Option<String>,
-    /// Pet skin bound to this persona (pet id in the library).
-    pub avatar_pet: Option<String>,
     pub system_prompt: String,
     pub greeting: Option<String>,
     pub traits: PersonaTraits,
-    pub sampling: SamplingConfig,
-    pub model: Option<ModelRef>,
-    pub memory: PersonaMemoryConfig,
-    pub tts: PersonaTtsConfig,
-    pub proactive: ProactiveConfig,
     /// Built-in personas can be edited but not deleted.
     pub builtin: bool,
 }
@@ -139,18 +55,12 @@ impl Default for Persona {
             id: DEFAULT_PERSONA_ID.to_string(),
             name: "小助手".to_string(),
             description: Some("默认人格：友好、简洁、乐于帮忙。".to_string()),
-            avatar_pet: None,
             system_prompt: "你是一只住在用户桌面上的宠物伙伴。你友好、好奇、说话简洁。\
                 你可以陪用户聊天、帮忙梳理思路，但不要编造事实。\
                 回答时优先使用用户使用的语言。"
                 .to_string(),
             greeting: Some("我在这儿呢，需要我陪你聊聊吗？".to_string()),
             traits: PersonaTraits::default(),
-            sampling: SamplingConfig::default(),
-            model: None,
-            memory: PersonaMemoryConfig::default(),
-            tts: PersonaTtsConfig::default(),
-            proactive: ProactiveConfig::default(),
             builtin: true,
         }
     }
@@ -214,12 +124,6 @@ impl Persona {
         }
         if self.system_prompt.trim().is_empty() {
             return Err(Error::config("persona system prompt must not be empty"));
-        }
-        if self.sampling.temperature < 0.0 || self.sampling.temperature > 2.0 {
-            return Err(Error::config("temperature must be between 0 and 2"));
-        }
-        if let Some(pet) = &self.avatar_pet {
-            validate_pet_id(pet).map_err(|e| Error::config(format!("invalid avatar pet: {e}")))?;
         }
         Ok(())
     }
@@ -373,7 +277,6 @@ pub fn templates() -> BTreeMap<String, Persona> {
         .into();
     advisor.traits.tone = "沉稳、克制".into();
     advisor.traits.verbosity = "detailed".into();
-    advisor.sampling.temperature = 0.4;
     advisor.greeting = Some("需要我帮你理一理思路吗？".into());
     advisor.builtin = true;
     out.insert(advisor.id.clone(), advisor);
@@ -424,12 +327,65 @@ mod tests {
 
     #[test]
     fn validation_rejects_bad_values() {
-        let mut p = Persona::default();
-        p.sampling.temperature = 5.0;
-        assert!(p.validate().is_err());
-        p = Persona::default();
-        p.avatar_pet = Some("../evil".into());
-        assert!(p.validate().is_err());
+        let unnamed = Persona {
+            name: "   ".into(),
+            ..Persona::default()
+        };
+        assert!(unnamed.validate().is_err());
+
+        let promptless = Persona {
+            system_prompt: "  ".into(),
+            ..Persona::default()
+        };
+        assert!(promptless.validate().is_err());
+    }
+
+    /// REQ-S01: persona files written by older versions still load; the fields
+    /// that were removed in the settings-consolidation batch are simply ignored.
+    #[test]
+    fn legacy_persona_files_still_load_without_the_removed_fields() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().join("personas");
+        std::fs::create_dir_all(&dir).unwrap();
+        let legacy = r#"{
+            "id": "legacy",
+            "name": "旧人格",
+            "description": "来自旧版本",
+            "avatarPet": "boba",
+            "systemPrompt": "说话简短一点。",
+            "greeting": "我在。",
+            "traits": { "tone": "温和", "verbosity": "short", "language": "zh-CN", "emoji": false },
+            "sampling": { "temperature": 0.4, "maxTokens": 256 },
+            "model": { "provider": "deepseek", "model": "deepseek-v4-flash" },
+            "memory": { "enabled": true, "windowTurns": 12, "longTerm": true, "summarizeAfterTurns": 20 },
+            "tts": { "enabled": true, "voice": "Ting-Ting", "rate": 1.2 },
+            "proactive": { "enabled": true, "idleMinutes": 30 },
+            "builtin": false
+        }"#;
+        std::fs::write(dir.join("legacy.json"), legacy).unwrap();
+
+        let store = PersonaStore::new(dir.clone());
+        let loaded = store.get("legacy").unwrap().expect("legacy persona loads");
+        assert_eq!(loaded.name, "旧人格");
+        assert_eq!(loaded.traits.verbosity, "short");
+        assert_eq!(loaded.greeting.as_deref(), Some("我在。"));
+
+        // Saving rewrites the file without the removed keys.
+        store.save(&loaded).unwrap();
+        let rewritten = std::fs::read_to_string(dir.join("legacy.json")).unwrap();
+        for removed in [
+            "avatarPet",
+            "sampling",
+            "model",
+            "memory",
+            "tts",
+            "proactive",
+        ] {
+            assert!(
+                !rewritten.contains(removed),
+                "removed field {removed} must not be written back: {rewritten}"
+            );
+        }
     }
 
     #[test]

@@ -607,6 +607,17 @@ try {
     Add-Result "N7" "POST /state switches the pet" (Wait-HealthState $port "waiting" 5)
     Add-Result "N8" "TTL falls back to the base state" (Wait-HealthNotState $port "waiting" 10)
 
+    # A sticky (`ttlMs: 0`) override belongs to its source: native clicks are
+    # lower priority and cannot retract it, but `action:"clear"` from the same
+    # source can (CR-W2 option A).
+    $baseState = Get-HealthState $port
+    Invoke-RestMethod -Method Post -Uri ("http://127.0.0.1:{0}/state" -f $port) -ContentType "application/json" -Body '{"source":"windows-smoke-sticky","state":"running","ttlMs":0}' -TimeoutSec 5 | Out-Null
+    $stickyRaised = Wait-HealthState $port "running" 5
+    Invoke-RestMethod -Method Post -Uri ("http://127.0.0.1:{0}/state" -f $port) -ContentType "application/json" -Body '{"source":"windows-smoke-sticky","action":"clear"}' -TimeoutSec 5 | Out-Null
+    $stickyCleared = Wait-HealthNotState $port "running" 8
+    $afterClear = Get-HealthState $port
+    Add-Result "N25" "action:clear drops a sticky source override" ($stickyRaised -and $stickyCleared -and $baseState -ne "" -and $afterClear -eq $baseState) ("base=$baseState raised=$stickyRaised cleared=$stickyCleared after=$afterClear")
+
     Write-Section "pixel pass-through"
     # Re-read the live rect: the initial placement is applied by the app and a
     # stale N4 rect would make the cursor probe the empty desktop next to it.

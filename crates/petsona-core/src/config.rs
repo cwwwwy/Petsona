@@ -61,7 +61,6 @@ impl Default for GreetingConfig {
 pub struct MemoryConfig {
     pub enabled: bool,
     pub recent_events: usize,
-    pub retention_days: u32,
     pub fact_limit: usize,
 }
 
@@ -70,7 +69,6 @@ impl Default for MemoryConfig {
         Self {
             enabled: true,
             recent_events: 5,
-            retention_days: 90,
             fact_limit: 20,
         }
     }

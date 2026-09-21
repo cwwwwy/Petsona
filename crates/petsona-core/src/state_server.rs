@@ -5,6 +5,9 @@
 //! (`POST /state` with `{source, state, message, action, ttlMs}`) so existing
 //! hooks keep working, but the implementation is a few hundred bytes of
 //! `std::net` instead of an async web stack.
+//!
+//! `action: "clear"` (without a `state`) retracts the override owned by that
+//! `source` — the escape hatch for a hook that raised `ttlMs: 0` and then died.
 
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{Ipv4Addr, SocketAddr, TcpListener, TcpStream};
@@ -31,6 +34,9 @@ pub const DEFAULT_PORT: u16 = 17872;
 pub struct StateEvent {
     #[serde(default = "default_source")]
     pub source: String,
+    /// Wire state name. Optional only so that a control request such as
+    /// `action: "clear"` can omit it; an empty name never resolves to a state.
+    #[serde(default)]
     pub state: String,
     #[serde(default)]
     pub message: Option<String>,
@@ -56,6 +62,19 @@ impl StateEvent {
             Some(ms) => Some(Duration::from_millis(ms)),
             None => None,
         }
+    }
+
+    /// Control action that drops the override owned by this source instead of
+    /// raising a new state.
+    pub const CLEAR_ACTION: &'static str = "clear";
+
+    /// `true` when the event asks to retract its own source's override. The
+    /// action is trimmed and matched case-insensitively; a state sent in the
+    /// same body is ignored, because clear is a control request.
+    pub fn is_clear(&self) -> bool {
+        self.action
+            .as_deref()
+            .is_some_and(|action| action.trim().eq_ignore_ascii_case(Self::CLEAR_ACTION))
     }
 
     /// Message clipped to the protocol limit.
@@ -237,23 +256,25 @@ fn handle_connection(
 
     let response = match (method.as_str(), path.as_str()) {
         ("POST", "/state") => match serde_json::from_slice::<StateEvent>(&body) {
-            Ok(event) => match event.pet_state() {
-                Some(_) => {
+            Ok(event) => {
+                // `action:"clear"` is a control request and needs no state.
+                if event.is_clear() || event.pet_state().is_some() {
                     if sender.send(event).is_ok() {
                         if let Some(wake) = wake {
                             wake();
                         }
                     }
                     (202, r#"{"ok":true}"#.to_string())
+                } else {
+                    (
+                        400,
+                        format!(
+                            r#"{{"ok":false,"error":"unknown state {:?}"}}"#,
+                            event.state
+                        ),
+                    )
                 }
-                None => (
-                    400,
-                    format!(
-                        r#"{{"ok":false,"error":"unknown state {:?}"}}"#,
-                        event.state
-                    ),
-                ),
-            },
+            }
             Err(error) => (400, format!(r#"{{"ok":false,"error":"{error}"}}"#)),
         },
         ("GET", "/health") => {
@@ -390,6 +411,40 @@ mod tests {
                 "attempt {attempt} got {response:?}"
             );
         }
+    }
+
+    #[test]
+    fn clear_action_is_accepted_without_a_state() {
+        let (sender, receiver) = std::sync::mpsc::channel();
+        let server = StateServer::start(0, sender).unwrap();
+        let port = server.port();
+
+        let response = post(port, r#"{"source":"win-verify","action":"clear"}"#);
+        assert!(response.starts_with("HTTP/1.1 202"), "{response}");
+        let event = receiver.recv_timeout(Duration::from_secs(2)).unwrap();
+        assert_eq!(event.source, "win-verify");
+        assert!(event.is_clear());
+        assert_eq!(event.pet_state(), None);
+
+        // An unknown action is not a clear and still needs a known state.
+        let response = post(port, r#"{"source":"win-verify","action":"spin"}"#);
+        assert!(response.starts_with("HTTP/1.1 400"), "{response}");
+        assert!(receiver.try_recv().is_err());
+    }
+
+    #[test]
+    fn clear_action_is_trimmed_and_case_insensitive() {
+        for body in [
+            r#"{"source":"s","action":"CLEAR"}"#,
+            r#"{"source":"s","action":" clear "}"#,
+        ] {
+            let event: StateEvent = serde_json::from_str(body).unwrap();
+            assert!(event.is_clear(), "{body}");
+        }
+        let event: StateEvent = serde_json::from_str(r#"{"source":"s","action":"spin"}"#).unwrap();
+        assert!(!event.is_clear());
+        let event: StateEvent = serde_json::from_str(r#"{"source":"s"}"#).unwrap();
+        assert!(!event.is_clear());
     }
 
     #[test]

@@ -889,6 +889,7 @@ impl PetsonaApp {
                         &now_text,
                         pet_name.as_deref(),
                         &pet_state,
+                        80,
                     )
                 })
                 .map_err(|error| format!("{error:#}"));

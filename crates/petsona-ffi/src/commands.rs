@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 use std::time::Duration;
 
-use petsona_core::config::{DeepSeekConfig, MemoryConfig};
+use petsona_core::config::{DeepSeekConfig, GreetingConfig, MemoryConfig};
 use petsona_core::pet::PetState;
 use petsona_runtime::commands::{
     MemoryFactInput, PersonaCreate, PersonaDuplicate, PersonaPatch, RuntimeCommand,
@@ -201,6 +201,15 @@ pub fn convert(command: &PetsonaCommand) -> Result<RuntimeCommand, (PetsonaStatu
                 )
             })?;
             Ok(RuntimeCommand::UpdateDeepSeekConfig(config))
+        }
+        x if x == PetsonaCommandKind::UpdateGreetingConfig as u32 => {
+            let config: GreetingConfig = serde_json::from_str(&text).map_err(|error| {
+                (
+                    PetsonaStatus::InvalidArgument,
+                    format!("greeting config is not valid JSON: {error}"),
+                )
+            })?;
+            Ok(RuntimeCommand::UpdateGreetingConfig(config))
         }
         x if x == PetsonaCommandKind::UpdateMemoryConfig as u32 => {
             let config: MemoryConfig = serde_json::from_str(&text).map_err(|error| {

@@ -11,11 +11,14 @@ use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
-use petsona_core::config::{AppConfig, AppPaths, DeepSeekConfig, MemoryConfig, WindowPosition};
+use petsona_core::config::{
+    AppConfig, AppPaths, DeepSeekConfig, GreetingConfig, MemoryConfig, WindowPosition,
+};
 use petsona_core::deepseek::DeepSeekClient;
 use petsona_core::memory::{extract_preference, EventKind};
-use petsona_core::persona::{templates, ModelRef, Persona};
+use petsona_core::persona::{templates, Persona};
 use petsona_core::pet::PetLibrary;
+use petsona_core::pet::PetState;
 
 use crate::commands::{
     ImportConflict, MemoryFactInput, PersonaCreate, PersonaPatch, RuntimeCommand,
@@ -181,7 +184,7 @@ fn run_worker(
     };
 
     let mut revision = 1u64;
-    tick_runtime(&mut runtime, &projection, &mut revision);
+    tick_runtime(&mut runtime, &command_tx, &projection, &mut revision);
 
     loop {
         let wait = next_wait(&runtime);
@@ -189,11 +192,11 @@ fn run_worker(
             Ok(RuntimeCommand::Stop) => break,
             Ok(command) => {
                 if apply_command(command, &mut runtime, &command_tx) {
-                    tick_runtime(&mut runtime, &projection, &mut revision);
+                    tick_runtime(&mut runtime, &command_tx, &projection, &mut revision);
                 }
             }
             Err(RecvTimeoutError::Timeout) => {
-                tick_runtime(&mut runtime, &projection, &mut revision);
+                tick_runtime(&mut runtime, &command_tx, &projection, &mut revision);
             }
             Err(RecvTimeoutError::Disconnected) => break,
         }
@@ -558,6 +561,14 @@ fn apply_command(
             }
             true
         }
+        RuntimeCommand::UpdateGreetingConfig(config) => {
+            runtime.config.greeting = sanitize_greeting_config(config);
+            match runtime.save_config() {
+                Ok(()) => runtime.status = "问候设置已保存".to_string(),
+                Err(error) => runtime.status = format!("保存问候设置失败：{error}"),
+            }
+            true
+        }
         RuntimeCommand::UpdateMemoryConfig(config) => {
             runtime.config.memory = sanitize_memory_config(config);
             match runtime.save_config() {
@@ -609,12 +620,13 @@ fn apply_command(
                 return true;
             }
             runtime.conversation_inflight = true;
+            runtime.last_user_action = Instant::now();
             let _ = runtime.memory.record_event(
                 &runtime.persona.id,
                 EventKind::UserMessage,
                 Some(text.clone()),
             );
-            if runtime.config.memory.enabled && runtime.persona.memory.enabled {
+            if runtime.config.memory.enabled {
                 if let Some((key, value, confidence)) = extract_preference(&text) {
                     let _ =
                         runtime
@@ -679,6 +691,41 @@ fn apply_command(
             });
             true
         }
+        RuntimeCommand::GreetingResult(result) => {
+            runtime.greeting_inflight = false;
+            let text = match result {
+                Ok(text) => text,
+                Err(error) => {
+                    // No key / network: still say hello with the local line.
+                    runtime.status = error;
+                    crate::greeting::fallback_greeting(&runtime.persona)
+                }
+            };
+            let text = text.trim().to_string();
+            if !text.is_empty() {
+                let _ = runtime.memory.record_event(
+                    &runtime.persona.id,
+                    EventKind::PetGreeting,
+                    Some(text.clone()),
+                );
+                runtime.show_bubble(text, Duration::from_secs(8));
+                let now = Instant::now();
+                if let Some(pet) = &mut runtime.pet {
+                    let raised = pet.engine.raise(
+                        PetState::Waving,
+                        "greeting",
+                        None,
+                        Some(Duration::from_secs(4)),
+                        now,
+                    );
+                    if raised.is_some() {
+                        pet.anim_started = now;
+                        pet.last_state = pet.engine.current();
+                    }
+                }
+            }
+            true
+        }
         RuntimeCommand::ConversationResult(result) => {
             runtime.conversation_inflight = false;
             let reply = result.unwrap_or_else(|error| {
@@ -707,9 +754,6 @@ fn apply_persona_patch(persona: &mut Persona, patch: PersonaPatch) {
     if let Some(value) = patch.description {
         persona.description = empty_to_none(value);
     }
-    if let Some(value) = patch.avatar_pet {
-        persona.avatar_pet = empty_to_none(value);
-    }
     if let Some(value) = patch.name {
         persona.name = value;
     }
@@ -731,52 +775,90 @@ fn apply_persona_patch(persona: &mut Persona, patch: PersonaPatch) {
     if let Some(value) = patch.system_prompt {
         persona.system_prompt = value;
     }
-    if let Some(value) = patch.temperature {
-        persona.sampling.temperature = value.clamp(0.0, 2.0);
+}
+
+/// True when the idle greeting should fire: the feature is on, the user has
+/// been quiet for `idleMinutes`, and the previous greeting is older than
+/// `cooldownMinutes`. Pure so it can be unit-tested with synthetic instants.
+fn greeting_due(
+    greeting: &petsona_core::config::GreetingConfig,
+    last_user_action: Instant,
+    last_greeting_at: Option<Instant>,
+    now: Instant,
+) -> bool {
+    if !greeting.enabled {
+        return false;
     }
-    if let Some(value) = patch.max_tokens {
-        persona.sampling.max_tokens = value.clamp(16, 4000);
+    let idle = now.saturating_duration_since(last_user_action);
+    if idle < Duration::from_secs(u64::from(greeting.idle_minutes.max(1)) * 60) {
+        return false;
     }
-    if let Some(provider) = patch.model_provider {
-        let provider = provider.trim().to_string();
-        let model = patch.model.and_then(empty_to_none);
-        persona.model = if provider.is_empty() {
-            None
-        } else {
-            Some(ModelRef { provider, model })
-        };
-    } else if let Some(model) = patch.model {
-        if let Some(binding) = &mut persona.model {
-            binding.model = empty_to_none(model);
+    if let Some(last) = last_greeting_at {
+        let cooldown = u64::from(greeting.cooldown_minutes);
+        if now.saturating_duration_since(last) < Duration::from_secs(cooldown * 60) {
+            return false;
         }
     }
-    if let Some(value) = patch.memory_enabled {
-        persona.memory.enabled = value;
+    true
+}
+
+/// Start a proactive idle greeting once the user has been quiet for
+/// `greeting.idleMinutes` and the cooldown has elapsed (REQ-S03). The model
+/// call runs on its own thread and answers through `GreetingResult`.
+fn maybe_request_greeting(runtime: &mut PetsonaRuntime, command_tx: &Sender<RuntimeCommand>) {
+    if runtime.greeting_inflight || runtime.conversation_inflight {
+        return;
     }
-    if let Some(value) = patch.memory_window_turns {
-        persona.memory.window_turns = value.clamp(1, 100);
+    if runtime.pet.is_none() || !runtime.pet_visible {
+        return;
     }
-    if let Some(value) = patch.memory_long_term {
-        persona.memory.long_term = value;
+    if !greeting_due(
+        &runtime.config.greeting,
+        runtime.last_user_action,
+        runtime.last_greeting_at,
+        Instant::now(),
+    ) {
+        return;
     }
-    if let Some(value) = patch.memory_summarize_after_turns {
-        persona.memory.summarize_after_turns = value.clamp(1, 200);
-    }
-    if let Some(value) = patch.tts_enabled {
-        persona.tts.enabled = value;
-    }
-    if let Some(value) = patch.tts_voice {
-        persona.tts.voice = empty_to_none(value);
-    }
-    if let Some(value) = patch.tts_rate {
-        persona.tts.rate = value.clamp(0.25, 4.0);
-    }
-    if let Some(value) = patch.proactive_enabled {
-        persona.proactive.enabled = value;
-    }
-    if let Some(value) = patch.proactive_idle_minutes {
-        persona.proactive.idle_minutes = value.clamp(1, 24 * 60);
-    }
+
+    let context = runtime.memory.build_greeting_context(
+        &runtime.persona.id,
+        runtime.config.memory.recent_events,
+        runtime.config.memory.fact_limit,
+    );
+    let persona = runtime.persona.clone();
+    let config = runtime.config.deepseek.clone();
+    let max_chars = runtime.config.greeting.max_chars.clamp(1, 200);
+    let now_text = crate::greeting::local_now_text();
+    let pet_name = runtime
+        .pet
+        .as_ref()
+        .map(|pet| pet.entry.display_name.clone());
+    let pet_state = runtime
+        .pet
+        .as_ref()
+        .map(|pet| pet.engine.current().name().to_string())
+        .unwrap_or_else(|| PetState::Idle.name().to_string());
+
+    runtime.greeting_inflight = true;
+    runtime.last_greeting_at = Some(Instant::now());
+    let tx = command_tx.clone();
+    thread::spawn(move || {
+        let result = DeepSeekClient::new(config)
+            .and_then(|client| {
+                client.generate_greeting(
+                    &persona,
+                    &context,
+                    "idle",
+                    &now_text,
+                    pet_name.as_deref(),
+                    &pet_state,
+                    max_chars,
+                )
+            })
+            .map_err(|error| format!("{error:#}"));
+        let _ = tx.send(RuntimeCommand::GreetingResult(result));
+    });
 }
 
 fn empty_to_none(value: String) -> Option<String> {
@@ -818,19 +900,27 @@ fn sanitize_deepseek_config(mut config: DeepSeekConfig) -> DeepSeekConfig {
     config
 }
 
+fn sanitize_greeting_config(mut config: GreetingConfig) -> GreetingConfig {
+    config.idle_minutes = config.idle_minutes.clamp(1, 24 * 60);
+    config.cooldown_minutes = config.cooldown_minutes.clamp(0, 24 * 60);
+    config.max_chars = config.max_chars.clamp(1, 200);
+    config
+}
+
 fn sanitize_memory_config(mut config: MemoryConfig) -> MemoryConfig {
     config.recent_events = config.recent_events.clamp(1, 100);
-    config.retention_days = config.retention_days.clamp(1, 3650);
     config.fact_limit = config.fact_limit.clamp(1, 50);
     config
 }
 
 fn tick_runtime(
     runtime: &mut PetsonaRuntime,
+    command_tx: &Sender<RuntimeCommand>,
     projection: &Arc<SharedProjection>,
     revision: &mut u64,
 ) {
     runtime.poll_state_events();
+    maybe_request_greeting(runtime, command_tx);
     let now = Instant::now();
     if let Some(pet) = &mut runtime.pet {
         if pet.engine.tick(now).is_some() {
@@ -944,6 +1034,7 @@ fn publish_projection(runtime: &PetsonaRuntime, projection: &Arc<SharedProjectio
     let memory_snapshot = runtime.memory.persona_snapshot(&runtime.persona.id);
     let memory = serde_json::to_string(&serde_json::json!({
         "config": runtime.config.memory,
+        "greeting": runtime.config.greeting,
         "facts": memory_snapshot.facts,
         "events": memory_snapshot.events,
         "lastSeenAt": memory_snapshot.last_seen_at,
@@ -1202,6 +1293,175 @@ mod tests {
             engine.snapshot().sprite_index,
             first_frame,
             "a repeated drag state must not rewind the running animation"
+        );
+        engine.stop();
+    }
+
+    fn post_state(port: u16, body: &str) -> String {
+        use std::io::{Read as _, Write as _};
+
+        let mut stream = std::net::TcpStream::connect(("127.0.0.1", port)).unwrap();
+        let request = format!(
+            "POST /state HTTP/1.1\r\nhost: 127.0.0.1\r\ncontent-length: {}\r\n\r\n{body}",
+            body.len()
+        );
+        stream.write_all(request.as_bytes()).unwrap();
+        let mut response = String::new();
+        stream.read_to_string(&mut response).unwrap();
+        response
+    }
+
+    fn wait_for_text(engine: &RuntimeEngine, field: RuntimeTextField, expected: &str) -> bool {
+        for _ in 0..300 {
+            if engine.text(field) == expected {
+                return true;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        false
+    }
+
+    #[test]
+    fn protocol_clear_retracts_a_sticky_source_override() {
+        use petsona_core::pet::PetState;
+
+        let home = engine_home_with_pet();
+        let paths = AppPaths::resolve(home.path().to_path_buf());
+        let mut config = AppConfig::load(&paths.config_file).expect("isolated config");
+        config.state_server.enabled = true;
+        config.state_server.port = 0; // ephemeral; the snapshot reports the bound port
+        config
+            .save(&paths.config_file)
+            .expect("config with protocol");
+
+        let mut engine = RuntimeEngine::spawn(Some(home.path().to_path_buf()), || {}).unwrap();
+        let mut port = 0u16;
+        for _ in 0..300 {
+            let snapshot = engine.snapshot();
+            if snapshot.ready && snapshot.has_pet && snapshot.state_server_port != 0 {
+                port = snapshot.state_server_port;
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert_ne!(port, 0, "the state protocol did not start");
+
+        let base = engine.text(RuntimeTextField::State);
+        assert_ne!(base, "running");
+
+        let raised = post_state(
+            port,
+            r#"{"source":"win-verify","state":"running","ttlMs":0}"#,
+        );
+        assert!(raised.starts_with("HTTP/1.1 202"), "{raised}");
+        assert!(
+            wait_for_text(&engine, RuntimeTextField::State, "running"),
+            "hook state did not raise, now {}",
+            engine.text(RuntimeTextField::State)
+        );
+
+        // A click cannot retract a higher-priority hook override.
+        engine
+            .send(RuntimeCommand::SetState {
+                state: PetState::Waving,
+                ttl: None,
+            })
+            .expect("native click state");
+        std::thread::sleep(Duration::from_millis(150));
+        assert_eq!(
+            engine.text(RuntimeTextField::State),
+            "running",
+            "native input must not steal a higher-priority hook state"
+        );
+
+        let cleared = post_state(port, r#"{"source":"win-verify","action":"clear"}"#);
+        assert!(cleared.starts_with("HTTP/1.1 202"), "{cleared}");
+        assert!(
+            wait_for_text(&engine, RuntimeTextField::State, &base),
+            "clear did not restore {base}, now {}",
+            engine.text(RuntimeTextField::State)
+        );
+        engine.stop();
+    }
+
+    #[test]
+    fn greeting_due_respects_the_switch_idle_window_and_cooldown() {
+        use petsona_core::config::GreetingConfig;
+
+        let now = Instant::now();
+        let mut greeting = GreetingConfig {
+            enabled: true,
+            idle_minutes: 30,
+            cooldown_minutes: 120,
+            max_chars: 40,
+        };
+        let quiet = now - Duration::from_secs(31 * 60);
+
+        // Just used the app: nothing to greet.
+        assert!(!greeting_due(&greeting, now, None, now));
+        // Quiet past the threshold and never greeted: due.
+        assert!(greeting_due(&greeting, quiet, None, now));
+        // Greeted 10 minutes ago: the cooldown suppresses it.
+        assert!(!greeting_due(
+            &greeting,
+            quiet,
+            Some(now - Duration::from_secs(10 * 60)),
+            now
+        ));
+        // Last greeting three hours ago: due again.
+        assert!(greeting_due(
+            &greeting,
+            quiet,
+            Some(now - Duration::from_secs(3 * 60 * 60)),
+            now
+        ));
+        // Disabled: never due.
+        greeting.enabled = false;
+        assert!(!greeting_due(&greeting, quiet, None, now));
+    }
+
+    #[test]
+    fn greeting_result_shows_a_bubble_and_records_memory() {
+        let home = engine_home_with_pet();
+        let mut engine = RuntimeEngine::spawn(Some(home.path().to_path_buf()), || {}).unwrap();
+        let mut ready = false;
+        for _ in 0..300 {
+            let snapshot = engine.snapshot();
+            if snapshot.ready && snapshot.has_pet {
+                ready = true;
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert!(ready, "fixture pet did not load");
+
+        engine
+            .send(RuntimeCommand::GreetingResult(Ok("早上好呀。".to_string())))
+            .expect("greeting result");
+        assert!(
+            wait_for_text(&engine, RuntimeTextField::Bubble, "早上好呀。"),
+            "greeting must show a bubble, now {:?}",
+            engine.text(RuntimeTextField::Bubble)
+        );
+        assert!(
+            engine.text(RuntimeTextField::Memory).contains("早上好呀。"),
+            "greeting must be recorded in memory: {}",
+            engine.text(RuntimeTextField::Memory)
+        );
+
+        // No key / network error falls back to the persona line instead of
+        // swallowing the greeting.
+        engine
+            .send(RuntimeCommand::GreetingResult(Err(
+                "no api key configured".to_string()
+            )))
+            .expect("failed greeting result");
+        let expected =
+            crate::greeting::fallback_greeting(&petsona_core::persona::Persona::default());
+        assert!(
+            wait_for_text(&engine, RuntimeTextField::Bubble, &expected),
+            "fallback greeting must surface, now {:?}",
+            engine.text(RuntimeTextField::Bubble)
         );
         engine.stop();
     }

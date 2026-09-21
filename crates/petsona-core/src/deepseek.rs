@@ -46,6 +46,7 @@ impl DeepSeekClient {
         })
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn generate_greeting(
         &self,
         persona: &Persona,
@@ -54,10 +55,11 @@ impl DeepSeekClient {
         now_text: &str,
         pet_name: Option<&str>,
         pet_state: &str,
+        max_chars: usize,
     ) -> Result<String> {
         let (system, user) = build_prompt(persona, context, trigger, now_text, pet_name, pet_state);
 
-        self.complete(&system, &user, 80)
+        self.complete(&system, &user, max_chars.clamp(1, 200))
     }
 
     /// Generate a short conversational reply using the same persona and
