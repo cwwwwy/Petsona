@@ -92,19 +92,12 @@ private struct PersonaProjection: Decodable {
     var id = "default"
     var name = "小助手"
     var description: String?
-    var avatarPet: String?
     var systemPrompt = ""
     var greeting: String?
     var traits = PersonaTraitsProjection(tone: "", verbosity: "normal", language: "zh-CN", emoji: false)
-    var sampling = PersonaSamplingProjection()
-    var model: PersonaModelProjection?
-    var memory = PersonaMemoryProjection()
-    var tts = PersonaTTSProjection()
-    var proactive = PersonaProactiveProjection()
 
     enum CodingKeys: String, CodingKey {
-        case id, name, description, avatarPet, systemPrompt, greeting
-        case traits, sampling, model, memory, tts, proactive
+        case id, name, description, systemPrompt, greeting, traits
     }
 
     init() {}
@@ -114,15 +107,9 @@ private struct PersonaProjection: Decodable {
         id = try values.decodeIfPresent(String.self, forKey: .id) ?? id
         name = try values.decodeIfPresent(String.self, forKey: .name) ?? name
         description = try values.decodeIfPresent(String.self, forKey: .description)
-        avatarPet = try values.decodeIfPresent(String.self, forKey: .avatarPet)
         systemPrompt = try values.decodeIfPresent(String.self, forKey: .systemPrompt) ?? systemPrompt
         greeting = try values.decodeIfPresent(String.self, forKey: .greeting)
         traits = try values.decodeIfPresent(PersonaTraitsProjection.self, forKey: .traits) ?? traits
-        sampling = try values.decodeIfPresent(PersonaSamplingProjection.self, forKey: .sampling) ?? sampling
-        model = try values.decodeIfPresent(PersonaModelProjection.self, forKey: .model)
-        memory = try values.decodeIfPresent(PersonaMemoryProjection.self, forKey: .memory) ?? memory
-        tts = try values.decodeIfPresent(PersonaTTSProjection.self, forKey: .tts) ?? tts
-        proactive = try values.decodeIfPresent(PersonaProactiveProjection.self, forKey: .proactive) ?? proactive
     }
 }
 
@@ -148,8 +135,14 @@ private struct DeepSeekProjection: Decodable {
 private struct MemoryConfigProjection: Decodable {
     var enabled = true
     var recentEvents = 5
-    var retentionDays = 90
     var factLimit = 20
+}
+
+private struct GreetingConfigProjection: Decodable {
+    var enabled = true
+    var idleMinutes = 30
+    var cooldownMinutes = 120
+    var maxChars = 40
 }
 
 private struct MemoryFactProjection: Decodable, Identifiable {
@@ -170,6 +163,7 @@ private struct MemoryEventProjection: Decodable, Identifiable {
 
 private struct MemoryProjection: Decodable {
     var config = MemoryConfigProjection()
+    var greeting = GreetingConfigProjection()
     var facts: [MemoryFactProjection] = []
     var events: [MemoryEventProjection] = []
 }
@@ -194,10 +188,10 @@ enum SettingsSection: String, CaseIterable, Identifiable {
         switch self {
         case .library: return "宠物库"
         case .behavior: return "外观与交互"
-        case .deepSeek: return "DeepSeek"
+        case .deepSeek: return "连接与问候"
         case .persona: return "人格"
         case .memory: return "记忆"
-        case .startup: return "启动"
+        case .startup: return "系统"
         }
     }
 
@@ -235,26 +229,12 @@ struct SettingsView: View {
     @State private var personaID = "default"
     @State private var personaName = ""
     @State private var personaDescription = ""
-    @State private var personaAvatarPet = ""
     @State private var personaTone = ""
     @State private var personaVerbosity = "normal"
     @State private var personaLanguage = "zh-CN"
     @State private var personaEmoji = false
     @State private var greeting = ""
     @State private var systemPrompt = ""
-    @State private var personaTemperature = 0.8
-    @State private var personaMaxTokens = 800
-    @State private var modelProvider = ""
-    @State private var personaModel = ""
-    @State private var personaMemoryEnabled = true
-    @State private var personaMemoryWindow = 12
-    @State private var personaLongTermMemory = true
-    @State private var personaSummarizeAfter = 20
-    @State private var ttsEnabled = false
-    @State private var ttsVoice = ""
-    @State private var ttsRate = 1.0
-    @State private var proactiveEnabled = false
-    @State private var proactiveIdleMinutes = 30
     @State private var showingNewPersona = false
 
     @State private var deepSeekBaseURL = "https://api.deepseek.com/v1"
@@ -268,8 +248,20 @@ struct SettingsView: View {
 
     @State private var memoryEnabled = true
     @State private var memoryRecentEvents = 5
-    @State private var memoryRetentionDays = 90
     @State private var memoryFactLimit = 20
+
+    @State private var greetingEnabled = true
+    @State private var greetingIdleMinutes = 30
+    @State private var greetingCooldownMinutes = 120
+    @State private var greetingMaxChars = 40
+
+    /// Signatures captured when the form is filled from the engine, so that a
+    /// reload never looks like a user edit (instant apply, REQ-S05).
+    @State private var loadedPersonaSignature = ""
+    @State private var loadedDeepSeekSignature = ""
+    @State private var loadedMemorySignature = ""
+    @State private var loadedGreetingSignature = ""
+    @State private var pendingApply: Task<Void, Never>?
     @State private var factKey = ""
     @State private var factValue = ""
     @State private var autostart = false
@@ -315,13 +307,13 @@ struct SettingsView: View {
         case .behavior:
             settingsForm(title: "外观与交互") { behaviorSection }
         case .deepSeek:
-            settingsForm(title: "DeepSeek") { deepSeekSection }
+            settingsForm(title: "连接与问候") { deepSeekSection }
         case .persona:
             settingsForm(title: "人格") { personaSection }
         case .memory:
             settingsForm(title: "记忆") { memorySection }
         case .startup:
-            settingsForm(title: "启动") { startupSection }
+            settingsForm(title: "系统") { startupSection }
         }
     }
 
@@ -456,7 +448,6 @@ struct SettingsView: View {
             TextField("人格 ID", text: $personaID).disabled(true)
             TextField("名称", text: $personaName)
             TextField("简介", text: $personaDescription)
-            TextField("绑定宠物 ID（可选）", text: $personaAvatarPet)
             TextField("语气", text: $personaTone)
             Picker("回答长度", selection: $personaVerbosity) {
                 Text("简短").tag("short")
@@ -467,28 +458,10 @@ struct SettingsView: View {
             Toggle("允许 emoji", isOn: $personaEmoji)
             TextField("固定问候（可选）", text: $greeting)
             TextEditor(text: $systemPrompt).frame(minHeight: 90)
-            HStack {
-                Text("温度")
-                Slider(value: $personaTemperature, in: 0...2, step: 0.1)
-                Text(String(format: "%.1f", personaTemperature)).frame(width: 40)
-            }
-            Stepper("最大回复 token：\(personaMaxTokens)", value: $personaMaxTokens, in: 16...4000, step: 16)
-            TextField("模型提供方（可选）", text: $modelProvider)
-            TextField("绑定模型（可选）", text: $personaModel)
-            Toggle("启用人格记忆", isOn: $personaMemoryEnabled)
-            Stepper("对话记忆窗口：\(personaMemoryWindow) 轮", value: $personaMemoryWindow, in: 1...100)
-            Toggle("启用长期记忆", isOn: $personaLongTermMemory)
-            Stepper("总结阈值：\(personaSummarizeAfter) 轮", value: $personaSummarizeAfter, in: 1...200)
-            Toggle("启用语音配置", isOn: $ttsEnabled)
-            TextField("语音名称（可选）", text: $ttsVoice)
-            HStack {
-                Text("语速")
-                Slider(value: $ttsRate, in: 0.25...4.0, step: 0.05)
-                Text(String(format: "%.2f", ttsRate)).frame(width: 46)
-            }
-            Toggle("启用主动问候配置", isOn: $proactiveEnabled)
-            Stepper("主动问候空闲：\(proactiveIdleMinutes) 分钟", value: $proactiveIdleMinutes, in: 1...1440)
-            Button("保存人格") { savePersona() }
+        }
+        .onChange(of: personaSignature) { value in
+            guard value != loadedPersonaSignature else { return }
+            scheduleApply(savePersona)
         }
         .sheet(isPresented: $showingNewPersona) {
             NewPersonaView(templates: personaTemplates) { id, name, template in
@@ -514,7 +487,6 @@ struct SettingsView: View {
                 Text(String(format: "%.1f", deepSeekTemperature)).frame(width: 40)
             }
             Toggle("关闭思考模式（短回复更快）", isOn: $deepSeekThinkingDisabled)
-            Button("保存 DeepSeek 配置") { saveDeepSeekConfig() }
             Divider()
             SecureField("DeepSeek API Key（可选）", text: $deepSeekKey)
             HStack {
@@ -535,15 +507,31 @@ struct SettingsView: View {
                     .foregroundStyle(.secondary)
             }
         }
+        .onChange(of: deepSeekSignature) { value in
+            guard value != loadedDeepSeekSignature else { return }
+            scheduleApply(saveDeepSeekConfig)
+        }
+
+        Section("空闲问候") {
+            Toggle("让宠物主动打招呼", isOn: $greetingEnabled)
+            Stepper("空闲 \(greetingIdleMinutes) 分钟后触发", value: $greetingIdleMinutes, in: 1...1440)
+            Stepper("两次问候至少间隔 \(greetingCooldownMinutes) 分钟", value: $greetingCooldownMinutes, in: 0...1440)
+            Stepper("问候最长 \(greetingMaxChars) 字", value: $greetingMaxChars, in: 1...200)
+            Text("没有配置 DeepSeek 时使用人格里的固定问候；问候会显示为气泡并记入记忆。")
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+        }
+        .onChange(of: greetingSignature) { value in
+            guard value != loadedGreetingSignature else { return }
+            scheduleApply(saveGreetingConfig)
+        }
     }
 
     private var memorySection: some View {
         Section("记忆与用户偏好") {
             Toggle("启用记忆", isOn: $memoryEnabled)
             Stepper("保留最近事件：\(memoryRecentEvents)", value: $memoryRecentEvents, in: 1...100)
-            Stepper("保留天数：\(memoryRetentionDays)", value: $memoryRetentionDays, in: 1...3650)
             Stepper("最多偏好：\(memoryFactLimit)", value: $memoryFactLimit, in: 1...50)
-            Button("保存记忆设置") { saveMemoryConfig() }
             Divider()
             Text("对话中的“我喜欢… / 我不喜欢… / 请叫我…”等明确表达会自动记录，并用于后续回复。")
                 .font(.footnote)
@@ -576,6 +564,10 @@ struct SettingsView: View {
                 }
             }
             Button("清空当前人格记忆") { engine.clearMemory() }
+        }
+        .onChange(of: memorySignature) { value in
+            guard value != loadedMemorySignature else { return }
+            scheduleApply(saveMemoryConfig)
         }
     }
 
@@ -625,6 +617,35 @@ struct SettingsView: View {
                     }
                 }
         }
+
+        Section("数据") {
+            Button("打开数据目录") { openDataDirectory() }
+            Text(dataDirectoryPath).font(.footnote).foregroundStyle(.secondary)
+        }
+
+        Section("关于") {
+            Text("Petsona \(appVersion)").font(.headline)
+            Text("本地优先的桌宠：宠物、人格与记忆保存在你自己的机器上，只有配置了 DeepSeek 才会发起网络请求。")
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+            Link("项目主页", destination: URL(string: "https://github.com/cwwwwy/Petsona")!)
+        }
+    }
+
+    private var appVersion: String {
+        Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0.1.0"
+    }
+
+    private var dataDirectoryPath: String {
+        if let configured = ProcessInfo.processInfo.environment["PETSONA_HOME"], !configured.isEmpty {
+            return configured
+        }
+        let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
+        return base?.appendingPathComponent("Petsona").path ?? "~/Library/Application Support/Petsona"
+    }
+
+    private func openDataDirectory() {
+        NSWorkspace.shared.open(URL(fileURLWithPath: dataDirectoryPath))
     }
 
     private func decode<T: Decodable>(_ field: PetsonaTextField, as type: T.Type) -> T? {
@@ -644,26 +665,13 @@ struct SettingsView: View {
         personaID = persona.id
         personaName = persona.name
         personaDescription = persona.description ?? ""
-        personaAvatarPet = persona.avatarPet ?? ""
         personaTone = persona.traits.tone
         personaVerbosity = persona.traits.verbosity
         personaLanguage = persona.traits.language
         personaEmoji = persona.traits.emoji
         greeting = persona.greeting ?? ""
         systemPrompt = persona.systemPrompt
-        personaTemperature = persona.sampling.temperature
-        personaMaxTokens = persona.sampling.maxTokens
-        modelProvider = persona.model?.provider ?? ""
-        personaModel = persona.model?.model ?? ""
-        personaMemoryEnabled = persona.memory.enabled
-        personaMemoryWindow = persona.memory.windowTurns
-        personaLongTermMemory = persona.memory.longTerm
-        personaSummarizeAfter = persona.memory.summarizeAfterTurns
-        ttsEnabled = persona.tts.enabled
-        ttsVoice = persona.tts.voice ?? ""
-        ttsRate = persona.tts.rate
-        proactiveEnabled = persona.proactive.enabled
-        proactiveIdleMinutes = persona.proactive.idleMinutes
+        loadedPersonaSignature = personaSignature
 
         let deepSeek = deepSeek
         deepSeekBaseURL = deepSeek.baseUrl
@@ -673,12 +681,52 @@ struct SettingsView: View {
         deepSeekMaxTokens = deepSeek.maxTokens
         deepSeekTemperature = deepSeek.temperature
         deepSeekThinkingDisabled = deepSeek.thinkingDisabled
+        loadedDeepSeekSignature = deepSeekSignature
 
         let memory = memory
         memoryEnabled = memory.config.enabled
         memoryRecentEvents = memory.config.recentEvents
-        memoryRetentionDays = memory.config.retentionDays
         memoryFactLimit = memory.config.factLimit
+        loadedMemorySignature = memorySignature
+
+        let greeting = memory.greeting
+        greetingEnabled = greeting.enabled
+        greetingIdleMinutes = greeting.idleMinutes
+        greetingCooldownMinutes = greeting.cooldownMinutes
+        greetingMaxChars = greeting.maxChars
+        loadedGreetingSignature = greetingSignature
+    }
+
+    // Instant apply: every field change schedules one debounced command and
+    // never fires for values that came from a reload (settings-consolidation S05).
+    private func scheduleApply(_ action: @escaping () -> Void) {
+        pendingApply?.cancel()
+        pendingApply = Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 450_000_000)
+            guard !Task.isCancelled else { return }
+            action()
+        }
+    }
+
+    private var personaSignature: String {
+        [personaName, personaDescription, personaTone, personaVerbosity, personaLanguage,
+         personaEmoji ? "1" : "0", greeting, systemPrompt].joined(separator: "\u{1F}")
+    }
+
+    private var deepSeekSignature: String {
+        [deepSeekBaseURL, deepSeekModel, deepSeekAPIKeyEnv, String(deepSeekTimeout),
+         String(deepSeekMaxTokens), String(deepSeekTemperature),
+         deepSeekThinkingDisabled ? "1" : "0"].joined(separator: "\u{1F}")
+    }
+
+    private var memorySignature: String {
+        [memoryEnabled ? "1" : "0", String(memoryRecentEvents), String(memoryFactLimit)]
+            .joined(separator: "\u{1F}")
+    }
+
+    private var greetingSignature: String {
+        [greetingEnabled ? "1" : "0", String(greetingIdleMinutes),
+         String(greetingCooldownMinutes), String(greetingMaxChars)].joined(separator: "\u{1F}")
     }
 
     private func reloadLater() {
@@ -691,7 +739,6 @@ struct SettingsView: View {
     private func savePersona() {
         engine.updatePersona(fields: [
             "description": personaDescription,
-            "avatar_pet": personaAvatarPet,
             "name": personaName,
             "tone": personaTone,
             "verbosity": personaVerbosity,
@@ -699,19 +746,6 @@ struct SettingsView: View {
             "emoji": personaEmoji,
             "greeting": greeting,
             "system_prompt": systemPrompt,
-            "temperature": personaTemperature,
-            "max_tokens": personaMaxTokens,
-            "model_provider": modelProvider,
-            "model": personaModel,
-            "memory_enabled": personaMemoryEnabled,
-            "memory_window_turns": personaMemoryWindow,
-            "memory_long_term": personaLongTermMemory,
-            "memory_summarize_after_turns": personaSummarizeAfter,
-            "tts_enabled": ttsEnabled,
-            "tts_voice": ttsVoice,
-            "tts_rate": ttsRate,
-            "proactive_enabled": proactiveEnabled,
-            "proactive_idle_minutes": proactiveIdleMinutes,
         ])
         reloadLater()
     }
@@ -732,8 +766,16 @@ struct SettingsView: View {
         engine.updateMemoryConfig([
             "enabled": memoryEnabled,
             "recentEvents": memoryRecentEvents,
-            "retentionDays": memoryRetentionDays,
             "factLimit": memoryFactLimit,
+        ])
+    }
+
+    private func saveGreetingConfig() {
+        engine.updateGreetingConfig([
+            "enabled": greetingEnabled,
+            "idleMinutes": greetingIdleMinutes,
+            "cooldownMinutes": greetingCooldownMinutes,
+            "maxChars": greetingMaxChars,
         ])
     }
 

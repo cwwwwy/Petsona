@@ -179,6 +179,10 @@ final class EngineClient: ObservableObject {
         sendJSONObject(kind: PETSONA_COMMAND_UPDATE_MEMORY_CONFIG, object: object)
     }
 
+    func updateGreetingConfig(_ object: [String: Any]) {
+        sendJSONObject(kind: PETSONA_COMMAND_UPDATE_GREETING_CONFIG, object: object)
+    }
+
     func rememberFact(key: String, value: String, confidence: Double = 0.8) {
         sendJSONObject(kind: PETSONA_COMMAND_REMEMBER_FACT,
                        object: ["key": key, "value": value, "confidence": confidence])
