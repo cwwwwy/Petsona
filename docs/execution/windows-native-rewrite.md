@@ -26,18 +26,18 @@
 |---|---|---|---|---|---|
 | REQ-W01 | `apps/windows` 工程/锁文件/CI 已写入（21 个文件，含 3 份 packages.lock.json） | 部分（CI 未运行过） | 通过：restore --locked-mode、build Debug+Release 0 警告、format 无警告（E-W1b～e） | 不适用 | CI 首次运行验证 |
 | REQ-W02 | `Petsona.Core` LibraryImport 绑定 + EngineClient + 线程约束 | 部分（缺 panic 注入与随包复制） | 通过：7/7（AbiTests 4 + EngineClientTests 3，E-W1f） | 不适用 | panic 注入（后续批次）、DLL 随包（B5） |
-| REQ-W03 | Win32 分层窗（无边框/置顶/不激活）+ GDI+ 帧渲染（UpdateLayeredWindow）+ 像素穿透（idle row 0 并集回退） | 已实现 | 通过：端到端运行 + 帧导出 + 截图确认（E-W2d） | 未做（穿透/白框视觉） | M-W 人工确认 |
-| REQ-W04 | 单双击（320ms）/拖动（4px 阈值）区分、位置物理像素保存、托盘图标 + 原生菜单（专用 STA 线程）、不抢前台 | 已实现 | 部分：窗口特性运行验证通过；输入与菜单待 SendInput 自动验证 | 未做 | 拖动/点击/托盘自动验证（B5 smoke） |
-| REQ-W05 | 空库自动开设置；导入文件夹/zip、Codex 扫描与双击导入、切换、导出、删除、重复 ID 覆盖确认（内联确认面板） | 已实现 | 命令层经 SettingsFlowTests 覆盖；导入/导出链路未端到端自动验证 | 未做 | 导入链路端到端测试（B5 smoke） |
-| REQ-W06 | 设置页全量：缩放档位/穿透、DeepSeek 全配置 + 凭据保存/清除、人格 CRUD/复制/导入导出/22 字段编辑、记忆配置与事实管理、HKCU 自启 | 已实现 | 通过：SettingsFlowTests + SystemServiceTests（13/13）+ UI 渲染截图（E-W3a～c） | 未做 | 凭据存在性显示（后续微调）；M-W |
-| REQ-W07 | 气泡（宠物上方 10px，协议驱动）、编辑按钮（下方 16px，点击打开 Composer）、Composer（380×190、位置翻转/夹取、Enter 发送/Shift+Enter 换行/Esc 关闭、草稿保留、IME 交给平台控件） | 已实现 | 通过：端到端渲染 + 按钮点击打开路径（E-W4b/c） | 未做（IME/真实输入发送/草稿） | M-W：IME、发送链路、草稿保留 |
-| REQ-W08 | 协议经新入口验证；HKCU 自启（含隔离值名测试）；单实例/日志由 runtime 提供 | 部分（TTL 与单实例未经新入口验证） | 通过：/health（E-W2d/E-W3b）+ 自启测试（13/13） | 未做 | TTL/单实例自动验证（B5） |
-| REQ-W09 | 全局光标 33ms 采样（移动阈值 1px）、椭圆进入 40%/退出 50% 迟滞、22% 死区、随宠物移动；Composer 打开时注视输入窗中心 | 已实现 | 通过：GazeFilterTests 4 项 + 端到端运行（E-W4a） | 未做（视觉跟随） | M-W：注视视觉；字符级 caret 精度（当前为窗口中心近似） |
-| REQ-W10 | 物理像素位置持久化（单屏）：拖动结束写 `config.json` 的 `startPosition`，重启还原；重力/活动/多屏/工作区夹取按 §3.1 暂缓 | 已实现 | 通过：端到端拖动 → 保存 (1922,904) → 重启还原一致（E-W5b）+ 单测重启持久化 | 未做 | M-W：拖动手感；工作区夹取解冻后补 |
-| REQ-W11 | faulted 分支（本地错误气泡 + 停注视 + 1s 心跳）、Dispose 顺序、销毁拒绝调用、线程约束、退出释放端口/锁 | 已实现 | 通过：EngineLifecycleTests 4 项（21/21 总计，E-W5a/d）+ 托盘菜单弹出/Esc（E-W5c） | 未做 | M-W：菜单退出交互；FFI panic 注入（无公开接口，两端共有） |
+| REQ-W03 | Win32 分层窗（无边框/置顶/不激活）+ GDI+ 帧渲染（UpdateLayeredWindow）+ 像素穿透（idle row 0 并集回退） | 已实现 | 通过：端到端运行 + 帧导出 + 截图确认（E-W2d） | **2026-09-21 人工通过**：W1 窗口视觉 + W4 穿透落点 | — |
+| REQ-W04 | 单双击（320ms）/拖动（4px 阈值）区分、位置物理像素保存、托盘图标 + 原生菜单（专用 STA 线程）、不抢前台 | 已实现 | 通过：N15 点击、N17 托盘菜单、N20/N22 拖动动画（E-W9a/E-W14d） | **2026-09-21 人工通过**：W2 托盘菜单（含溢出面板 / 固定到任务栏）+ W3 点击、双击、拖动 | — |
+| REQ-W05 | 空库自动开设置；导入文件夹/zip、Codex 扫描与双击导入、切换、导出、删除、重复 ID 覆盖确认（内联确认面板） | 已实现 | 命令层经 SettingsFlowTests 覆盖；N12 空库首启；导入 / 导出链路仍无端到端自动测试 | **2026-09-21 人工通过**：W7 导入（文件夹 / zip / Codex）、导出、删除、覆盖确认 | — |
+| REQ-W06 | 设置页全量：缩放档位/穿透、DeepSeek 全配置 + 凭据保存/清除、人格 CRUD/复制/导入导出/22 字段编辑、记忆配置与事实管理、HKCU 自启 | 已实现 | 通过：SettingsFlowTests + SystemServiceTests（13/13）+ UI 渲染截图（E-W3a～c） | **2026-09-21 人工通过**：W7 缩放 / 穿透 / DeepSeek / 凭据保存 / 人格 / 记忆 / HKCU 自启开关（登录后实际自启见 W 表 D5） | 凭据存在性显示（后续微调） |
+| REQ-W07 | 气泡（宠物上方 10px，协议驱动）、编辑按钮（下方 16px，点击打开 Composer）、Composer（380×190、位置翻转/夹取、Enter 发送/Shift+Enter 换行/Esc 关闭、草稿保留、IME 交给平台控件） | 已实现 | 通过：端到端渲染 + 按钮点击打开路径（E-W4b/c）+ N18 聚焦 | **2026-09-21 人工通过**：W6 Enter 发送 / Shift+Enter / Esc 草稿 / 中文 IME + W13 面板聚焦 | — |
+| REQ-W08 | 协议经新入口验证；HKCU 自启（含隔离值名测试）；单实例/日志由 runtime 提供 | 已实现 | 通过：N7 协议状态 / N8 TTL 回退 / N10-N11 单实例 / N13 端口释放（E-W6a）+ 自启测试（13/13） | **2026-09-21 人工通过**：W7 自启开关 + W10 退出释放端口 + W11 状态协议 5 条步骤 | 无（粘滞状态解除方式记录在 `WINDOWS_VERIFICATION.md` W11 小节；可选改动见 CR-W2） |
+| REQ-W09 | 全局光标 33ms 采样（移动阈值 1px）、椭圆进入 40%/退出 50% 迟滞、22% 死区、随宠物移动；Composer 打开时注视输入窗中心 | 已实现 | 通过：GazeFilterTests / GazeStabilizerTests + N21 注视跨行（E-W14c） | **2026-09-21 人工通过**：W5 全方向跟随、范围、静止保持、死区与迟滞观感 | 字符级 caret 精度（当前为窗口中心近似） |
+| REQ-W10 | 物理像素位置持久化（单屏）：拖动结束写 `config.json` 的 `startPosition`，重启还原；重力/活动/多屏/工作区夹取按 §3.1 暂缓 | 已实现 | 通过：端到端拖动 → 保存 (1922,904) → 重启还原一致（E-W5b）+ 单测重启持久化 | **2026-09-21 人工通过**：W3 拖动手感与松手保存 | 工作区夹取解冻后补 |
+| REQ-W11 | faulted 分支（本地错误气泡 + 停注视 + 1s 心跳）、Dispose 顺序、销毁拒绝调用、线程约束、退出释放端口/锁 | 已实现 | 通过：EngineLifecycleTests 4 项（21/21 总计，E-W5a/d）+ N13 端口释放 | **2026-09-21 人工通过**：W10 托盘菜单退出、进程结束、无残留窗口 / 托盘 | FFI panic 注入（无公开接口，两端共有） |
 | REQ-W12 | 测试隔离：每测试独立 home + `stateServer.enabled=false` | 部分（探针未建） | 通过：隔离逻辑在 7/7 内验证 | 不适用 | 探针与生产包检查（B1 起） |
-| REQ-W13 | `verify-windows.ps1` 切到新入口（含 UNC/PATHEXT/工具定位适配）、`windows-smoke.ps1` 重写为 13 项 native smoke、`package-windows.ps1` 改为 dotnet publish + 正斜杠 zip、release workflow 加 setup-dotnet | 已实现 | 通过：`verify-windows.ps1 -Full` 两次全绿；干净目录解压运行 /health 通过（E-W6a/d） | 未做 | D6 干净机器（无 WindowsAppRuntime）待人工 |
-| REQ-W14 | `WINDOWS_VERIFICATION.md` 新增「W. 原生前端验收」12 项人工矩阵；`WINDOWS_ISSUES.md` 顶部冻结声明 | 已实现 | 文档审查通过（E-W6f） | 未做（W1–W10 待人工复测） | M-W 人工复测 |
+| REQ-W13 | `verify-windows.ps1` 切到新入口（含 UNC/PATHEXT/工具定位适配）、`windows-smoke.ps1` 重写为 24 项 native smoke、`package-windows.ps1` 改为 dotnet publish + 正斜杠 zip、release workflow 加 setup-dotnet | 已实现 | 通过：`verify-windows.ps1 -Full` 多轮全绿（最近 E-W15e：24/24）；干净目录解压运行 /health 通过（E-W6a/d） | **2026-09-21 人工通过**：W1 打包版启动 + W10 退出 | D6 干净机器（无 WindowsAppRuntime）待人工 |
+| REQ-W14 | `WINDOWS_VERIFICATION.md` 新增「W. 原生前端验收」12 项人工矩阵；`WINDOWS_ISSUES.md` 顶部冻结声明 | 已实现 | 文档审查通过（E-W6f） | **2026-09-21 人工通过**：W1～W11、W13、W14（首轮～第十轮实机复测）；W12 暂缓 | 无（W12 解冻需用户确认） |
 | REQ-W15 | 旧线清理 | 未开始（收尾） | 未跑 | 不适用 | 两端联动确认 |
 
 ## 命令证据（追加，不覆盖失败历史）
@@ -254,11 +254,54 @@
 | E-W14d | smoke | N22 拖动反向通过（running-left/right 帧都出现）；**22/22 通过** |
 | E-W14e | full gate | `verify-windows.ps1 -Full` exit 0：cargo workspace（core **57/57**、runtime 5/5、app 25/25）、dotnet **36/36**、native smoke **22/22**（源码构建与解压包各一轮）、FFI SHA256 守卫、打包结构全绿 |
 
+### B5 人工验收第九轮反馈与修复（2026-09-21，启动慢 + 光标忙碌圈）
+
+| 反馈 | 根因 | 修复 |
+|---|---|---|
+| 1 启动速度有一些慢 | 冷启动要把 WinUI 3 unpackaged 宿主（WindowsAppSDK 2.5 bootstrap）与 46 MB 托管依赖读进进程再 JIT；本地磁盘实测首次 3.2 s、之后热启动 0.55 s，从 WSL UNC 路径启动还要多约 1 s（每个 DLL 都走 9P 往返）。本轮只量化不改架构，优化选项见 CR-W1。 | 未改（等用户决定，见 CR-W1） |
+| 2 启动后一段时间鼠标移到宠物上显示"加载中" | 宠物窗 / overlay 窗口类注册时 `WNDCLASSEXW.HCursor = NULL` 且窗口过程不处理 `WM_SETCURSOR`。Windows 对无类光标的窗口**不安装光标**，窗口上会一直保留进入前的形状：shell 启动程序期间设置的 `IDC_APPSTARTING`（忙碌圈）因此冻结在宠物上，直到鼠标移进另一个有光标的窗口。 | `PetWindow` / `OverlayWindow` 注册窗口类时设 `HCursor = IDC_ARROW`，并在 `WM_SETCURSOR` + `HTCLIENT` 时显式 `SetCursor(IDC_ARROW)` 后返回 1；托盘 owner 隐藏窗口一并补上类光标（MSDN 建议）。窗口类在**进程内**注册，所以这条只能由返回值/行为验证。 |
+| 第九轮复测（2026-09-21，用户实机） | —— | 1 光标：**通过**（冷启动 / 热启动后立即把鼠标移到宠物与编辑按钮上，均为普通箭头，无忙碌圈残留）；2 启动速度：用户确认**可接受**，**CR-W1 选择选项 C**（不改代码，E-W15d 作为性能基线）。 |
+
+| 证据ID | 内容 | 结果 |
+|---|---|---|
+| E-W15a | smoke N23/N24 判据改写 | 原判据用 `GetClassInfoExW` 读 app 的窗口类：窗口类是进程局部的，跨进程必然读不到（实测 `petClass=0`），所以第一版 N23 是假 FAIL / 修复后改判据又变成恒真假 PASS。改为对窗口发 `WM_SETCURSOR`（`HTCLIENT`）并断言窗口过程返回 1（自己接管光标）。**源码构建与解压包两轮各 24/24 通过**（N23 `result=1 control=0`、N24 `count=1 results=1 control=0`）。 |
+| E-W15b | 判据自校准（负向对照） | 同一轮 smoke 现场注册一个"修复前形态"的隐藏窗口（类光标 NULL + `DefWindowProc`），它必须返回 0。实测 `control=0`、宠物窗与 overlay `result=1`（`.scratch/cursor-return-probe.ps1`：control=0、pet=1、overlay=1），证明判据能区分"光标无主"和"窗口接管"。 |
+| E-W15c | 探针侧无法伪造光标（用来解释为何不用形状比对） | 实测 `SetCursor(APPSTARTING/WAIT)` 由探针进程调用时对他人窗口无效（连续 4 次读取仍 `65539=IDC_ARROW`），这是 `SetCursor` 的线程/窗口归属限制；因此形状比对在跨进程 smoke 里没有判别力，必须用返回值 + 对照窗口。 |
+| E-W15d | 启动耗时量化（Release，隔离 home，同一构建） | ① 外部观感：`Start-Process` → 宠物窗可见：UNC 冷启动 4.17 s（health 3.92 s）；本地冷启动 3.18 s；本地热启动 0.58 / 0.54 s（overlay 约 1.05 s）。② 应用侧打点（临时 `PETSONA_STARTUP_TRACE`，测完已回滚并与 HEAD 逐字节一致）：热启动 0 ms App 构造 → 70 ms OnLaunched → 130 ms anchor 窗口 → 190 ms AppController 构造完（此时 PetWindow + 2×Overlay + Tray + Scheduler 都已创建）→ 285 ms 首帧可见；首次运行同为 539 ms。**结论：应用自身代码约 0.3 s（首次 0.54 s），冷启动其余 3–5 s 全在 CLR / WinUI / WindowsAppSDK 宿主初始化（进程创建 → App 构造之前），不在宠物窗或控制器**。脚本：`.scratch/startup-timing.ps1`、`.scratch/startup-trace.ps1`、`.scratch/build-trace.ps1`。 |
+| E-W15e | full gate | `scripts\verify-windows.ps1 -Full` exit 0；cargo fmt/clippy/test/release、dotnet **36/36**、native smoke **24/24**（源码构建与解压包各一轮，共 48 个 PASS）、FFI SHA256 守卫、打包结构检查全绿。日志 `/tmp/verify-win.log`。 |
+| E-W15f | 第九轮人工复测（用户实机，桌面验收包，隔离 home `%TEMP%\petsona-acceptance2`，端口 17873） | W14 人工通过：冷启动 / 热启动后光标为普通箭头，无 `IDC_APPSTARTING` 残留；启动速度用户确认可接受，CR-W1 决定选项 C（无代码 / 计划变更，性能基线即 E-W15d）。 |
+
+### B5 人工验收第十轮复测（2026-09-21，W 矩阵收口）
+
+用户实机复测（桌面验收包，隔离 home `%TEMP%\petsona-acceptance2`，端口 17873）：
+
+| 项 | 结果 | 说明 |
+|---|---|---|
+| W2 托盘菜单 | 通过 | 溢出面板与固定到任务栏两种状态都能右键弹出菜单 |
+| W3 点击 / 双击 / 拖动 | 通过 | 挥手 + 气泡、跳跃、跟手拖动与松手保存位置均正常 |
+| W5 注视 | 通过 | 全方向跟随、范围、静止保持与死区 / 迟滞观感确认 |
+| W6 气泡 / Composer | 通过 | Enter 发送、Shift+Enter 换行、Esc 关草稿、中文 IME 均正常 |
+| W13 面板聚焦 | 通过 | Composer 与设置窗口都取得前台焦点，可直接键盘输入 |
+| W1 窗口视觉 | 通过 | 透明 / 无边框 / 置顶，任务栏无多余窗口 |
+| W4 穿透落点 | 通过 | 透明处落到桌面、不透明处仍可点击 |
+| W7 设置页全分区 | 通过 | 导入导出删除、缩放、穿透、DeepSeek、人格、记忆、HKCU 自启开关 |
+| W10 托盘退出 | 通过 | 进程结束、端口释放、无残留窗口 / 托盘 |
+| W11 状态协议 | 通过（第二次复测） | 5 条步骤全部符合预期：`/health`、`/pets`、`waiting` 10 s 回退、`ttlMs:0` 粘滞、非法状态 400。复测中用户提出「第 4 条之后一直 running，点宠物 / 发聊天都不解除」——已确认是 `source` 生命周期 + 优先级仲裁的既定行为（见 CR-W2），同 source 再发一条即可解除 |
+
+| 证据ID | 内容 | 结果 |
+|---|---|---|
+| E-W16a | 第十轮人工复测记录（用户实机描述，2026-09-21） | W1～W10、W13、W14 人工通过；W11 待用户按新落盘的「W11 手工步骤」确认；W12 按计划 v1.1 §3.1 暂缓。自动门禁未重跑（本轮只改文档，代码与 E-W15e 基线一致）。 |
+| E-W16c | W11 第二次复测（用户实机，2026-09-21） | 5 条步骤全部符合预期，W11 人工通过；同时暴露 `ttlMs:0` 粘滞状态无法被点击 / 拖动 / 聊天解除的可用性缺口 → CR-W2（诊断依据：`state.rs::raise` 的 source/优先级仲裁、`session.rs::poll_state_events` 的 `hook:<source>` 前缀、`state_server.rs` 未使用 `action` 字段、`AppController` 的 `native` 源点击 / 拖动与 Composer 不推状态）。 |
+| E-W16b | W11 手工步骤落盘 | `docs/WINDOWS_VERIFICATION.md` 新增「W11 手工步骤」小节：`/health`、`/pets`、`POST /state`（TTL 10 s 回退）、`ttlMs:0` 不过期、非法状态名 400；命令针对隔离实例端口 17873，不与日常实例 17872 冲突。 |
+
 ## 冲突与变更请求
+| CR-W2 | 第十轮复测（W11 第 4 条）暴露可用性缺口：`ttlMs:0` 的协议状态由 `hook:<source>` 独占，用户点击（`native` 源 `waving` 40）、拖动（10）与 Composer 聊天（不推状态）都无法顶掉 `running`（70）；`StateEvent.action` 字段在 wire format 里存在但**只解析不生效**（`crates/petsona-core/src/state_server.rs`），core 已有 `clear_source` / `clear_all` 但未接到 FFI / UI / 协议。用户按 W11 步骤复测时宠物卡在 running，只能靠同 source 再发一条或重启应用解除。 | REQ-W08（协议）、REQ-W04/W07（交互）；计划 v1.1 无「解除粘滞状态」条目 | 选项 A：把已存在的 `action` 字段接上（`{"source":"x","action":"clear"}` → `clear_source("hook:x")`），零新依赖、兼容 UniPet 协议注释，需补 Rust + smoke 测试与文档；选项 B：托盘菜单加「恢复待机」（与「立即活动」对称，按 `clear_all` 实现）；选项 C：都不做，只在文档写明"同 source 再发一条 / 重启"的解法（现状即文档 W11 小节）。**建议 A（协议侧自洽）+ B 若希望纯 GUI 也能解除。** | 待用户决定（本轮未改代码） |
+
+
 
 | CR | 文件事实 | 影响REQ/范围 | 建议 | 用户决定/计划版本 |
 |---|---|---|---|---|
-| — | 暂无 | — | — | — |
+| CR-W1 | 第九轮用户反馈"启动速度有一些慢"。E-W15d 打点显示应用自身启动只占约 0.3 s（首帧 285 ms 热 / 539 ms 首次），冷启动其余 3–5 s 在 CLR + WinUI + WindowsAppSDK 宿主初始化；`AppController` 构造（PetWindow + 2×Overlay + Tray + Scheduler）约 60 ms；`Petsona.csproj` 未启用 `PublishReadyToRun`；SettingsWindow 已是按需创建。 | REQ-W01（构建/发布）、REQ-W13（打包脚本）；**计划 v1.1 无启动性能条目**，属新增范围 | 选项 A：`package-windows.ps1` publish 加 `-p:PublishReadyToRun=true`（只动发布包，减少 JIT；对数秒级宿主初始化估计帮助有限，须实测）；选项 B：延迟创建 overlay / tray —— 上限约 60 ms，收益太小，不建议；选项 C：不改代码，把 E-W15d 作为性能基线（热启动 0.5 s 已可接受）。**建议 C，若要压冷启动再单独试 A 并量化**。 | **用户 2026-09-21 决定：选项 C** —— 不改代码、不修订计划，E-W15d 作为性能基线；若日后仍要压冷启动，另立任务试选项 A 并量化。 |
 
 ## 审查及关闭
 
@@ -269,9 +312,9 @@
 ## 交付与接续
 
 - 实际完成范围：计划 v1.1 落盘（含暂缓对齐）；批次 0 预研；**B0～B5 全部落地**（骨架/ABI、宠物窗与交互、设置页全量 + 自启、气泡/Composer/注视、故障/退出/位置持久化、脚本/打包/验收文档）；证据 E-W1～E-W6，第五轮交互修复见 E-W11a～e，第六轮交互修复见 E-W12a～d，第七轮 DLL 选源 / 注视范围修复见 E-W13a～e，第八轮拖动反向 / 官方注视映射见 E-W14a～e。
-- 未完成/失败/SKIP/人工待验：M-W 人工矩阵（W1–W12：窗口视觉、托盘交互、IME、凭据真实读写、自启登录、菜单退出、穿透落点、拖动 / 注视动画观感、面板聚焦等）；共享 runtime 的重复 `SetState` 语义变更需 macOS 回归；macOS 端的 moved-only 注视门控建议同步修复；D6 干净机器；CI 首次运行（待推送）；FFI panic 注入（无公开接口，两端共有）。
+- 未完成/失败/SKIP/人工待验：W 矩阵人工项已闭合（W11 于第十轮第二次复测通过）；**CR-W2（协议粘滞状态的解除方式）待用户决定**；W12（多屏 / 重力 / 活动提醒 / 透明度 / 协议设置界面 / 托盘化 / 影子动画）按计划 v1.1 §3.1 暂缓；登录后实际自启与 D6 干净机器；CI 首次运行（待推送）；FFI panic 注入（无公开接口，两端共有）；共享 runtime 的重复 `SetState` 语义变更需 macOS 回归。
 - 对用户现有数据/行为的影响：数据格式与协议未变，全部验证使用隔离 PETSONA_HOME；共享 runtime 行为有变更（重复同状态命令不再重置动画时钟、只刷新 TTL），macOS 需回归。
 - 下一个执行者的安全接续点：**B6（清理）依赖 macOS 线完成（计划 REQ-W15 两端联动），当前不具备条件**；可先做 B6 的准备性审计（依赖清单），删除动作需两端验收闭环后再执行。
-- 2026-09-20 人工验收进行中：首轮～第八轮反馈均已诊断修复（见「B5 验收反馈诊断与修复」「B5 人工验收第五轮反馈与修复」「B5 人工验收第六轮反馈与修复」「B5 人工验收第七轮反馈与修复」「B5 人工验收第八轮反馈与修复」）；桌面修复版验收包位于 `Desktop\Petsona-验收-修复版\`（隔离 home `%TEMP%\petsona-acceptance2`，端口 17873），第八轮后已刷新为 E-W14 构建。
+- 2026-09-21 人工验收进行中：首轮～第九轮反馈均已诊断修复（见「B5 验收反馈诊断与修复」「B5 人工验收第五轮反馈与修复」「B5 人工验收第六轮反馈与修复」「B5 人工验收第七轮反馈与修复」「B5 人工验收第八轮反馈与修复」）；桌面修复版验收包位于 `Desktop\Petsona-验收-修复版\`（隔离 home `%TEMP%\petsona-acceptance2`，端口 17873），第八轮后已刷新为 E-W14 构建。第九轮复测（2026-09-21）：W14 通过、启动速度用户确认可接受。
 - Git操作是否发生（默认无）：无。
-- 完成判定及对应证据：B5 端到端门禁与打包验证通过（E-W6a～d）；第五～第八轮修复的自动验证见 E-W11a～e、E-W12a～d、E-W13a～e、E-W14a～e；拖动 / 注视观感、托盘实机右键、面板键盘焦点保持人工待验收。
+- 完成判定及对应证据：B5 端到端门禁与打包验证通过（E-W6a～d）；第五～第十轮修复与复测见 E-W11a～e、E-W12a～d、E-W13a～e、E-W14a～e、E-W15a～f、E-W16a～b；**W 矩阵除 W12（暂缓）外全部人工通过（W11 于第二次复测通过）**；启动性能按 CR-W1 选项 C 不改代码（E-W15d 为基线）。

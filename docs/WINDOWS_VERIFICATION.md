@@ -116,29 +116,68 @@ powershell -ExecutionPolicy Bypass -File scripts\verify-windows.ps1 -Full
 ```
 
 覆盖：Rust workspace 门禁（fmt / clippy / 90 项测试 / release）+ `petsona_ffi.dll` +
-dotnet locked restore / build / format / **36 项测试** + **native smoke 22 项**
+dotnet locked restore / build / format / **36 项测试** + **native smoke 24 项**
 （N1 启动、N2 宠物窗、N3 宠物加载、N4 窗口样式、N5 编辑按钮、N6 托盘窗口、
 N7 协议状态、N8 TTL 回退、N9 穿透切换、N10/N11 单实例、N12 空库首启、
 N13 退出释放端口、N14 webp、N15 点击、N16 动画帧变化、N17 托盘 v4 回调菜单、
-N18 Composer 聚焦、N19 设置聚焦、N20 拖动动画（按引擎 sprite index）、N21 注视跨行、N22 拖动反向）+ 打包结构与内容检查。Release 构建后还有 FFI DLL SHA256 哈希守卫。
+N18 Composer 聚焦、N19 设置聚焦、N20 拖动动画（按引擎 sprite index）、N21 注视跨行、N22 拖动反向、
+N23/N24 窗口接管光标（WM_SETCURSOR 返回 1，且以 NULL 类光标对照窗口返回 0 自校准））+ 打包结构与内容检查。Release 构建后还有 FFI DLL SHA256 哈希守卫。
 
 人工验收（需要真实桌面；状态列由人工复测后更新）：
 
 | # | 操作 | 预期结果 | 状态 |
 |---|---|---|---|
-| W1 | 启动原生 `Petsona.exe`（debug 或打包版） | 宠物窗透明/无边框/置顶、任务栏无多余窗口 | 自动 N2/N4 通过；视觉待人工 |
-| W2 | 查看托盘图标并点击 / 右键（含溢出面板与固定到任务栏） | 图标出现；左/右键都弹出五项菜单；Esc / 点外关闭；打开设置不抢焦点循环 | 自动 N6 + N17（v4 `WM_CONTEXTMENU` 回调 → 菜单窗口）；实机右键待人工 |
-| W3 | 单击 / 双击 / 拖动宠物 | 挥手+气泡 / 跳跃 / 跟手移动且松手保存位置；拖动时 running 动画持续前进不被复位 | 拖动与位置持久化端到端通过；runtime 回归 + N20/N22（拖动时引擎帧推进，原地反向立即切 running-left/right）；观感待人工 |
-| W4 | 开启像素穿透后点击透明 / 不透明像素 | 透明处落到桌面；不透明处仍可点 | 自动 N9（样式切换）；桌面落点待人工 |
-| W5 | 光标在宠物附近移动 | 椭圆范围内跟随、静止保持、离开回中性、死区不触发；靠近后 16/33 ms 内开始转身 | 官方 22.5° 映射单测 + GazeStabilizer 迟滞单测 + N21（look-row-9/10 跨行完成）；视觉待人工 |
-| W6 | 气泡 / 编辑按钮 / Composer | 协议 message 显示气泡；按钮打开输入框并聚焦；Enter 发送、Shift+Enter 换行、Esc 关闭且保留草稿；中文 IME 组合不误发 | 打开路径端到端 + N18 聚焦通过；IME / 发送 / 草稿待人工 |
-| W7 | 设置页各分区 | 导入（文件夹/zip/Codex）/导出/删除/覆盖确认；缩放档位；穿透；DeepSeek 全配置 + 凭据保存；人格 CRUD/导入导出；记忆管理；HKCU 自启 | 命令往返测试 + UI 渲染通过；凭据真实读写 / 自启登录 / 导入导出待人工 |
+| W1 | 启动原生 `Petsona.exe`（debug 或打包版） | 宠物窗透明/无边框/置顶、任务栏无多余窗口 | 自动 N2/N4；**2026-09-21 人工通过** |
+| W2 | 查看托盘图标并点击 / 右键（含溢出面板与固定到任务栏） | 图标出现；左/右键都弹出五项菜单；Esc / 点外关闭；打开设置不抢焦点循环 | 自动 N6 + N17（v4 `WM_CONTEXTMENU` 回调 → 菜单窗口）；**2026-09-21 人工通过**（溢出面板与固定到任务栏两种状态都验证过） |
+| W3 | 单击 / 双击 / 拖动宠物 | 挥手+气泡 / 跳跃 / 跟手移动且松手保存位置；拖动时 running 动画持续前进不被复位 | 拖动与位置持久化端到端通过；runtime 回归 + N20/N22（拖动时引擎帧推进，原地反向立即切 running-left/right）；**2026-09-21 人工通过** |
+| W4 | 开启像素穿透后点击透明 / 不透明像素 | 透明处落到桌面；不透明处仍可点 | 自动 N9（样式切换）；**2026-09-21 人工通过** |
+| W5 | 光标在宠物附近移动 | 椭圆范围内跟随、静止保持、离开回中性、死区不触发；靠近后 16/33 ms 内开始转身 | 官方 22.5° 映射单测 + GazeStabilizer 迟滞单测 + N21（look-row-9/10 跨行完成）；**2026-09-21 人工通过**（全方向 / 距离 / 抖动均确认） |
+| W6 | 气泡 / 编辑按钮 / Composer | 协议 message 显示气泡；按钮打开输入框并聚焦；Enter 发送、Shift+Enter 换行、Esc 关闭且保留草稿；中文 IME 组合不误发 | 打开路径端到端 + N18 聚焦通过；**2026-09-21 人工通过**（Enter 发送 / Esc 草稿 / 中文 IME 均确认） |
+| W7 | 设置页各分区 | 导入（文件夹/zip/Codex）/导出/删除/覆盖确认；缩放档位；穿透；DeepSeek 全配置 + 凭据保存；人格 CRUD/导入导出；记忆管理；HKCU 自启 | 命令往返测试 + UI 渲染通过；**2026-09-21 人工通过**（开关写入 / 删除注册表项生效）；**登录后是否真的自启仍待实测（见 D5）** |
 | W8 | 清空本地宠物后启动 | 自动打开设置页并聚焦 | 自动 N12 + N19 通过 |
 | W9 | 同数据目录启动第二个实例 | 不出现第二只宠物 | 自动 N10/N11 通过 |
-| W10 | 托盘菜单退出 | 进程结束、端口释放、无残留窗口/托盘 | 端口释放自动 N13；菜单退出交互待人工 |
-| W11 | 状态协议 | `/state`、`/health`、`/pets` 与 TTL 语义 | 自动 N7/N8 与 Rust 测试通过 |
-| W13 | 打开 Composer / 设置窗口 | 窗口取得前台与键盘焦点，可直接输入 / 导航 | 自动 N18/N19 通过；实机键盘与 IME 待人工 |
+| W10 | 托盘菜单退出 | 进程结束、端口释放、无残留窗口/托盘 | 端口释放自动 N13；**2026-09-21 人工通过** |
+| W11 | 状态协议 | `/state`、`/health`、`/pets` 与 TTL 语义 | 自动 N7/N8 与 Rust 测试通过；**2026-09-21 人工通过**（5 条步骤含 TTL 回退、`ttlMs:0` 粘滞、非法状态 400 全部符合预期） |
+| W13 | 打开 Composer / 设置窗口 | 窗口取得前台与键盘焦点，可直接输入 / 导航 | 自动 N18/N19；**2026-09-21 人工通过** |
+| W14 | 冷启动 / 热启动后立即把鼠标移到宠物与编辑按钮上 | 光标是普通箭头，不残留启动期的"启动中"忙碌圈 | 自动 N23/N24（宠物窗与 overlay 都接管 WM_SETCURSOR）；**2026-09-21 人工复测通过**（冷 / 热启动后光标均为普通箭头；启动速度用户确认可接受，CR-W1 选项 C 不改代码） |
 | W12 | 多屏 / 混合 DPI / 工作区夹取 / 重力 / 自动活动提醒 / 透明度 / 协议设置界面 / 宠物图标托盘化 / 影子动画 | —— | **暂缓**（计划 v1.1 §3.1，与 macOS 线一致；解冻需用户确认） |
+
+### W11 手工步骤（状态协议，隔离实例）
+
+验收包入口 `启动隔离验收.cmd` 使用隔离 home `%TEMP%\petsona-acceptance2`，协议端口是 **17873**（17872 是日常实例）；以下命令在 Windows PowerShell 里逐条粘贴。协议本身是给 Codex / 其他工具推送宠物状态的本地接口，`POST /state` 的 `message` 会以气泡显示。
+
+```powershell
+# 1 健康检查：返回 pet / persona / state 等字段
+Invoke-RestMethod http://127.0.0.1:17873/health | ConvertTo-Json -Depth 5
+
+# 2 宠物列表：返回本地库 id 数组（如 boba）
+Invoke-RestMethod http://127.0.0.1:17873/pets
+
+# 3 TTL：等待 10 秒后自动回到 idle，气泡消失
+Invoke-RestMethod -Method Post -Uri http://127.0.0.1:17873/state -ContentType 'application/json; charset=utf-8' `
+  -Body '{"source":"win-verify","state":"waiting","message":"Windows 验证","ttlMs":10000}'
+
+# 4 ttlMs 0 = 不过期：一直保持 running，直到被下一条状态覆盖
+Invoke-RestMethod -Method Post -Uri http://127.0.0.1:17873/state -ContentType 'application/json; charset=utf-8' `
+  -Body '{"source":"win-verify","state":"running","message":"不过期","ttlMs":0}'
+
+# 5 非法状态名：应打印 HTTP 400，宠物状态不变
+try { Invoke-RestMethod -Method Post -Uri http://127.0.0.1:17873/state -ContentType 'application/json; charset=utf-8' -Body '{"state":"nope"}' }
+catch { "HTTP " + [int]$_.Exception.Response.StatusCode }
+```
+
+（`charset=utf-8` 是给 Windows PowerShell 5.1 的：不带它时中文气泡可能变乱码；PowerShell 7 无此问题。）
+
+判定：第 3 条宠物切到 waiting 动画、气泡显示「Windows 验证」，约 10 秒后回 idle；第 4 条保持在 running 不过期；第 5 条打印 `HTTP 400`。放行状态名：`idle` / `running` / `waiting` / `failed` / `review` / `waving` / `jumping` / `running-left` / `running-right`（`waving` / `jumping` 为一次性动作，播完回 fallback）。
+
+**第 4 条之后怎么解除粘滞**：协议状态按 `source` 归属，进入引擎后是 `hook:<source>`：
+
+- **同一 source 必然覆盖自己**（不看优先级）：`Invoke-RestMethod -Method Post -Uri http://127.0.0.1:17873/state -ContentType 'application/json; charset=utf-8' -Body '{"source":"win-verify","state":"idle","ttlMs":0}'` —— 立刻回到 idle；注意必须带原来那个 `source`，省略时默认 `hook`，`hook:hook` 和 `hook:win-verify` 是两个 source，`idle` 优先级 0 顶不掉 `running`；
+- 换 source 时必须**严格更高**优先级才顶得掉：`failed` 90 > `waiting` 80 > `running` 70 > `review` 60 > `waving`/`jumping` 40 > look 行 20 > `running-left/right` 10 > `idle` 0（优先级相同也拒绝，后来者输）；
+- 用户交互**顶不掉**协议状态：点击是 `native` 源的 `waving`（40）、拖动是 `running-left/right`（10），都低于 `running` 的 70；Composer 聊天只发对话、不推状态。这是既定设计（用户交互不打断 agent 状态）；
+- 重开应用也能解除（覆盖状态只在内存中，不持久化）。
+
+若某个 hook 推了 `ttlMs:0` 之后没有再推结束状态，宠物会一直保持该状态 —— 这是已知可用性缺口，见执行记录 CR-W2。
 
 ## D. 打包与发布
 

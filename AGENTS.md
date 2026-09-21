@@ -160,6 +160,9 @@ MSVC 缺 `link.exe` 的 GNU 回退写在 `docs/WINDOWS_VERIFICATION.md`。
   姿势表、row10 = 左侧方向姿势表，每行中间帧是中性姿势；依据与测量方法见 `pet/state.rs` 和
   `pet_inspect`。
 - 日志：数据目录 `logs/petsona.log`；单实例锁：数据目录 `petsona.lock`。
+- 启动耗时基线（2026-09-21，Release，隔离 home，同一构建）：`Start-Process` → 宠物窗可见
+  本地热启动约 0.55 s、本地冷启动约 3.2 s、从 `\\wsl.localhost` UNC 路径启动约 4.2 s；
+  慢在 WinUI/WindowsAppSDK 宿主与托管依赖初始化，不在宠物窗创建（`.scratch/startup-timing.ps1`）。
 - 当前 release profile：`lto = "thin"`、`codegen-units = 1`、`strip = true`、`panic = "unwind"`。
   旧入口曾使用 abort；新 FFI 的 panic 终止处理尚有 REV-05，不能把 unwind 当作已完成的故障隔离。
 - Windows 打包产物：`dist\Petsona-windows-x64-<version>.zip`（含 exe、图标、VERSION、README）；
@@ -233,6 +236,12 @@ macOS 活动指针采样 40ms，离开触发区回中性帧。
   用 `applied_window_size` / `applied_always_on_top` 缓存。
 - **`tray-icon` 原生菜单在 Windows 事件循环上会卡死**：Windows 用专用 Win32 菜单线程，
   macOS 用 AppKit 原生菜单。
+- **窗口类不设光标 = 光标形状被"冻住"**：`WNDCLASSEXW.HCursor` 为 NULL 且窗口过程不处理 `WM_SETCURSOR` 时，Windows 不安装光标，
+  窗口上会保留进入前的形状 —— shell 启动程序时设的 `IDC_APPSTARTING`（忙碌圈）就卡在宠物上，直到鼠标移进别的有光标的窗口。
+  修法：注册窗口类时设 `HCursor = LoadCursor(NULL, IDC_ARROW)`，并在 `WM_SETCURSOR` + `HTCLIENT` 时 `SetCursor` 后返回 1；托盘 owner 窗口同样补。
+  验证受限：窗口类是**进程局部**的，`GetClassInfoEx` 跨进程必失败；`SetCursor` 也只对拥有窗口的线程生效，跨进程无法伪造形状。跨进程判据用
+  "发 `WM_SETCURSOR` 看返回值"（1=接管），并现场注册一个"NULL 类光标 + DefWindowProc"的对照窗口返回 0 自校准（smoke N23/N24）。
+- **协议状态由 source 拥有生命周期**：`POST /state` 的 `source` 在内部变成 `hook:<source>`；**同一 source 必然覆盖自己**（`running → review → idle` 都能发），不同 source 才比优先级（failed 90 > waiting 80 > running 70 > review 60 > waving/jumping 40 > look 行 20 > running-left/right 10 > idle 0，**优先级相同也拒绝，后来者输**）。因此 `ttlMs:0` 的粘滞状态只能被「同 source 的下一条」或「更高优先级的其他 source」顶掉：用户点击（`native` 源 `waving` 40）、拖动（10）和 Composer 聊天（只发对话、不推状态）都顶不掉——这是既定设计（用户交互不打断 agent 状态），代价是 hook 崩了宠物会卡住到重启（解除方式与可选改动见 W11 小节 / CR-W2）。`StateEvent.action` 字段目前只解析不生效。
 - **不激活窗口很重要**：宠物 / 气泡 / 菜单都不抢焦点（Windows `WS_EX_NOACTIVATE`，
   macOS 非激活面板），否则会打断用户正在编辑的应用。
 - **状态协议偶发空响应的根因**：Windows `accept()` 的 socket 继承监听 socket 的非阻塞模式；
@@ -240,6 +249,8 @@ macOS 活动指针采样 40ms，离开触发区回中性帧。
 - **HTTRANSPARENT 只在同线程窗口可靠转发**：跨进程需要 `WS_EX_TRANSPARENT`，但会引入抖动——
   “像素级穿透”和“零闪烁”要权衡。
 - **macOS 只靠 egui 事件拿不到窗口外全局光标**：转头、拖拽、点击穿透都要走 NSEvent / CoreGraphics。
+- **WSL 起来的 PowerShell 会污染 `PATHEXT`**（本机实测只剩 `.CPL`）：`Get-Command dotnet` / `rustc` 找不到，`& "C:\...\dotnet.exe"` 也会**静默失败**
+  （无输出、无退出码）。`verify-windows.ps1` / `package-windows.ps1` 已在开头把它恢复成 Windows 默认值，新脚本照抄那段防护。
 - **PowerShell 5.1**：含中文的 `.ps1` 必须 UTF-8 **BOM**；`Compress-Archive` 会写反斜杠条目名，
   打包改用 `ZipFile::CreateFromDirectory`。
 - **Windows 机器无法类型检查 macOS 后端**：`ring` 需要 macOS C 工具链；macOS 改动必须在 mac 上
