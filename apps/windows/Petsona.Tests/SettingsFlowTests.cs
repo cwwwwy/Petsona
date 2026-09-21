@@ -36,9 +36,18 @@ public sealed class SettingsFlowTests
             {
                 ["enabled"] = true,
                 ["recentEvents"] = 7,
-                ["retentionDays"] = 30,
                 ["factLimit"] = 12,
             })));
+        Assert.Equal(
+            PetsonaStatus.Ok,
+            client.Send(PetsonaCommandKind.UpdateGreetingConfig, text: Json(new Dictionary<string, object?>
+            {
+                ["enabled"] = true,
+                ["idleMinutes"] = 45,
+                ["cooldownMinutes"] = 90,
+                ["maxChars"] = 24,
+            })));
+
         Assert.Equal(
             PetsonaStatus.Ok,
             client.Send(PetsonaCommandKind.CreatePersona, text: Json(new Dictionary<string, object?>
@@ -65,6 +74,9 @@ public sealed class SettingsFlowTests
 
         Assert.Contains("原生测试", client.Text(PetsonaTextField.Personas));
         Assert.Contains("test-model", client.Text(PetsonaTextField.DeepSeekConfig));
+        Assert.True(
+            WaitFor(client, () => client.Text(PetsonaTextField.Memory).Contains("\"idleMinutes\":45")),
+            "greeting config did not land in the projection");
         Assert.Contains("安静音乐", client.Text(PetsonaTextField.Memory));
     }
 

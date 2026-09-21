@@ -1,3 +1,4 @@
+using System.IO;
 using System.Text.Json;
 using Microsoft.UI.Dispatching;
 using Microsoft.UI.Xaml;
@@ -11,10 +12,11 @@ using Windows.Storage.Pickers;
 namespace Petsona.Views;
 
 /// <summary>
-/// Full settings surface for B2: pet library management, scale/click-through,
-/// DeepSeek configuration with credential storage, persona editing
-/// (CRUD/templates/import/export), memory management and HKCU autostart.
-/// Protocol UI, opacity and behaviour toggles stay deferred per plan §3.1.
+/// Settings surface (settings-consolidation REQ-S04–S07): six card-based pages
+/// (pets / appearance / persona / memory / connection+greeting / system) that
+/// apply every change immediately — there is no save button. Destructive actions
+/// go through <see cref="ConfirmAsync"/>. The card look is hand-written; the
+/// project intentionally avoids third-party UI packages.
 /// </summary>
 public sealed partial class SettingsWindow : Window
 {
@@ -22,8 +24,11 @@ public sealed partial class SettingsWindow : Window
     private static readonly string[] VerbosityPresets = ["short", "normal", "detailed"];
     private static readonly JsonSerializerOptions JsonOptions = new() { PropertyNameCaseInsensitive = true };
 
+    private const string RepositoryUrl = "https://github.com/cwwwwy/Petsona";
     private readonly EngineClient _engine;
     private readonly DispatcherQueueTimer _refreshTimer;
+    private readonly DispatcherQueueTimer _applyTimer;
+    private Action? _pendingApply;
     private readonly Dictionary<string, StackPanel> _pages;
     private readonly Dictionary<string, ImageSource?> _thumbnailCache = new();
     private string _lastPetsJson = string.Empty;
@@ -59,6 +64,47 @@ public sealed partial class SettingsWindow : Window
         _refreshTimer.Tick += (_, _) => Refresh();
         _refreshTimer.Start();
         Closed += (_, _) => _refreshTimer.Stop();
+
+        // Instant apply (REQ-S05): text boxes are debounced so a burst of
+        // keystrokes turns into one command, everything else applies at once.
+        _applyTimer = DispatcherQueue.CreateTimer();
+        _applyTimer.Interval = TimeSpan.FromMilliseconds(450);
+        _applyTimer.IsRepeating = false;
+        _applyTimer.Tick += (_, _) =>
+        {
+            _applyTimer.Stop();
+            var apply = _pendingApply;
+            _pendingApply = null;
+            apply?.Invoke();
+        };
+
+        DeepSeekModel.TextChanged += (_, _) => ScheduleApply(ApplyDeepSeekConfig);
+        DeepSeekBaseUrl.TextChanged += (_, _) => ScheduleApply(ApplyDeepSeekConfig);
+        DeepSeekApiKeyEnv.TextChanged += (_, _) => ScheduleApply(ApplyDeepSeekConfig);
+        DeepSeekTimeout.ValueChanged += (_, _) => ScheduleApply(ApplyDeepSeekConfig);
+        DeepSeekMaxTokens.ValueChanged += (_, _) => ScheduleApply(ApplyDeepSeekConfig);
+        DeepSeekTemperature.ValueChanged += (_, _) => ScheduleApply(ApplyDeepSeekConfig);
+        DeepSeekThinkingDisabled.Toggled += (_, _) => ScheduleApply(ApplyDeepSeekConfig);
+
+        PersonaNameBox.TextChanged += (_, _) => ScheduleApply(ApplyPersona);
+        PersonaDescriptionBox.TextChanged += (_, _) => ScheduleApply(ApplyPersona);
+        PersonaToneBox.TextChanged += (_, _) => ScheduleApply(ApplyPersona);
+        PersonaVerbosityCombo.SelectionChanged += (_, _) => ScheduleApply(ApplyPersona);
+        PersonaLanguageBox.TextChanged += (_, _) => ScheduleApply(ApplyPersona);
+        PersonaEmojiToggle.Toggled += (_, _) => ScheduleApply(ApplyPersona);
+        PersonaGreetingBox.TextChanged += (_, _) => ScheduleApply(ApplyPersona);
+        PersonaSystemPromptBox.TextChanged += (_, _) => ScheduleApply(ApplyPersona);
+
+        MemoryEnabledToggle.Toggled += (_, _) => ScheduleApply(ApplyMemoryConfig);
+        MemoryRecentEventsBox.ValueChanged += (_, _) => ScheduleApply(ApplyMemoryConfig);
+        MemoryFactLimitBox.ValueChanged += (_, _) => ScheduleApply(ApplyMemoryConfig);
+
+        GreetingEnabledToggle.Toggled += (_, _) => ScheduleApply(ApplyGreetingConfig);
+        GreetingIdleMinutesBox.ValueChanged += (_, _) => ScheduleApply(ApplyGreetingConfig);
+        GreetingCooldownBox.ValueChanged += (_, _) => ScheduleApply(ApplyGreetingConfig);
+        GreetingMaxCharsBox.ValueChanged += (_, _) => ScheduleApply(ApplyGreetingConfig);
+
+        AboutVersionText.Text = $"版本 {typeof(SettingsWindow).Assembly.GetName().Version?.ToString(3) ?? "0.1.0"} · 原生前端（WinUI 3 + Win32）";
 
         _suppressEvents = true;
         AutostartToggle.IsOn = SystemServices.IsAutostartEnabled();
@@ -205,8 +251,16 @@ public sealed partial class SettingsWindow : Window
         _suppressEvents = true;
         MemoryEnabledToggle.IsOn = GetBool(config, "enabled", true);
         MemoryRecentEventsBox.Value = GetNumber(config, "recentEvents", 10);
-        MemoryRetentionDaysBox.Value = GetNumber(config, "retentionDays", 30);
         MemoryFactLimitBox.Value = GetNumber(config, "factLimit", 50);
+
+        if (TryGetObject(document.RootElement, "greeting", out var greeting))
+        {
+            GreetingEnabledToggle.IsOn = GetBool(greeting, "enabled", true);
+            GreetingIdleMinutesBox.Value = GetNumber(greeting, "idleMinutes", 30);
+            GreetingCooldownBox.Value = GetNumber(greeting, "cooldownMinutes", 120);
+            GreetingMaxCharsBox.Value = GetNumber(greeting, "maxChars", 40);
+        }
+
         _suppressEvents = false;
     }
 
@@ -220,10 +274,8 @@ public sealed partial class SettingsWindow : Window
 
         var root = document.RootElement;
         _suppressEvents = true;
-        PersonaIdBox.Text = GetString(root, "id");
         PersonaNameBox.Text = GetString(root, "name");
         PersonaDescriptionBox.Text = GetString(root, "description");
-        PersonaAvatarPetBox.Text = GetString(root, "avatarPet");
         PersonaGreetingBox.Text = GetString(root, "greeting");
         PersonaSystemPromptBox.Text = GetString(root, "systemPrompt");
 
@@ -236,43 +288,7 @@ public sealed partial class SettingsWindow : Window
             PersonaEmojiToggle.IsOn = GetBool(traits, "emoji", false);
         }
 
-        if (TryGetObject(root, "sampling", out var sampling))
-        {
-            PersonaTemperatureBox.Value = GetNumber(sampling, "temperature", 0.8);
-            PersonaMaxTokensBox.Value = GetNumber(sampling, "maxTokens", 256);
-        }
-
-        if (TryGetObject(root, "model", out var model))
-        {
-            PersonaModelProviderBox.Text = GetString(model, "provider");
-            PersonaModelBox.Text = GetString(model, "model");
-        }
-        else
-        {
-            PersonaModelProviderBox.Text = string.Empty;
-            PersonaModelBox.Text = string.Empty;
-        }
-
-        if (TryGetObject(root, "memory", out var memory))
-        {
-            PersonaMemoryEnabledToggle.IsOn = GetBool(memory, "enabled", true);
-            PersonaMemoryWindowBox.Value = GetNumber(memory, "windowTurns", 12);
-            PersonaLongTermToggle.IsOn = GetBool(memory, "longTerm", true);
-            PersonaSummarizeAfterBox.Value = GetNumber(memory, "summarizeAfterTurns", 20);
-        }
-
-        if (TryGetObject(root, "tts", out var tts))
-        {
-            PersonaTtsEnabledToggle.IsOn = GetBool(tts, "enabled", false);
-            PersonaTtsVoiceBox.Text = GetString(tts, "voice");
-            PersonaTtsRateBox.Value = GetNumber(tts, "rate", 1.0);
-        }
-
-        if (TryGetObject(root, "proactive", out var proactive))
-        {
-            PersonaProactiveToggle.IsOn = GetBool(proactive, "enabled", false);
-            PersonaProactiveIdleBox.Value = GetNumber(proactive, "idleMinutes", 30);
-        }
+        PersonaIdBox.Text = $"人格 ID：{GetString(root, "id")}（导入 / 导出时使用）";
 
         KeyStatusText.Text = string.Empty;
         _suppressEvents = false;
@@ -483,7 +499,7 @@ public sealed partial class SettingsWindow : Window
 
     // ------------------------------------------------------------ deepseek
 
-    private void OnSaveDeepSeekClick(object sender, RoutedEventArgs e)
+    private void ApplyDeepSeekConfig()
     {
         SendJson(PetsonaCommandKind.UpdateDeepSeekConfig, new Dictionary<string, object?>
         {
@@ -495,6 +511,18 @@ public sealed partial class SettingsWindow : Window
             ["temperature"] = Number(DeepSeekTemperature, 0.7),
             ["thinkingDisabled"] = DeepSeekThinkingDisabled.IsOn,
         });
+    }
+
+    private void ApplyGreetingConfig()
+    {
+        SendJson(PetsonaCommandKind.UpdateGreetingConfig, new Dictionary<string, object?>
+        {
+            ["enabled"] = GreetingEnabledToggle.IsOn,
+            ["idleMinutes"] = (uint)Number(GreetingIdleMinutesBox, 30),
+            ["cooldownMinutes"] = (uint)Number(GreetingCooldownBox, 120),
+            ["maxChars"] = (uint)Number(GreetingMaxCharsBox, 40),
+        });
+        _lastMemoryJson = string.Empty;
     }
 
     private void OnSaveKeyClick(object sender, RoutedEventArgs e)
@@ -531,12 +559,11 @@ public sealed partial class SettingsWindow : Window
         ReloadPersonaSoon();
     }
 
-    private void OnSavePersonaClick(object sender, RoutedEventArgs e)
+    private void ApplyPersona()
     {
         SendJson(PetsonaCommandKind.UpdatePersona, new Dictionary<string, object?>
         {
             ["description"] = PersonaDescriptionBox.Text,
-            ["avatar_pet"] = PersonaAvatarPetBox.Text.Trim(),
             ["name"] = PersonaNameBox.Text.Trim(),
             ["tone"] = PersonaToneBox.Text,
             ["verbosity"] = PersonaVerbosityCombo.SelectedItem as string ?? "normal",
@@ -544,22 +571,9 @@ public sealed partial class SettingsWindow : Window
             ["emoji"] = PersonaEmojiToggle.IsOn,
             ["greeting"] = PersonaGreetingBox.Text,
             ["system_prompt"] = PersonaSystemPromptBox.Text,
-            ["temperature"] = Number(PersonaTemperatureBox, 0.8),
-            ["max_tokens"] = (uint)Number(PersonaMaxTokensBox, 256),
-            ["model_provider"] = PersonaModelProviderBox.Text.Trim(),
-            ["model"] = PersonaModelBox.Text.Trim(),
-            ["memory_enabled"] = PersonaMemoryEnabledToggle.IsOn,
-            ["memory_window_turns"] = (uint)Number(PersonaMemoryWindowBox, 12),
-            ["memory_long_term"] = PersonaLongTermToggle.IsOn,
-            ["memory_summarize_after_turns"] = (uint)Number(PersonaSummarizeAfterBox, 20),
-            ["tts_enabled"] = PersonaTtsEnabledToggle.IsOn,
-            ["tts_voice"] = PersonaTtsVoiceBox.Text.Trim(),
-            ["tts_rate"] = Number(PersonaTtsRateBox, 1.0),
-            ["proactive_enabled"] = PersonaProactiveToggle.IsOn,
-            ["proactive_idle_minutes"] = (uint)Number(PersonaProactiveIdleBox, 30),
         });
         _engine.Send(PetsonaCommandKind.SavePersona);
-        ReloadPersonaSoon();
+        _lastPersonasJson = string.Empty;
     }
 
     private async void OnCreatePersonaClick(object sender, RoutedEventArgs e)
@@ -658,13 +672,12 @@ public sealed partial class SettingsWindow : Window
 
     // ------------------------------------------------------------- memory
 
-    private void OnSaveMemoryClick(object sender, RoutedEventArgs e)
+    private void ApplyMemoryConfig()
     {
         SendJson(PetsonaCommandKind.UpdateMemoryConfig, new Dictionary<string, object?>
         {
             ["enabled"] = MemoryEnabledToggle.IsOn,
             ["recentEvents"] = (uint)Number(MemoryRecentEventsBox, 10),
-            ["retentionDays"] = (uint)Number(MemoryRetentionDaysBox, 30),
             ["factLimit"] = (uint)Number(MemoryFactLimitBox, 50),
         });
         _lastMemoryJson = string.Empty;
@@ -730,7 +743,60 @@ public sealed partial class SettingsWindow : Window
         }
     }
 
+    // --------------------------------------------------------- about / data
+
+    private void OnOpenDataFolderClick(object sender, RoutedEventArgs e)
+    {
+        OpenFolder(DataDirectory());
+    }
+
+    private void OnOpenLogFolderClick(object sender, RoutedEventArgs e)
+    {
+        OpenFolder(Path.Combine(DataDirectory(), "logs"));
+    }
+
+    private void OnOpenRepoClick(object sender, RoutedEventArgs e)
+    {
+        OpenFolder(RepositoryUrl);
+    }
+
+    private static string DataDirectory()
+    {
+        var configured = Environment.GetEnvironmentVariable("PETSONA_HOME");
+        return string.IsNullOrWhiteSpace(configured)
+            ? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "Petsona")
+            : configured;
+    }
+
+    private static void OpenFolder(string target)
+    {
+        try
+        {
+            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(target)
+            {
+                UseShellExecute = true,
+            });
+        }
+        catch (Exception)
+        {
+            // Opening the folder is a convenience; never break settings on failure.
+        }
+    }
+
     // ------------------------------------------------------------- helpers
+
+    /// <summary>Debounce a change into one immediate command (REQ-S05).</summary>
+    private void ScheduleApply(Action apply)
+    {
+        if (_suppressEvents)
+        {
+            return;
+        }
+
+        _pendingApply = apply;
+        _applyTimer.Stop();
+        _applyTimer.Start();
+    }
 
     private void SendJson(PetsonaCommandKind kind, Dictionary<string, object?> payload)
     {

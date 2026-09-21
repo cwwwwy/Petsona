@@ -76,6 +76,7 @@ public enum PetsonaCommandKind : uint
     ImportPersona = 33,
     ExportPersona = 34,
     ClearImportConflict = 35,
+    UpdateGreetingConfig = 36,
 }
 
 /// <summary>Mirrors <c>PetsonaStringView</c>: caller-owned bytes borrowed for one call.</summary>
