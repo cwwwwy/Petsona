@@ -18,6 +18,8 @@ internal sealed unsafe class OverlayWindow : IDisposable
     private const int ButtonSize = 40;
     private static readonly object ClassLock = new();
     private static bool _classRegistered;
+    private static readonly nint ArrowCursor =
+        NativeWin32.LoadCursorW(0, (nint)NativeWin32.IDC_ARROW);
 
     private readonly bool _isBubble;
     private GCHandle _selfHandle;
@@ -215,6 +217,7 @@ internal sealed unsafe class OverlayWindow : IDisposable
                     CbSize = (uint)sizeof(NativeWin32.WNDCLASSEXW),
                     LpfnWndProc = (nint)(delegate* unmanaged[Stdcall]<nint, uint, nint, nint, nint>)&WndProc,
                     HInstance = NativeWin32.GetModuleHandleW(null),
+                    HCursor = ArrowCursor,
                     LpszClassName = className,
                 };
                 if (NativeWin32.RegisterClassExW(&wndClass) == 0)
@@ -237,6 +240,13 @@ internal sealed unsafe class OverlayWindow : IDisposable
             {
                 self.Clicked?.Invoke();
                 return 0;
+            }
+
+            if (msg == NativeWin32.WM_SETCURSOR &&
+                (lParam.ToInt64() & 0xFFFF) == NativeWin32.HTCLIENT)
+            {
+                _ = NativeWin32.SetCursor(ArrowCursor);
+                return 1;
             }
         }
 

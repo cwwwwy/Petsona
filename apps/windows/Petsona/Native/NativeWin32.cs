@@ -29,6 +29,7 @@ internal static unsafe partial class NativeWin32
 
     public const uint WM_DESTROY = 0x0002;
     public const uint WM_CLOSE = 0x0010;
+    public const uint WM_SETCURSOR = 0x0020;
     public const uint WM_TIMER = 0x0113;
     public const uint WM_NCHITTEST = 0x0084;
     public const uint WM_MOUSEMOVE = 0x0200;
@@ -41,6 +42,7 @@ internal static unsafe partial class NativeWin32
 
     public const int HTTRANSPARENT = -1;
     public const int HTCLIENT = 1;
+    public const int IDC_ARROW = 32512;
 
     public const uint TPM_RETURNCMD = 0x0100;
     public const uint TPM_RIGHTBUTTON = 0x0002;
@@ -261,6 +263,12 @@ internal static unsafe partial class NativeWin32
 
     [LibraryImport("user32.dll", EntryPoint = "SetFocus")]
     internal static partial nint SetFocus(nint hWnd);
+
+    [LibraryImport("user32.dll", EntryPoint = "LoadCursorW", SetLastError = true)]
+    internal static partial nint LoadCursorW(nint hInstance, nint lpCursorName);
+
+    [LibraryImport("user32.dll", EntryPoint = "SetCursor", SetLastError = true)]
+    internal static partial nint SetCursor(nint hCursor);
 
     [LibraryImport("user32.dll", EntryPoint = "CreatePopupMenu")]
     internal static partial nint CreatePopupMenu();

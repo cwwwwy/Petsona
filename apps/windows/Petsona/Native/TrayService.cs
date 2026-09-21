@@ -102,6 +102,7 @@ internal sealed unsafe class TrayService : IDisposable
                 CbSize = (uint)sizeof(NativeWin32.WNDCLASSEXW),
                 LpfnWndProc = (nint)(delegate* unmanaged[Stdcall]<nint, uint, nint, nint, nint>)&WndProc,
                 HInstance = hInstance,
+                HCursor = NativeWin32.LoadCursorW(0, (nint)NativeWin32.IDC_ARROW),
                 LpszClassName = className,
             };
             _ = NativeWin32.RegisterClassExW(&wndClass);

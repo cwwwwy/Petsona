@@ -225,6 +225,64 @@ public static class PetsonaSmokeNative {
     }
     [StructLayout(LayoutKind.Sequential)] public struct RECT { public int Left; public int Top; public int Right; public int Bottom; }
     [StructLayout(LayoutKind.Sequential)] public struct POINT { public int X; public int Y; }
+    [DllImport("user32.dll", CharSet = CharSet.Unicode, EntryPoint = "SendMessageTimeoutW")]
+    public static extern IntPtr SendMessageTimeout(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam, uint flags, uint timeout, out IntPtr result);
+    [DllImport("user32.dll")] public static extern bool DestroyWindow(IntPtr hWnd);
+    [DllImport("kernel32.dll")] public static extern IntPtr GetModuleHandleW(IntPtr name);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode, EntryPoint = "RegisterClassExW")]
+    public static extern ushort RegisterClassEx(ref WNDCLASSEX info);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode, EntryPoint = "CreateWindowExW")]
+    public static extern IntPtr CreateWindowEx(uint exStyle, string className, string windowName, uint style, int x, int y, int w, int h, IntPtr parent, IntPtr menu, IntPtr instance, IntPtr param);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode, EntryPoint = "DefWindowProcW")]
+    public static extern IntPtr DefWindowProc(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam);
+
+    public const uint WM_SETCURSOR = 0x0020;
+    public const uint WM_MOUSEMOVE = 0x0200;
+    public const int HTCLIENT = 1;
+    public const uint SMTO_ABORTIFHUNG = 0x0002;
+
+    public delegate IntPtr WndProcDelegate(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam);
+
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+    public struct WNDCLASSEX {
+        public uint cbSize; public uint style; public IntPtr lpfnWndProc;
+        public int cbClsExtra; public int cbWndExtra; public IntPtr hInstance;
+        public IntPtr hIcon; public IntPtr hCursor; public IntPtr hbrBackground;
+        [MarshalAs(UnmanagedType.LPWStr)] public string lpszMenuName;
+        [MarshalAs(UnmanagedType.LPWStr)] public string lpszClassName;
+        public IntPtr hIconSm;
+    }
+
+    private static WndProcDelegate _nullCursorProc;
+
+    /// <summary>
+    /// A hidden window shaped like the pre-fix pet window: NULL class cursor and
+    /// DefWindowProc as the window procedure. DefWindowProc cannot install a
+    /// cursor for such a class, so it answers WM_SETCURSOR with 0 and the last
+    /// shell cursor stays frozen over the window. Registering this control keeps
+    /// the N23/N24 check meaningful from another process: the app's classes are
+    /// not readable across processes, but a window that owns the cursor answers
+    /// 1 while this control answers 0.
+    /// </summary>
+    public static IntPtr CreateNullCursorWindow() {
+        _nullCursorProc = new WndProcDelegate(DefWindowProc);
+        var instance = GetModuleHandleW(IntPtr.Zero);
+        var info = new WNDCLASSEX();
+        info.cbSize = (uint)Marshal.SizeOf(typeof(WNDCLASSEX));
+        info.lpfnWndProc = Marshal.GetFunctionPointerForDelegate(_nullCursorProc);
+        info.hInstance = instance;
+        info.lpszClassName = "PetsonaSmokeNullCursorControl";
+        RegisterClassEx(ref info);
+        return CreateWindowEx(0, "PetsonaSmokeNullCursorControl", "", 0, 0, 0, 20, 20, IntPtr.Zero, IntPtr.Zero, instance, IntPtr.Zero);
+    }
+
+    /// <summary>Returns the WM_SETCURSOR answer of the window procedure.</summary>
+    public static long PokeCursor(IntPtr hWnd) {
+        IntPtr result;
+        var lParam = new IntPtr((WM_MOUSEMOVE << 16) | HTCLIENT);
+        SendMessageTimeout(hWnd, WM_SETCURSOR, hWnd, lParam, SMTO_ABORTIFHUNG, 1000, out result);
+        return result.ToInt64();
+    }
 
     public static List<IntPtr> ByClass(string className) {
         var found = new List<IntPtr>();
@@ -752,6 +810,41 @@ try {
     Add-Result "N21" "gaze completes both look rows" ($gazeRight -and $gazeLeft) ("right={0} left={1}" -f $gazeRight, $gazeLeft)
     [void][PetsonaSmokeNative]::SetCursorPos($dragRect.Left - 200, $dragRect.Top - 200)
     Start-Sleep -Milliseconds 400
+    }
+
+    Write-Section "cursor"
+    # N23/N24: a window class without a cursor leaves the shell's "starting"
+    # pointer frozen over the pet until the mouse visits another window. Window
+    # classes live in the app process, so the probe cannot read them from here;
+    # it asks the windows instead: WM_SETCURSOR over HTCLIENT must be owned by
+    # the window (answer 1). The control window below has the pre-fix shape
+    # (NULL class cursor + DefWindowProc) and must answer 0, which proves the
+    # probe can tell an untouched cursor from an owned one.
+    $control = [PetsonaSmokeNative]::CreateNullCursorWindow()
+    $controlResult = -1
+    if ($control -ne [IntPtr]::Zero) {
+        $controlResult = [PetsonaSmokeNative]::PokeCursor($control)
+        [void][PetsonaSmokeNative]::DestroyWindow($control)
+    }
+
+    $petCursorResult = [PetsonaSmokeNative]::PokeCursor($petWindows[0])
+    if ($controlResult -ne 0) {
+        Add-Skip "N23" "pet window owns the cursor" ("the control window answered " + $controlResult + " instead of 0")
+    }
+    else {
+        Add-Result "N23" "pet window owns the cursor" ($petCursorResult -eq 1) `
+            ("result=" + $petCursorResult + " control=" + $controlResult)
+    }
+
+    $cursorOverlays = @([PetsonaSmokeNative]::VisibleByClassAndPid("PetsonaOverlayWindow", [uint32]$process.Id))
+    if ($cursorOverlays.Count -eq 0) {
+        Add-Skip "N24" "overlay windows own the cursor" "no overlay window is visible"
+    }
+    else {
+        $overlayResults = @($cursorOverlays | ForEach-Object { [PetsonaSmokeNative]::PokeCursor($_) })
+        $overlayOk = -not ($overlayResults | Where-Object { $_ -ne 1 })
+        Add-Result "N24" "overlay windows own the cursor" $overlayOk `
+            ("count=" + $overlayResults.Count + " results=" + ($overlayResults -join ",") + " control=" + $controlResult)
     }
 
     Write-Section "single instance"

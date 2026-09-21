@@ -24,6 +24,8 @@ internal sealed unsafe class PetWindow : IDisposable
 
     private static readonly object ClassLock = new();
     private static bool _classRegistered;
+    private static readonly nint ArrowCursor =
+        NativeWin32.LoadCursorW(0, (nint)NativeWin32.IDC_ARROW);
 
     private readonly SpriteRenderer _renderer;
     private GCHandle _selfHandle;
@@ -417,6 +419,19 @@ internal sealed unsafe class PetWindow : IDisposable
     {
         switch (msg)
         {
+            case NativeWin32.WM_SETCURSOR:
+                // The shell shows an "app starting" cursor while the process
+                // boots. A window class without a cursor leaves whatever was
+                // set before in place, so a hover over the pet would keep the
+                // busy pointer. Answer a client hit test with a plain arrow.
+                if ((lParam.ToInt64() & 0xFFFF) == NativeWin32.HTCLIENT)
+                {
+                    _ = NativeWin32.SetCursor(ArrowCursor);
+                    return 1;
+                }
+
+                return NativeWin32.DefWindowProcW(hWnd, msg, wParam, lParam);
+
             case NativeWin32.WM_TIMER:
                 if ((nuint)wParam == ClickTimerId)
                 {
@@ -487,6 +502,7 @@ internal sealed unsafe class PetWindow : IDisposable
                     CbSize = (uint)sizeof(NativeWin32.WNDCLASSEXW),
                     LpfnWndProc = (nint)(delegate* unmanaged[Stdcall]<nint, uint, nint, nint, nint>)&WndProc,
                     HInstance = NativeWin32.GetModuleHandleW(null),
+                    HCursor = ArrowCursor,
                     LpszClassName = className,
                 };
                 if (NativeWin32.RegisterClassExW(&wndClass) == 0)
