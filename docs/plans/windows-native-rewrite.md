@@ -120,14 +120,14 @@
 | `scripts/package-windows.ps1` | 修改 | 打包新入口（exe/dll/资源/VERSION/README），结构校验 | W13 |
 | `.github/workflows/release-windows.yml` | 修改 | 新入口构建与产物 | W13 |
 | `docs/WINDOWS_VERIFICATION.md` | 修改 | 新增新入口验收章节与人工矩阵；旧章节标历史/冻结 | W14 |
-| `docs/WINDOWS_ISSUES.md` | 修改 | W-* 标注冻结，映射到新线验收项 | W14 |
+| `docs/WINDOWS_ISSUES.md`（2026-09-21 归档到 `docs/archive/`） | 修改 | W-* 标注冻结，映射到新线验收项 | W14 |
 | `AGENTS.md`、`README.md`、`docs/PLATFORM_ARCHITECTURE.md` | 修改 | 状态与任务入口同步 | W14/W15 |
 | `crates/petsona-shell-windows/**`、旧共享 UI | 删除（W15 阶段） | 对等验收通过后与 macOS 线联动清理 | W15 |
 
 ## 5. 必须保持的约束
 
 1. **并行线规则（新）**：macOS 线保持"代码完成、人工验收未完成"口径；Windows 线进展不改写 macOS 验收状态。共享层/ABI/契约任何变更：布局或所有权变化必须递增 ABI 版本，并完成两端验证——Rust 门禁 + macOS 原生门禁（Mac 上 `verify-macos-all.sh`，无法立即执行时标记"待回归"并禁止任一端的发布）+ Windows 构建/测试。
-2. **旧线冻结语义（新）**：`petsona-shell-windows` 停止功能开发与人工复测，保持"可构建 + 现有自动门禁通过"直到新线接入脚本；`WINDOWS_ISSUES.md` 的 W-* 不再变更状态；观感/行为类关注点（注视流畅、气泡/输入框/影子、重力、活动、缩放）由新线 M-W 人工项重新验收，旧问题不得因重写自动关闭。
+2. **旧线冻结语义（新）**：`petsona-shell-windows` 停止功能开发与人工复测，保持"可构建 + 现有自动门禁通过"直到新线接入脚本；`docs/archive/WINDOWS_ISSUES.md` 的 W-* 不再变更状态；观感/行为类关注点（注视流畅、气泡/输入框/影子、重力、活动、缩放）由新线 M-W 人工项重新验收，旧问题不得因重写自动关闭。
 3. **数据与兼容（沿袭）**：数据目录 `%APPDATA%\Petsona` 与 `PETSONA_HOME` 不变；无内置宠物；旧 `config.json` schema 兼容；协议仅 loopback、默认 17872、`ttlMs: 0` 不过期；凭据账户 `com.petsona.desktop` / `deepseek`（Windows 走凭据管理器）；密钥不进日志/快照。
 4. **窗口与焦点**：宠物/气泡/托盘不抢前台（`WS_EX_NOACTIVATE`）；设置/Composer 可激活；点菜单外不引发额外挥手；菜单 Esc/点外可关闭。
 5. **几何**：位置记忆用物理像素；工作区夹取（`MonitorFromPoint` + `GetMonitorInfoW(rcWork)`）；混合 DPI 与多显示器不漂移。

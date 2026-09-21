@@ -1,25 +1,31 @@
-> **2026-09-20 起：当前产品线为原生前端（`apps/windows`，C# / WinUI 3 + Win32）。**
-> 旧的 egui/Win32 外壳人工复测已按用户决定冻结，下文 A–F 节保留为历史对照；
-> 新入口的自动门禁与人工验收见下面的「W. 原生前端验收」章节，执行证据见
-> `docs/execution/windows-native-rewrite.md`。
+> **当前产品线：原生前端（`apps/windows`，C# / WinUI 3 + Win32）。**
+> 本文件只维护原生线的准备（0）、人工验收（W）、打包发布（D）与自动化覆盖（F）；
+> 旧 egui/Win32 入口的清单已按用户决定冻结并移入
+> [`docs/archive/WINDOWS_VERIFICATION-legacy-egui.md`](archive/WINDOWS_VERIFICATION-legacy-egui.md)。
+> 执行证据见 [`docs/execution/windows-native-rewrite.md`](execution/windows-native-rewrite.md)。
 
 # Petsona Windows 实机验收清单
 
 自动门禁能证明代码可以编译和通过测试，但证明不了窗口、托盘、穿透和系统集成真的可用；
 **真实结论以本清单为准**。`待实测` 是默认状态，不是失败。
 
-最小可用判定：**A1–A3、A8–A11、B1–B11 全部通过**；有副屏时还要过 C1–C3。
 
 ## 0. 准备
 
 ```powershell
-# 先跑完整门禁（fmt / clippy / test / release + 20 项 smoke + 打包结构）
+# 先跑完整门禁（fmt / clippy / 95 项测试 / release + 25 项 native smoke + 打包结构）
 powershell -ExecutionPolicy Bypass -File scripts\verify-windows.ps1 -Full
 
-# 手动验收建议用独立数据目录
+# 原生线手动验收：打包版 exe（或 apps\windows 的 Release 输出），用独立数据目录
 $env:PETSONA_HOME = Join-Path $env:TEMP "petsona-win-test"
+& "apps\windows\Petsona\bin\x64\Release\net10.0-windows10.0.26100.0\win-x64\Petsona.exe"
+
+# 旧 egui 入口（已冻结，仅供历史对照）
 cargo run -p petsona-shell-windows
 ```
+
+本机环境（2026-09-21 核对）：**VS Build Tools 18（含 C++ 工具）已安装**，`verify-windows.ps1` 因此走
+MSVC 的 `petsona_ffi.dll` 分支；GNU 回退仍保留在脚本与下面的手动命令里，两者不要混用同一次构建。
 
 MSVC 缺 `link.exe` 时可用 GNU 回退：
 
@@ -49,64 +55,6 @@ Invoke-RestMethod -Method Post -Uri http://127.0.0.1:17872/state `
   -Body '{"source":"win-verify","state":"waiting","message":"Windows 验证","ttlMs":10000}'
 ```
 
-## A. 基础回归
-
-| # | 操作 | 预期结果 | 状态 |
-|---|---|---|---|
-| A1 | 启动 `cargo run -p petsona-shell-windows` | 宠物窗口出现；透明背景、无边框、置顶；任务栏无多余窗口 | 通过 |
-| A2 | 看系统托盘 | `Petsona` 图标出现，使用当前宠物首帧，悬停显示 `Petsona` | 通过 |
-| A3 | 单击 / 右键托盘图标 | 光标附近弹出专用线程承载的 Win32 原生菜单（打开设置 / 更换宠物 / 隐藏显示 / 退出） | 代码完成；实机待确认 |
-| A4 | 点击菜单各项 | 四项分别生效；菜单关闭后无残留透明小窗 | 通过；开关动作已自动化 |
-| A5 | 打开设置 | 原生边框，尺寸 / 滚动正常；缩放、活动提醒、点击穿透、状态协议、DeepSeek 可操作 | 通过 |
-| A6 | 切换宠物 | 本地库列表 +「从 Codex 导入」可用；切换后精灵、动画、窗口 / 托盘图标更新 | 导入面板 2026-09-16 新增，待实测 |
-| A7 | 导入 / 导出 / 删除 | 文件夹或 `.zip` 可导入，重复 id 询问覆盖；导出 Codex 上传格式；删除有确认 | 通过 |
-| A8 | 状态协议 POST | `running`/`waiting`/`failed`/`review`/`waving`/`jumping`/`running-left`/`running-right` 切换动画；message 显示气泡；TTL 到期回 base | 协议 / TTL 自动化通过；视觉待人工 |
-| A9 | 状态协议 GET | `/health` 返回 pet/persona/state；`/pets` 返回 id 列表 | 自动化通过 |
-| A10 | 重启持久化 | 宠物、人格、缩放、穿透、活动提醒、协议端口等重启后保持 | 通过 |
-| A11 | 托盘隐藏 / 显示 / 退出 | 隐藏后不响应桌面点击；托盘可恢复；退出后进程结束、锁可重取 | 通过；已自动化 |
-| A12 | DeepSeek 凭据 | 保存 key 后 Windows 凭据管理器出现 Petsona 条目；无 key 时回落到固定问候 | 通过 |
-| A13 | 活动提醒（长测） | 首次约 45 分钟后自动走动 + 气泡，之后按间隔；用户交互不打断当前动作 | 加速计时自动化通过；真实 45 分钟待人工 |
-
-## B. 交互后端
-
-| # | 操作 | 预期结果 | 状态 |
-|---|---|---|---|
-| B1 | 左键单击精灵 | 挥手 + 气泡；320ms 内不误判双击 | 通过 |
-| B2 | 快速双击精灵 | 播放一次跳跃，不先挥手 | 通过 |
-| B3 | 按住拖动 | 跟手移动；左右移动播放 running-left/right；松手停下且不触发单击 | 通过 |
-| B4 | 右键精灵 | Win32 原生菜单出现在光标处，Esc / 点外关闭，不被宠物窗口裁切 | 代码完成；实机待确认 |
-| B5 | 光标在宠物周围移动 | 只在宠物附近的椭圆区域触发；row9/row10 作为方向姿势表，从中性帧逐帧到目标；左右换行先经过对应的上 / 下中间姿势；离开后回中性帧，正前方死区不触发 | 范围与跨行状态机单测通过；真实方向、跟随延迟和过渡观感待实测 |
-| B6 | 开启像素级点击穿透 | 透明像素点击落到桌面，不透明像素仍可点；关闭后整个精灵矩形可交互 | 通过 |
-| B7 | 记事本 / 浏览器输入时点宠物 | 前台不丢焦点，宠物仍响应鼠标 | 自动化 + 真实 SendInput 会话通过（`MA_NOACTIVATE` + 前台不变）；可复测焦点观感 |
-| B8 | 单击 / 右键 / 设置 / 改尺寸 | 宠物周围无边框闪；设置窗口打开后前台不跳回旧应用 | frame style 不重建、缩放保持底部中心锚点已自动化；焦点与肉眼观感待人工 |
-| B9 | 状态 message / 影子按钮 / 输入框 | 影子与宠物留出间距且不被挡；悬停变圆形编辑按钮；点击后按钮原位横向展开为输入框；单行高与按钮直径一致，多行自动增高；Enter 发送、Shift+Enter 换行、Esc 关闭 | 阴影/输入窗口样式与生命周期自动检查；位置与动画观感待人工 |
-| B10 | 打开托盘菜单后等一会再点退出 | 菜单打开时宠物动画继续；退出立即生效；不冻结、不残留菜单窗口 | 代码完成；实机待确认 |
-| B11 | 空闲时看任务管理器 | CPU/GPU 接近 0–1%；不持续 60 FPS 重绘 | 事件驱动唤醒已实现；真实桌面 smoke 实测约 0.8% 单核（2026-09-17）；任务管理器观感可复测 |
-| B12 | 启动第二个同数据目录实例 | 不出现第二只宠物；第二个进程退出或只留一个托盘图标 | 通过 |
-| B13 | 看日志并重启 | 关键日志写入文件；重启不被旧锁阻挡 | 通过 |
-| B14 | 退出后重新启动 | 宠物、设置、状态服务恢复正常；无残留窗口 / 托盘 / 端口 | 通过；含屏幕外位置回落 |
-| B15 | 设置 → 宠物行为 → 重力 | 半空松手后约 2600 px/s² 下落（上限 1800 px/s），停在工作区底部并播放一次 `jumping`；拖动 / 活动提醒期间不生效 | 代码 + C7 smoke 通过；手感待人工 |
-
-## C. 多屏与系统集成
-
-位置记忆按**物理像素**保存；菜单用 `MonitorFromPoint` + `GetMonitorInfoW(rcWork)` 夹取；
-保存的显示器不存在时回落到最近可见工作区。真实多屏切换 / 拔插仍需人工确认。
-
-| # | 操作 | 预期结果 | 状态 |
-|---|---|---|---|
-| C1 | 把宠物拖到副屏 | 位置正确、不跳回主屏；缩放与命中不漂移 | 通过 |
-| C2 | 副屏右键托盘 / 宠物 | 菜单出现在光标所在显示器并被夹在工作区内 | 已实现；T3 自动检查，副屏待实测 |
-| C3 | 拖动后重启 | 精确还原；显示器不存在时回落到可见显示器 | C3 + B14 自动化通过；混合 DPI 待确认 |
-| C4 | 100% / 125% / 150% / 200% DPI | 精灵清晰、逻辑尺寸合理；穿透与命中一致 | 待实测 |
-| C5 | 全屏应用 / 任务栏自动隐藏 / 虚拟桌面 | 置顶层级正确；点击不抢前台；隐藏 / 显示状态一致 | 待实测 |
-| C6 | Win32 窗口自省 | `Petsona` / `Petsona 气泡` 为 `WS_POPUP`、无 `CAPTION`、带 `WS_EX_NOACTIVATE`；原生菜单走专用线程 | 宠物窗口 / 气泡自动化通过；菜单实机待确认 |
-
-宠物窗口样式应满足（可用 `EnumWindows` + `GetWindowLongPtrW` 自查）：
-
-```text
-POPUP=True  CAPTION=False  NOACTIVATE=True
-```
-
 ## W. 原生前端验收（2026-09-20 起，当前产品线）
 
 自动门禁（本机已验证通过）：
@@ -115,13 +63,14 @@ POPUP=True  CAPTION=False  NOACTIVATE=True
 powershell -ExecutionPolicy Bypass -File scripts\verify-windows.ps1 -Full
 ```
 
-覆盖：Rust workspace 门禁（fmt / clippy / 90 项测试 / release）+ `petsona_ffi.dll` +
-dotnet locked restore / build / format / **36 项测试** + **native smoke 24 项**
+覆盖：Rust workspace 门禁（fmt / clippy / **95 项测试** / release）+ `petsona_ffi.dll` +
+dotnet locked restore / build / format / **36 项测试** + **native smoke 25 项**
 （N1 启动、N2 宠物窗、N3 宠物加载、N4 窗口样式、N5 编辑按钮、N6 托盘窗口、
 N7 协议状态、N8 TTL 回退、N9 穿透切换、N10/N11 单实例、N12 空库首启、
 N13 退出释放端口、N14 webp、N15 点击、N16 动画帧变化、N17 托盘 v4 回调菜单、
 N18 Composer 聚焦、N19 设置聚焦、N20 拖动动画（按引擎 sprite index）、N21 注视跨行、N22 拖动反向、
-N23/N24 窗口接管光标（WM_SETCURSOR 返回 1，且以 NULL 类光标对照窗口返回 0 自校准））+ 打包结构与内容检查。Release 构建后还有 FFI DLL SHA256 哈希守卫。
+N23/N24 窗口接管光标（WM_SETCURSOR 返回 1，且以 NULL 类光标对照窗口返回 0 自校准）、
+N25 `action:"clear"` 解除粘滞的协议状态）+ 打包结构与内容检查。Release 构建后还有 FFI DLL SHA256 哈希守卫。
 
 人工验收（需要真实桌面；状态列由人工复测后更新）：
 
@@ -140,6 +89,7 @@ N23/N24 窗口接管光标（WM_SETCURSOR 返回 1，且以 NULL 类光标对照
 | W11 | 状态协议 | `/state`、`/health`、`/pets` 与 TTL 语义 | 自动 N7/N8 与 Rust 测试通过；**2026-09-21 人工通过**（5 条步骤含 TTL 回退、`ttlMs:0` 粘滞、非法状态 400 全部符合预期） |
 | W13 | 打开 Composer / 设置窗口 | 窗口取得前台与键盘焦点，可直接输入 / 导航 | 自动 N18/N19；**2026-09-21 人工通过** |
 | W14 | 冷启动 / 热启动后立即把鼠标移到宠物与编辑按钮上 | 光标是普通箭头，不残留启动期的"启动中"忙碌圈 | 自动 N23/N24（宠物窗与 overlay 都接管 WM_SETCURSOR）；**2026-09-21 人工复测通过**（冷 / 热启动后光标均为普通箭头；启动速度用户确认可接受，CR-W1 选项 C 不改代码） |
+| W15 | 设置页收束（settings-consolidation） | 六页卡片布局（宠物 / 外观与交互 / 人格 / 记忆 / 连接与问候 / 系统）；改动即时生效（无保存按钮）；删除宠物 / 清空记忆有确认；系统页可打开数据与日志目录、显示版本 | 自动：dotnet 36/36（含 `UpdateGreetingConfig`）、`verify-windows.ps1 -Full` exit 0、smoke 25/25 ×2；**2026-09-21 用户实机通过**（后续设置页微调见执行记录「下一批」） |
 | W12 | 多屏 / 混合 DPI / 工作区夹取 / 重力 / 自动活动提醒 / 透明度 / 协议设置界面 / 宠物图标托盘化 / 影子动画 | —— | **暂缓**（计划 v1.1 §3.1，与 macOS 线一致；解冻需用户确认） |
 
 ### W11 手工步骤（状态协议，隔离实例）
@@ -177,7 +127,13 @@ catch { "HTTP " + [int]$_.Exception.Response.StatusCode }
 - 用户交互**顶不掉**协议状态：点击是 `native` 源的 `waving`（40）、拖动是 `running-left/right`（10），都低于 `running` 的 70；Composer 聊天只发对话、不推状态。这是既定设计（用户交互不打断 agent 状态）；
 - 重开应用也能解除（覆盖状态只在内存中，不持久化）。
 
-若某个 hook 推了 `ttlMs:0` 之后没有再推结束状态，宠物会一直保持该状态 —— 这是已知可用性缺口，见执行记录 CR-W2。
+若某个 hook 推了 `ttlMs:0` 之后没有再推结束状态，宠物会一直保持该状态。**协议侧解除入口（CR-W2 选项 A，2026-09-21 实现）**：同一 source 发一条 `action:"clear"` 即可，不需要 `state`：
+
+```powershell
+Invoke-RestMethod -Method Post -Uri http://127.0.0.1:17873/state -ContentType 'application/json; charset=utf-8' -Body '{"source":"win-verify","action":"clear"}'
+```
+
+要点：`clear` 只解除**该 source 自己**的覆盖（其他 source 的状态不受影响）；同一 body 里既带 `state` 又带 `action:"clear"` 时 **clear 优先**；`action` 匹配会去掉首尾空白且大小写不敏感；未知 `action` 不改变原逻辑（带合法 `state` 时照常推状态，否则仍 400）。自动覆盖：smoke **N25**。
 
 ## D. 打包与发布
 
@@ -191,23 +147,12 @@ catch { "HTTP " + [int]$_.Exception.Response.StatusCode }
 | D5 | 启用 / 关闭开机自启 | 写删 HKCU Run 项，下次登录行为正确 | 已实现（设置 → 启动）；T4 自动验证注册表；登录后待实测 |
 | D6 | 干净 Windows 用户环境 | 不依赖开发目录；自动建立数据目录 / 日志 / 宠物库 | 待实测 |
 
-## E. 阶段 7 人工确认（H1–H5）
-
-自动化已覆盖 T4（自启注册表）、C3（物理像素位置）、C7（重力落地）、B14（屏幕外回落）。
-下面只补“真实系统行为”：
-
-| # | 操作 | 预期结果 | 状态 |
-|---|---|---|---|
-| H1 | 勾选 / 取消「开机自启动」 | HKCU Run 出现 / 消失 `Petsona` 值，内容为 `"<exe 路径>"`；任务管理器启动应用可见 | 待实测 |
-| H2 | 拖到副屏后重启 | 精确回到副屏原位置；混合 DPI 不偏移 | 待实测 |
-| H3 | 副屏右键托盘 / 宠物 | 菜单出现在该屏工作区内，不越界、不跳屏 | 待实测 |
-| H4 | 拔掉副屏（或把 `startPosition` 改成屏幕外）后重启 | 宠物回到最近可见工作区，不会消失 | 待实测 |
-| H5 | 开启重力，半空松手 | 平滑下落、停在工作区底部、播放一次 `jumping`；拖动 / 走动时不下落 | 待实测 |
-
 ## F. 自动化覆盖（`-Full`）
 
-20 项 smoke：`T1`–`T4`、`A1` / `A4` / `A8` / `A9` / `A11` / `A13`、
-`B7`–`B9` / `B11`–`B14`、`C3` / `C6` / `C7`。
+**原生线（当前产品线）**：`scripts\windows-smoke.ps1` **25 项** `N1`–`N25`（启动 / 窗口 / 宠物 /
+样式 / 编辑按钮 / 托盘 / 协议 / TTL / `action:clear` / 穿透 / 单实例 / 空库首启 / 端口释放 /
+webp / 点击 / 动画帧 / 托盘菜单 / 聚焦 / 拖动动画 / 注视 / 光标），随后是打包结构检查。
 
-`test-hooks` 默认关闭、只绑 `127.0.0.1` 且要求随机 token；受限会话无法写 HKCU 时 `T4` `[SKIP]`，
-无交互桌面时 CPU / SendInput 检查 `[SKIP]`。自动化不能替代 B8 肉眼闪、C4/C5 多屏 / DPI、D6。
+运行注意：smoke 使用隔离 `PETSONA_HOME` 与空闲端口，但点击 / 拖动 / 注视类用例会**真实操作物理鼠标**——
+跑 `-Full` 或 `windows-smoke.ps1` 时不要同时使用鼠标，否则 smoke 会自报「物理光标被另一输入设备移动」
+（N15 `[SKIP]`）并连带 N18/N20/N21 假失败；这类失败重跑即可。旧 egui 入口的 20 项 smoke 清单见归档文档。

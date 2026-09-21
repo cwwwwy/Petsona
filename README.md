@@ -1,8 +1,8 @@
 # Petsona
 
-A lightweight desktop pet for Windows and macOS. The target architecture uses a
-shared Rust engine with native platform frontends, a Codex-compatible pet engine
-and an optional DeepSeek greeting.
+A lightweight desktop pet for Windows and macOS. A shared Rust core/runtime drives
+native platform frontends (Windows: C# / WinUI 3 + Win32, macOS: SwiftUI / AppKit),
+with a Codex-compatible pet engine and an optional DeepSeek greeting.
 
 ## Features
 
@@ -14,9 +14,10 @@ and an optional DeepSeek greeting.
   facts/events, drag-and-drop import with overwrite confirmation, fixed scale presets
 - Local state protocol (`127.0.0.1:17872`) so Codex hooks can drive the pet
 - Persona plus lightweight JSON memory (facts, recent events, last seen)
-- Windows: tray, native Win32 menu, login autostart, multi-monitor position
-  memory, gravity
-- macOS: AppKit shell, tray menu, LaunchAgent autostart script
+- Windows: WinUI 3 + Win32 frontend — tray with native menu, login autostart,
+  single-monitor position memory (multi-monitor / gravity / activity reminders are
+  deferred, see [plan §3.1](docs/plans/windows-native-rewrite.md))
+- macOS: SwiftUI / AppKit frontend — menu-bar menu, LaunchAgent autostart
 
 ## Workspace
 
@@ -25,28 +26,39 @@ and an optional DeepSeek greeting.
 | `crates/petsona-core/` | Pet format, animation engine, persona, memory, DeepSeek, state protocol |
 | `crates/petsona-runtime/` | Platform-independent runtime: config, sessions, locks, logs, greetings |
 | `crates/petsona-ffi/` | Native frontend C ABI; ABI 3 contract and worker projection |
+| `apps/windows/` | C# / WinUI 3 + Win32 native Windows frontend (current product line) |
 | `apps/macos/` | SwiftUI + AppKit native macOS frontend (manual acceptance in progress) |
-| `crates/petsona-app/` | Legacy egui UI retained until native cutover |
-| `crates/petsona-shell-windows/` | Legacy Rust/Win32 shell retained until WinUI cutover |
-| `crates/petsona-shell-macos/` | Legacy Rust/AppKit shell retained until native cutover |
+| `crates/petsona-app/` | Legacy egui UI, frozen — deleted after the macOS line is accepted |
+| `crates/petsona-shell-windows/` | Legacy Rust/Win32 shell, frozen — kept buildable only |
+| `crates/petsona-shell-macos/` | Legacy Rust/AppKit shell, frozen — kept buildable only |
 
-The target architecture is shared Rust core/runtime plus native platform
-frontends. The macOS frontend in `apps/macos` calls the Rust engine through
-`contracts/petsona.h`; the current egui shells remain only while the native
-feature set is being migrated. The native functional batch is implemented and
-automated gates are green, but window/IME/Keychain and release-signing manual
-acceptance is still required before calling it release-ready.
-See the [execution contract](docs/plans/native-ui-rewrite.md),
-[implementation and review record](docs/execution/native-ui-rewrite.md), and
-[collaboration rules](AGENTS.md).
+Both native frontends call the shared engine through `contracts/petsona.h`. The
+old egui / shell crates stay in the workspace only until the macOS line finishes
+manual acceptance (then they are deleted, see Windows plan REQ-W15).
+
+Windows state: the native frontend passed its manual acceptance matrix (W1–W14)
+and the automated gate; packaging (`scripts\package-windows.ps1`) and the release
+workflow still need their first runs on a clean machine.
+macOS state: functional batch + gates green, but window/IME/Keychain and signing
+acceptance is still open.
+See the plans ([macOS](docs/plans/native-ui-rewrite.md),
+[Windows](docs/plans/windows-native-rewrite.md)), their
+[execution records](docs/execution/), and [collaboration rules](AGENTS.md).
 
 ## Run
 
 ```powershell
-cargo run -p petsona-shell-windows   # legacy Windows entry during migration
-cargo run -p petsona-shell-macos     # legacy macOS entry during migration
+# Windows (current): build or run the native frontend
+dotnet build apps/windows/Petsona.sln -c Release -p:Platform=x64
+powershell -ExecutionPolicy Bypass -File scripts\package-windows.ps1   # then run dist\…\Petsona.exe
+
+# macOS (current)
 xcodegen generate --spec apps/macos/project.yml --project apps/macos
 xcodebuild -project apps/macos/Petsona.xcodeproj -scheme Petsona build
+
+# Legacy entries (frozen, kept buildable for comparison only)
+cargo run -p petsona-shell-windows
+cargo run -p petsona-shell-macos
 ```
 
 Windows needs VS Build Tools ("Desktop development with C++") for the MSVC
@@ -85,7 +97,13 @@ curl -XPOST http://127.0.0.1:17872/state \
 `GET /health` returns the current pet/persona/state snapshot, `GET /pets` lists the
 pet ids. Available states: `idle`, `running`, `waiting`, `failed`, `review`,
 `waving`, `jumping`, `running-left`, `running-right`, `look-row-9`, `look-row-10`.
-`ttlMs: 0` means "never expires".
+`ttlMs: 0` means "never expires"; the source that raised a state can retract it
+again (e.g. after a crash) without naming a new state:
+
+```bash
+curl -XPOST http://127.0.0.1:17872/state \
+  -H 'content-type: application/json' -d '{"source":"codex","action":"clear"}'
+```
 
 ## Pets
 
@@ -125,5 +143,7 @@ the persona's fixed or time-based greeting.
 | File | Contents |
 |---|---|
 | `docs/PLATFORM_ARCHITECTURE.md` | Shared core + platform shells, menu decision, release tracks |
-| `docs/WINDOWS_VERIFICATION.md` | Windows manual checklist (includes autostart, multi-monitor, gravity) |
+| `docs/WINDOWS_VERIFICATION.md` | Windows native manual checklist (W/D/F, includes the W11 protocol steps) |
 | `docs/MACOS_VERIFICATION.md` | macOS manual checklist |
+| `docs/plans/` · `docs/execution/` | Cross-conversation plan contracts and evidence records |
+| `docs/archive/` | Frozen history: legacy egui Windows checklist and the old Windows issue tracker |

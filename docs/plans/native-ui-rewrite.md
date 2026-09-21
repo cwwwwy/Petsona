@@ -137,7 +137,7 @@
 | `.github/workflows/release-macos.yml` | 新产物/门禁；手动产 artifact，正式 tag 发布；真实签名与未签名包区分 | 15 |
 | `AGENTS.md`、`README.md`、`docs/PLATFORM_ARCHITECTURE.md`、`docs/MACOS_VERIFICATION.md` | 更新长期决策/入口/环境要求，目标与现状分开，引用执行记录 | 17 |
 | `docs/FEATURE_PARITY.md`、`docs/execution/native-ui-rewrite.md` | 逐 REQ 更新真实状态/测试证据/审查关闭记录，不能篡改计划 | 17 |
-| `docs/WINDOWS_VERIFICATION.md`、`docs/WINDOWS_ISSUES.md`、`CHANGELOG.md` | 保留历史验收，记录共享层影响和新版本变化；旧问题不得因重写自动关闭 | 16/17 |
+| `docs/WINDOWS_VERIFICATION.md`、`docs/archive/WINDOWS_ISSUES.md`、`CHANGELOG.md` | 保留历史验收，记录共享层影响和新版本变化；旧问题不得因重写自动关闭 | 16/17 |
 
 旧文件迁移归属：`crates/petsona-app/src/app.rs` 的生命周期至前端，调度至 runtime；`app/interaction.rs`、`app/geometry.rs` 的纯规则至 core；`app/pets.rs`、`app/conversation.rs` 的业务至 runtime；`app/settings.rs`、`bubble.rs`、`shadow.rs`、`menus.rs` 的 UI 至原生前端；`src/test_hooks.rs`、`app/test_hooks.rs` 至 runtime 测试服务与原生探针。`src/platform.rs` 的类型/契约拆出，`fonts.rs` 用系统文字栈替代。测试映射完成前不删除原测试。共享 app 的 `Cargo.toml`、`src/lib.rs` 随全仓清理删除。
 

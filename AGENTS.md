@@ -21,7 +21,8 @@ Petsona 是 Windows / macOS 桌宠：共享 Rust 核心与运行时，配合各�
 | `crates/petsona-app/` | 旧 egui UI，完成对照后删除 |
 | `crates/petsona-shell-windows/` | 旧 Rust/Win32 外壳，完成 WinUI 对照后删除 |
 | `crates/petsona-shell-macos/` | 旧 Rust/AppKit 外壳，完成原生对照后删除 |
-| `docs/` | 平台架构、两端实机验收清单、Windows 问题跟踪（`WINDOWS_ISSUES.md`） |
+| `docs/` | 平台架构、两端实机验收清单、`plans/` `execution/` 跨对话工作流文档 |
+| `docs/archive/` | 冻结的历史文档：旧 egui 入口验收清单（`WINDOWS_VERIFICATION-legacy-egui.md`）、Windows 问题跟踪（`WINDOWS_ISSUES.md`） |
 
 ## 常用命令
 
@@ -69,7 +70,7 @@ MSVC 缺 `link.exe` 的 GNU 回退写在 `docs/WINDOWS_VERIFICATION.md`。
 ## 跨对话工作流（规划 → 执行 → 审查）
 
 - 计划契约：`docs/plans/<任务名>.md`；执行证据：`docs/execution/<任务名>.md`。模板分别为各目录的 `TEMPLATE.md`。
-- 当前任务（两条并行线）：macOS [native-ui-rewrite](docs/plans/native-ui-rewrite.md)（执行记录 [同名](docs/execution/native-ui-rewrite.md)）；Windows [windows-native-rewrite](docs/plans/windows-native-rewrite.md)（执行记录 [同名](docs/execution/windows-native-rewrite.md)）。功能表 [FEATURE_PARITY.md](docs/FEATURE_PARITY.md) 只汇总状态，不覆盖计划。
+- 任务线：macOS [native-ui-rewrite](docs/plans/native-ui-rewrite.md)（执行记录 [同名](docs/execution/native-ui-rewrite.md)）；Windows [windows-native-rewrite](docs/plans/windows-native-rewrite.md)（执行记录 [同名](docs/execution/windows-native-rewrite.md)）；跨两端 [settings-consolidation](docs/plans/settings-consolidation.md)（执行记录 [同名](docs/execution/settings-consolidation.md)）——设置项收束 + 设置页卡片化 + 空闲问候；macOS 同构部分仍待 Mac 验证。功能表 [FEATURE_PARITY.md](docs/FEATURE_PARITY.md) 只汇总状态，不覆盖计划。
 - 每个对话先确认角色与用户授权，读取 AGENTS、指定计划及执行记录，再用 `git status`、`git log`、`git diff` 和未跟踪文件核对基线。已有用户改动必须保留。
 - **规划**：只读调查，明确目标/非目标、逐文件增改删、约束、REQ 编号、依赖、验收矩阵、命令和完成条件。用户要求“不修改文件”时只在对话输出；授权落盘后才写指定文档，不写产品代码。
 - **执行**：先复述关键目标和验收标准，再按指定计划实施。可作计划内的局部实现选择，不得自行缩减功能、将完整交付改成骨架、跳过验收或改变架构边界。
@@ -80,18 +81,19 @@ MSVC 缺 `link.exe` 的 GNU 回退写在 `docs/WINDOWS_VERIFICATION.md`。
 - **完成**：所有本次范围内必需项通过、有证据、无未解决审查项才可宣布完成。必需测试受阻/跳过、人工检查未做时写“未完成/待验收”，不自行降低标准。
 - 新测试必须隔离数据目录、网络端口、自启项和凭据；应用宿主测试也必须在入口初始化前隔离。不得让测试启动默认用户实例。
 
-## 当前状态（2026-09-20）
+## 当前状态（2026-09-21）
 
 - 用户确认最终方向是共享 Rust 核心 + 原生前端：macOS SwiftUI/AppKit，Windows C#/WinUI 3/Win32；2026-09-20 确认两线并行推进（Windows 按 windows-native-rewrite 启动），Linux 不在范围。
-- Git HEAD 为 `c4fc413`，工作区干净；原生实现由 `3fb34c3`、`c4fc413` 提交。计划与执行记录见上，文档版本不能替代 Git/工作区基线。
-- Windows 线：旧入口（egui/Win32）人工复测按用户决定冻结、保持可构建；新原生线已完成批次 0 环境预研（无 VS 的 dotnet CLI 构建/运行/锁文件/UNC 直连验证通过），实施状态见 windows-native-rewrite 计划与执行记录。
+- Git HEAD 由 `git log` 为准（2026-09-21 最近提交：`1b2c2c1` 收口 W 矩阵、`6cdfaef` 修窗口光标）。计划与执行记录见上，文档版本不能替代 Git/工作区基线。
+- 文档布局（2026-09-21 清理）：现行清单只有 `docs/WINDOWS_VERIFICATION.md`（0/W/D/F），旧 egui 清单与旧问题跟踪在 `docs/archive/`；手动诊断脚本在 `scripts/diagnostics/`（隔离 home，不入门禁）。
+- Windows 线：**原生前端自动门禁 + 人工矩阵已闭合**（W1–W11 / W13 / W14 于 2026-09-21 通过，W12 多屏 / 重力 / 活动提醒 / 透明度 / 协议设置界面 / 托盘化 / 影子动画按计划 v1.1 §3.1 暂缓）；CR-W1 启动性能选 C（只记基线，不优化）、CR-W2 协议粘滞状态选 A（`action:"clear"` 已实现，smoke N25）。**剩余发布项**：D1–D6（release exe / 图标 / 打包 / tag / 干净机器 / 登录自启）、CI 首次运行、`-Full` 在桌面空闲时的干净复跑。旧入口（egui/Win32）冻结、保持可构建。
 - 当前 macOS 原生入口已从骨架推进到可构建/可测试/可协议 smoke 的实施状态，但**仍未完成完整原生验收**；剩余功能和人工项以执行记录 REV-02/04/05/07/08 及 M-01～M-06 为准。旧入口暂留作行为对照；Windows 旧验证结论不代表新原生实现已通过。
 - 2026-09-20 执行：在已有 runtime worker + ABI3 FFI、原生 SwiftUI/AppKit 宠物窗/气泡/Composer/设置/宠物库命令基础上，完成 DeepSeek 全配置、记忆管理、人格 CRUD/模板/导入导出、明确偏好提取、重复导入确认、拖放导入和固定缩放档位/状态栏菜单；Rust workspace、原生 XCTest 5/5、native smoke 6/6、Release 静态链接与 arm64 打包门禁通过，但不等于窗口视觉、IME、Keychain/LaunchAgent 真实行为、多屏、签名、公证人工通过。
 
 ### 旧入口历史记录（非当前原生验收结论）
 
 - 历史基线 `664cde2`，后续 `eb99f71` 已包含批次 4–7，`ad045bb` 补空库问候/气泡修复；以下测试数字均为当时旧入口记录。
-- 决策（2026-09-18）：**Windows 优先**——先把 `docs/WINDOWS_ISSUES.md` 全部问题修完并实机确认，
+- 决策（2026-09-18）：**Windows 优先**——先把 `docs/archive/WINDOWS_ISSUES.md`（当时为 `docs/WINDOWS_ISSUES.md`）全部问题修完并实机确认，
   再开 Linux 端；Linux 可行性与范围决策要点见该文档附录，本轮不做。
 - 已合入：删除旧 `legacy/` 树、`petsona-app` UI 模块化、CJK 字体路径经 `PlatformHost` 注入、
   Windows `autostart.rs` / `no_activate.rs` 分拆、方向姿势注视与影子 / 对话输入框动画。
@@ -117,7 +119,7 @@ MSVC 缺 `link.exe` 的 GNU 回退写在 `docs/WINDOWS_VERIFICATION.md`。
 
 ### 旧入口阶段 7 剩余（历史待办）
 
-1. **Windows 问题清零（原主线，当前以任务计划为准）**：`docs/WINDOWS_ISSUES.md` 批次 1–7 代码已完成（含移除内置宠物、
+1. **Windows 问题清零（原主线，当前以任务计划为准）**：`docs/archive/WINDOWS_ISSUES.md` 批次 1–7 代码已完成（含移除内置宠物、
    首启设置窗、立即活动、注视流畅、缩放过渡、右键回馈、子窗白线 / 闪框修复）；剩余是**实机复测**与 D 组打包交付。
 2. **Windows 首次发布**：清单清零后定版本 → 先 `workflow_dispatch` 试跑 → 再打 `windows-v*` tag；
    发布前必须解决 GitHub Release 通道（W-28）；W-27 已通过移除内置宠物解决；
@@ -155,7 +157,8 @@ MSVC 缺 `link.exe` 的 GNU 回退写在 `docs/WINDOWS_VERIFICATION.md`。
   `"<exe 路径>"`；测试可用 `PETSONA_AUTOSTART_VALUE_NAME` 换一个值名。
 - 开机自启（macOS）：设置页写入 / 删除 `~/Library/LaunchAgents/com.petsona.desktop.plist`；
   `scripts/install-macos-launch-agent.sh` 仍用于手动管理打包的 `.app`。
-- 状态协议：`127.0.0.1:17872`，`POST /state`、`GET /health`、`GET /pets`；`ttlMs: 0` 表示不过期。
+- 状态协议：`127.0.0.1:17872`，`POST /state`、`GET /health`、`GET /pets`；`ttlMs: 0` 表示不过期；
+  `{"source":"x","action":"clear"}`（无需 `state`）解除该 source 自己的覆盖 —— 粘滞状态的协议侧出口（CR-W2 选项 A，smoke N25）。
 - 宠物帧数按图集实际绘制推断（发行版 V2 的 idle 实际画 7 帧，官方表写 6）；row9 = 右侧方向
   姿势表、row10 = 左侧方向姿势表，每行中间帧是中性姿势；依据与测量方法见 `pet/state.rs` 和
   `pet_inspect`。
@@ -241,7 +244,7 @@ macOS 活动指针采样 40ms，离开触发区回中性帧。
   修法：注册窗口类时设 `HCursor = LoadCursor(NULL, IDC_ARROW)`，并在 `WM_SETCURSOR` + `HTCLIENT` 时 `SetCursor` 后返回 1；托盘 owner 窗口同样补。
   验证受限：窗口类是**进程局部**的，`GetClassInfoEx` 跨进程必失败；`SetCursor` 也只对拥有窗口的线程生效，跨进程无法伪造形状。跨进程判据用
   "发 `WM_SETCURSOR` 看返回值"（1=接管），并现场注册一个"NULL 类光标 + DefWindowProc"的对照窗口返回 0 自校准（smoke N23/N24）。
-- **协议状态由 source 拥有生命周期**：`POST /state` 的 `source` 在内部变成 `hook:<source>`；**同一 source 必然覆盖自己**（`running → review → idle` 都能发），不同 source 才比优先级（failed 90 > waiting 80 > running 70 > review 60 > waving/jumping 40 > look 行 20 > running-left/right 10 > idle 0，**优先级相同也拒绝，后来者输**）。因此 `ttlMs:0` 的粘滞状态只能被「同 source 的下一条」或「更高优先级的其他 source」顶掉：用户点击（`native` 源 `waving` 40）、拖动（10）和 Composer 聊天（只发对话、不推状态）都顶不掉——这是既定设计（用户交互不打断 agent 状态），代价是 hook 崩了宠物会卡住到重启（解除方式与可选改动见 W11 小节 / CR-W2）。`StateEvent.action` 字段目前只解析不生效。
+- **协议状态由 source 拥有生命周期**：`POST /state` 的 `source` 在内部变成 `hook:<source>`；**同一 source 必然覆盖自己**（`running → review → idle` 都能发），不同 source 才比优先级（failed 90 > waiting 80 > running 70 > review 60 > waving/jumping 40 > look 行 20 > running-left/right 10 > idle 0，**优先级相同也拒绝，后来者输**）。因此 `ttlMs:0` 的粘滞状态只能被「同 source 的下一条」或「更高优先级的其他 source」顶掉：用户点击（`native` 源 `waving` 40）、拖动（10）和 Composer 聊天（只发对话、不推状态）都顶不掉——这是既定设计（用户交互不打断 agent 状态）。`StateEvent.action` 现已生效：`"clear"`（trim + 大小写不敏感）解除**该 source 自己**的覆盖，body 里同时带 `state` 时 clear 优先，未知 action 不改变原逻辑；对应 Windows smoke N25。
 - **不激活窗口很重要**：宠物 / 气泡 / 菜单都不抢焦点（Windows `WS_EX_NOACTIVATE`，
   macOS 非激活面板），否则会打断用户正在编辑的应用。
 - **状态协议偶发空响应的根因**：Windows `accept()` 的 socket 继承监听 socket 的非阻塞模式；
