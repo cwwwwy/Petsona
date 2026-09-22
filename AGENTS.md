@@ -245,6 +245,7 @@ macOS 活动指针采样 40ms，离开触发区回中性帧。
   验证受限：窗口类是**进程局部**的，`GetClassInfoEx` 跨进程必失败；`SetCursor` 也只对拥有窗口的线程生效，跨进程无法伪造形状。跨进程判据用
   "发 `WM_SETCURSOR` 看返回值"（1=接管），并现场注册一个"NULL 类光标 + DefWindowProc"的对照窗口返回 0 自校准（smoke N23/N24）。
 - **协议状态由 source 拥有生命周期**：`POST /state` 的 `source` 在内部变成 `hook:<source>`；**同一 source 必然覆盖自己**（`running → review → idle` 都能发），不同 source 才比优先级（failed 90 > waiting 80 > running 70 > review 60 > waving/jumping 40 > look 行 20 > running-left/right 10 > idle 0，**优先级相同也拒绝，后来者输**）。因此 `ttlMs:0` 的粘滞状态只能被「同 source 的下一条」或「更高优先级的其他 source」顶掉：用户点击（`native` 源 `waving` 40）、拖动（10）和 Composer 聊天（只发对话、不推状态）都顶不掉——这是既定设计（用户交互不打断 agent 状态）。`StateEvent.action` 现已生效：`"clear"`（trim + 大小写不敏感）解除**该 source 自己**的覆盖，body 里同时带 `state` 时 clear 优先，未知 action 不改变原逻辑；对应 Windows smoke N25。
+- **WinUI XAML 事件可能在 `InitializeComponent()` 期间触发**：`Slider` 设置 `Minimum/Maximum` 就会 `ValueChanged`，此时后面声明的控件还是 null → 处理函数抛 `NullReferenceException`，**窗口对象仍在但永远不显示**（异常被上层吞掉，进程存活，表现为「设置窗打不开」而日志里什么都没有）。修法：处理函数先 `if (_suppressEvents || 目标控件 is null) return;`；回归点是 smoke N12/N19（空库首启 + 设置窗聚焦）。
 - **不激活窗口很重要**：宠物 / 气泡 / 菜单都不抢焦点（Windows `WS_EX_NOACTIVATE`，
   macOS 非激活面板），否则会打断用户正在编辑的应用。
 - **状态协议偶发空响应的根因**：Windows `accept()` 的 socket 继承监听 socket 的非阻塞模式；

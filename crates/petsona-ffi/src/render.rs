@@ -93,6 +93,9 @@ pub fn text_field(field: u32) -> Option<(PetsonaTextField, RuntimeTextField)> {
             PetsonaTextField::ImportConflict,
             RuntimeTextField::ImportConflict,
         ),
+        x if x == PetsonaTextField::Models as u32 => {
+            (PetsonaTextField::Models, RuntimeTextField::Models)
+        }
         _ => return None,
     };
     Some(field)

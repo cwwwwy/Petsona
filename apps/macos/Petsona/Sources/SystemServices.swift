@@ -48,9 +48,16 @@ enum LaunchAgentService {
 
 enum KeychainService {
     static let service = "com.petsona.desktop"
-    static let account = "deepseek"
+    /// Slot used before providers existed; still read for DeepSeek (REQ-S16).
+    static let legacyAccount = "deepseek"
 
-    static func saveDeepSeekKey(_ value: String) throws {
+    /// One credential slot per provider so switching providers never overwrites
+    /// the other key.
+    static func account(for provider: String) -> String {
+        "provider/" + (provider == "custom" ? "custom" : "deepseek")
+    }
+
+    static func saveDeepSeekKey(_ value: String, provider: String) throws {
         guard !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             throw NSError(domain: "Petsona", code: 2,
                           userInfo: [NSLocalizedDescriptionKey: "API Key 不能为空"])
@@ -59,7 +66,7 @@ enum KeychainService {
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
-            kSecAttrAccount as String: account,
+            kSecAttrAccount as String: account(for: provider),
         ]
         let attributes: [String: Any] = [kSecValueData as String: data]
         let status = SecItemUpdate(query as CFDictionary, attributes as CFDictionary)
@@ -73,7 +80,15 @@ enum KeychainService {
         }
     }
 
-    static var hasDeepSeekKey: Bool {
+    static func hasKey(provider: String) -> Bool {
+        if hasAccount(account(for: provider)) {
+            return true
+        }
+        // DeepSeek keeps working with a key saved before provider slots existed.
+        return provider != "custom" && hasAccount(legacyAccount)
+    }
+
+    private static func hasAccount(_ account: String) -> Bool {
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
@@ -83,7 +98,14 @@ enum KeychainService {
         return SecItemCopyMatching(query as CFDictionary, nil) == errSecSuccess
     }
 
-    static func deleteDeepSeekKey() throws {
+    static func deleteDeepSeekKey(provider: String) throws {
+        try deleteAccount(account(for: provider))
+        if provider != "custom" {
+            try deleteAccount(legacyAccount)
+        }
+    }
+
+    private static func deleteAccount(_ account: String) throws {
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,

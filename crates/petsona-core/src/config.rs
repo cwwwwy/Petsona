@@ -8,9 +8,16 @@ use crate::error::{Error, Result};
 
 pub const CONFIG_SCHEMA_VERSION: u32 = 1;
 
+/// Built-in provider presets.
+pub const PROVIDER_DEEPSEEK: &str = "deepseek";
+pub const PROVIDER_CUSTOM: &str = "custom";
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase", default)]
 pub struct DeepSeekConfig {
+    /// `deepseek` (the built-in preset) or `custom` (any OpenAI-compatible
+    /// endpoint). Anything else normalises to `deepseek` (REQ-S16).
+    pub provider: String,
     /// DeepSeek exposes an OpenAI-compatible endpoint at `/v1/chat/completions`.
     pub base_url: String,
     pub model: String,
@@ -25,6 +32,7 @@ pub struct DeepSeekConfig {
 impl Default for DeepSeekConfig {
     fn default() -> Self {
         Self {
+            provider: PROVIDER_DEEPSEEK.to_string(),
             base_url: "https://api.deepseek.com/v1".to_string(),
             model: "deepseek-v4-flash".to_string(),
             api_key_env: "DEEPSEEK_API_KEY".to_string(),

@@ -1,3 +1,4 @@
+using System.IO;
 using System.Text.Json;
 using Petsona.Core;
 using Petsona.Core.Interop;
@@ -22,6 +23,7 @@ public sealed class SettingsFlowTests
             PetsonaStatus.Ok,
             client.Send(PetsonaCommandKind.UpdateDeepSeekConfig, text: Json(new Dictionary<string, object?>
             {
+                ["provider"] = "custom",
                 ["baseUrl"] = "https://example.invalid/v1",
                 ["model"] = "test-model",
                 ["apiKeyEnv"] = "TEST_DEEPSEEK_KEY",
@@ -74,10 +76,66 @@ public sealed class SettingsFlowTests
 
         Assert.Contains("原生测试", client.Text(PetsonaTextField.Personas));
         Assert.Contains("test-model", client.Text(PetsonaTextField.DeepSeekConfig));
+        Assert.Contains(
+            "\"provider\":\"custom\"",
+            client.Text(PetsonaTextField.DeepSeekConfig).Replace(" ", string.Empty));
         Assert.True(
             WaitFor(client, () => client.Text(PetsonaTextField.Memory).Contains("\"idleMinutes\":45")),
             "greeting config did not land in the projection");
         Assert.Contains("安静音乐", client.Text(PetsonaTextField.Memory));
+    }
+
+    /// <summary>
+    /// REQ-S15: editing a fact in place, clearing only the facts, and the
+    /// export/import round trip all work through the FFI commands.
+    /// </summary>
+    [Fact]
+    public void MemoryFactEditScopedClearAndExportRoundTrip()
+    {
+        using var home = new IsolatedHome();
+        using var client = new EngineClient(home.Path);
+        WaitUntilReady(client);
+
+        Assert.Equal(
+            PetsonaStatus.Ok,
+            client.Send(PetsonaCommandKind.RememberFact, text: Json(new Dictionary<string, object?>
+            {
+                ["key"] = "咖啡",
+                ["value"] = "美式",
+            })));
+        Assert.True(
+            WaitFor(client, () => client.Text(PetsonaTextField.Memory).Contains("美式")),
+            "fact did not appear");
+
+        using var document = JsonDocument.Parse(client.Text(PetsonaTextField.Memory));
+        var factId = document.RootElement.GetProperty("facts")[0].GetProperty("id").GetString();
+        Assert.False(string.IsNullOrEmpty(factId));
+
+        Assert.Equal(
+            PetsonaStatus.Ok,
+            client.Send(PetsonaCommandKind.UpdateMemoryFact, text: Json(new Dictionary<string, object?>
+            {
+                ["id"] = factId,
+                ["key"] = "咖啡",
+                ["value"] = "拿铁",
+            })));
+        Assert.True(
+            WaitFor(client, () => client.Text(PetsonaTextField.Memory).Contains("拿铁")),
+            "edited fact did not appear");
+
+        var export = Path.Combine(home.Path, "memory-export.json");
+        Assert.Equal(PetsonaStatus.Ok, client.Send(PetsonaCommandKind.ExportMemory, text: export));
+        Assert.True(WaitFor(client, () => File.Exists(export)), "export file missing");
+
+        Assert.Equal(PetsonaStatus.Ok, client.Send(PetsonaCommandKind.ClearMemoryScope, value: 1));
+        Assert.True(
+            WaitFor(client, () => !client.Text(PetsonaTextField.Memory).Contains("拿铁")),
+            "scoped clear left facts behind");
+
+        Assert.Equal(PetsonaStatus.Ok, client.Send(PetsonaCommandKind.ImportMemory, text: export));
+        Assert.True(
+            WaitFor(client, () => client.Text(PetsonaTextField.Memory).Contains("拿铁")),
+            "imported fact did not come back");
     }
 
     private static string Json(Dictionary<string, object?> payload)

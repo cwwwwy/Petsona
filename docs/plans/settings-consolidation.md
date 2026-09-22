@@ -32,12 +32,12 @@
 | REQ-S08 | macOS 同构：`SettingsView.swift` 采用同一 6 分区、卡片化 `Form`/`Section`、即时生效、确认对话框、关于区与问候设置 | 本次（Mac 验证） | Mac 上 `bash scripts/verify-macos-all.sh` 全绿 + 人工；本机只能做代码审查 |
 | REQ-S09 | 测试与门禁：Rust workspace、dotnet 测试、`verify-windows.ps1 -Full`、macOS 门禁 | 本次 | 退出码 0，证据入执行记录 |
 | REQ-S10 | 文档：`WINDOWS_VERIFICATION.md` / `MACOS_VERIFICATION.md` 设置页条目、`FEATURE_PARITY.md`、执行记录、`AGENTS.md` | 本次 | 文档自查 + 链接有效 |
-| REQ-S11 | 宠物页：合并「导入文件夹 / 导入 zip」为单一「导入…」（文件选择器同时接受目录与 `.zip`）；「扫描 Codex 宠物」移入「从 Codex 导入」分区；空列表给空状态文案 | v1.1 | 人工：两种导入都可用、冲突面板不回归 |
+| REQ-S11 |（Windows ✅ / macOS 待验证）宠物页：合并「导入文件夹 / 导入 zip」为单一「导入…」（文件选择器同时接受目录与 `.zip`）；「扫描 Codex 宠物」移入「从 Codex 导入」分区；空列表给空状态文案 | v1.1 | 人工：两种导入都可用、冲突面板不回归 |
 | REQ-S12 | 缩放改滑块：0.5–2.0，**吸附原 7 档**（0.5/0.75/1/1.25/1.5/1.75/2.0），拖动实时预览、松手落盘；**托盘菜单同步改**为同一套语义（档位或增减按钮），两边不得冲突 | v1.1 | 自动：dotnet 单测 + smoke N4（窗口尺寸随缩放）；人工：拖动预览与托盘一致性 |
 | REQ-S13 | 人格页精简：系统提示词收进「高级」；固定问候并入「连接与问候」的空闲问候卡（作为回退文案）；「回答长度」并入语气预设；删除「简介」与「默认语言」（并删除 `persona.traits.language` / `description` 字段，提示词改为"用与用户相同的语言回答"）；emoji 默认改为开（只影响新建人格，不改老数据） | v1.1 | Rust 单测：schema 兼容 + 提示词不再含「默认语言」；人工：预设 + 自定义语气可用 |
 | REQ-S14 | 语气预设：`traits.tone` 提供 4–6 个预设（如 温和/活泼/沉稳/毒舌但温柔），选中即填入文本框且允许继续编辑；**不新增字段** | v1.1 | 人工：预设切换 + 手改都生效 |
-| REQ-S15 | 记忆页（第一批）：事实**可编辑**、分级清空（只清事实 / 只清事件 / 全清）、记忆导出 / 导入 | v1.1 | Rust 单测：分级清空与导入导出往返；人工：三条路径各一次 |
-| REQ-S16 | 模型供应商：`deepseek` / `custom` 两种；DeepSeek 预填 Base URL；填入 API Key 后可**显式拉取模型列表**（异步、有失败与空状态、允许手填模型名）；自定义 = OpenAI 兼容端点；`thinking` 字段按供应商门控；凭据按供应商隔离（`api-key:<provider>`） | v1.1 | 新增 ABI 命令（`ListModels`，追加值）；Rust 单测：请求体按供应商门控；人工：DeepSeek 拉到列表、自定义手填可用 |
+| REQ-S15 |（Windows ✅ / macOS 待验证）记忆页（第一批）：事实**可编辑**、分级清空（只清事实 / 只清事件 / 全清）、记忆导出 / 导入 | v1.1 | Rust 单测：分级清空与导入导出往返；人工：三条路径各一次 |
+| REQ-S16 |（Windows ✅ / macOS 待验证）模型供应商：`deepseek` / `custom` 两种；DeepSeek 预填 Base URL；填入 API Key 后可**显式拉取模型列表**（异步、有失败与空状态、允许手填模型名）；自定义 = OpenAI 兼容端点；`thinking` 字段按供应商门控；凭据按供应商隔离（`api-key:<provider>`） | v1.1 | 新增 ABI 命令（`ListModels`，追加值）；Rust 单测：请求体按供应商门控；人工：DeepSeek 拉到列表、自定义手填可用 |
 | REQ-S17 | 设置侧边栏：每个分区加图标；窗口变窄时 `NavigationView` 自动收成只显示图标（`PaneDisplayMode=Auto` + Threshold），macOS 侧对应 `NavigationSplitView` 的紧凑行为 | v1.1 | 自动：dotnet build；人工：拉伸窗口观察收纳/展开 |
 
 ## 逐文件变更

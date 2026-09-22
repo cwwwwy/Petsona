@@ -53,10 +53,20 @@ final class EngineClientTests: XCTestCase {
             "temperature": 0.4,
             "thinkingDisabled": true,
         ])
+        client.updateGreetingConfig([
+            "enabled": true,
+            "idleMinutes": 45,
+            "cooldownMinutes": 90,
+            "maxChars": 24,
+        ])
+        for _ in 0..<40 {
+            _ = client.tick()
+            if client.text(PETSONA_TEXT_MEMORY).contains("\"idleMinutes\":45") { break }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.01))
+        }
         client.updateMemoryConfig([
             "enabled": true,
             "recentEvents": 7,
-            "retentionDays": 30,
             "factLimit": 12,
         ])
         client.createPersona(id: "native-test", name: "原生测试", template: nil)
@@ -77,6 +87,8 @@ final class EngineClientTests: XCTestCase {
         XCTAssertTrue(client.text(PETSONA_TEXT_PERSONAS).contains("原生测试"))
         XCTAssertTrue(client.text(PETSONA_TEXT_DEEPSEEK_CONFIG).contains("test-model"))
         XCTAssertTrue(client.text(PETSONA_TEXT_MEMORY).contains("安静音乐"))
+        XCTAssertTrue(client.text(PETSONA_TEXT_MEMORY).contains("\"idleMinutes\":45"),
+                      "greeting config must land in the memory projection")
     }
 
     func testEngineCanBeDestroyedAndRecreatedWithPersistedSettings() {

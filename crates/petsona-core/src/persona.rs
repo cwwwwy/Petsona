@@ -16,12 +16,12 @@ pub const DEFAULT_PERSONA_ID: &str = "default";
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase", default)]
 pub struct PersonaTraits {
-    /// Free-form tone description, e.g. "毒舌但温柔".
+    /// Free-form tone description, chosen from a preset or typed by the user.
     pub tone: String,
-    /// `short` | `normal` | `detailed`.
+    /// `short` | `normal` | `detailed`. Kept in the schema because the system
+    /// prompt uses it, but the settings UI folds it into the tone presets.
     pub verbosity: String,
-    /// BCP-47-ish language tag, e.g. `zh-CN`.
-    pub language: String,
+    /// Emoji are allowed by default (settings-consolidation REQ-S13).
     pub emoji: bool,
 }
 
@@ -30,8 +30,7 @@ impl Default for PersonaTraits {
         Self {
             tone: "friendly and concise".to_string(),
             verbosity: "normal".to_string(),
-            language: "zh-CN".to_string(),
-            emoji: false,
+            emoji: true,
         }
     }
 }
@@ -41,7 +40,6 @@ impl Default for PersonaTraits {
 pub struct Persona {
     pub id: String,
     pub name: String,
-    pub description: Option<String>,
     pub system_prompt: String,
     pub greeting: Option<String>,
     pub traits: PersonaTraits,
@@ -54,7 +52,6 @@ impl Default for Persona {
         Self {
             id: DEFAULT_PERSONA_ID.to_string(),
             name: "小助手".to_string(),
-            description: Some("默认人格：友好、简洁、乐于帮忙。".to_string()),
             system_prompt: "你是一只住在用户桌面上的宠物伙伴。你友好、好奇、说话简洁。\
                 你可以陪用户聊天、帮忙梳理思路，但不要编造事实。\
                 回答时优先使用用户使用的语言。"
@@ -85,9 +82,7 @@ impl Persona {
         if !self.traits.tone.trim().is_empty() {
             style.push(format!("语气：{}", self.traits.tone.trim()));
         }
-        if !self.traits.language.trim().is_empty() {
-            style.push(format!("默认语言：{}", self.traits.language.trim()));
-        }
+        style.push("用与用户相同的语言回答。".to_string());
         match self.traits.verbosity.as_str() {
             "short" => style.push("回答保持简短，通常不超过三句话。".to_string()),
             "detailed" => style.push("回答可以详细一些，必要时分点说明。".to_string()),
@@ -249,7 +244,6 @@ pub fn templates() -> BTreeMap<String, Persona> {
     let mut out = BTreeMap::new();
 
     let mut genki = Persona::new("genki", "元气助手");
-    genki.description = Some("活力满满，鼓励式回应，适合日常陪伴。".into());
     genki.system_prompt = "你是一只元气满满的桌面宠物。你热情、爱鼓励人，喜欢用轻快的语气回应，\
         但在用户需要认真帮助时会立刻切换到靠谱模式。"
         .into();
@@ -260,7 +254,6 @@ pub fn templates() -> BTreeMap<String, Persona> {
     out.insert(genki.id.clone(), genki);
 
     let mut snark = Persona::new("snark", "毒舌吐槽");
-    snark.description = Some("嘴上不饶人，实际很关心你。".into());
     snark.system_prompt = "你是一只嘴很毒的桌面宠物。你爱吐槽，但吐槽背后是真的关心用户，\
         绝不进行人身攻击，也不会贬低用户的努力。用户认真提问时要给出准确答案。"
         .into();
@@ -271,7 +264,6 @@ pub fn templates() -> BTreeMap<String, Persona> {
     out.insert(snark.id.clone(), snark);
 
     let mut advisor = Persona::new("advisor", "沉稳顾问");
-    advisor.description = Some("冷静、结构化，适合梳理思路和做决策。".into());
     advisor.system_prompt = "你是一只沉稳的桌面宠物顾问。你冷静、结构化，习惯先澄清问题再给建议，\
         会指出风险，也会给出可执行的下一步。"
         .into();
@@ -304,6 +296,17 @@ mod tests {
     }
 
     #[test]
+    fn traits_default_to_emoji_enabled() {
+        assert!(PersonaTraits::default().emoji);
+        // A user who wants no emoji still gets the explicit instruction.
+        let mut p = Persona::default();
+        p.traits.emoji = false;
+        assert!(p
+            .effective_system_prompt(None, None)
+            .contains("不要使用 emoji"));
+    }
+
+    #[test]
     fn duplicate_and_templates() {
         let tmp = tempfile::tempdir().unwrap();
         let store = PersonaStore::new(tmp.path().to_path_buf());
@@ -322,7 +325,14 @@ mod tests {
         assert!(prompt.contains("珍珠小子"));
         assert!(prompt.contains("工作中"));
         assert!(prompt.contains("简短"));
-        assert!(prompt.contains("不要使用 emoji"));
+        assert!(
+            prompt.contains("用与用户相同的语言回答"),
+            "the prompt must follow the user's language instead of a stored tag"
+        );
+        assert!(
+            !prompt.contains("默认语言"),
+            "the removed language setting must not leak into the prompt"
+        );
     }
 
     #[test]

@@ -54,8 +54,11 @@ engine.
 
 ABI 3 keeps the existing struct layout. Text fields `12–16` expose the current
 persona, persona list, non-secret DeepSeek configuration, current-persona
-memory projection and a pending pet-import conflict. Command kinds `23–36`
-cover DeepSeek/memory/greeting-configuration updates, fact operations, persona
-CRUD/import/export and clearing an import conflict. These values are serialized as UTF-8 JSON or
+memory projection and a pending pet-import conflict. Command kinds `23–41`
+cover DeepSeek/memory/greeting-configuration updates, fact operations (add / edit /
+scoped clear), persona CRUD/import/export, memory export/import and clearing an
+import conflict. `value` carries the memory scope for the scoped clear
+(0 = all, 1 = facts, 2 = events); `ListModels` fills text field 17 with a JSON
+array of model ids. These values are serialized as UTF-8 JSON or
 paths; the worker validates and persists them before publishing the next
 projection.

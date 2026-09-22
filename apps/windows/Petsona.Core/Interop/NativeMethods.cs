@@ -36,6 +36,7 @@ public enum PetsonaTextField
     DeepSeekConfig = 14,
     Memory = 15,
     ImportConflict = 16,
+    Models = 17,
 }
 
 /// <summary>Mirrors <c>PetsonaCommandKind</c> in <c>contracts/petsona.h</c> (ABI 3).</summary>
@@ -77,6 +78,11 @@ public enum PetsonaCommandKind : uint
     ExportPersona = 34,
     ClearImportConflict = 35,
     UpdateGreetingConfig = 36,
+    UpdateMemoryFact = 37,
+    ClearMemoryScope = 38,
+    ExportMemory = 39,
+    ImportMemory = 40,
+    ListModels = 41,
 }
 
 /// <summary>Mirrors <c>PetsonaStringView</c>: caller-owned bytes borrowed for one call.</summary>

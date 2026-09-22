@@ -255,12 +255,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             (1.75, "特大（175%）"),
             (2.0, "超大（200%）"),
         ]
+        let current = Double(engine.snapshot.scale)
         for (value, title) in values {
             let item = NSMenuItem(title: title,
                                   action: #selector(setScaleFromMenu),
                                   keyEquivalent: "")
             item.target = self
             item.representedObject = value
+            // Same steps as the settings slider: show which one is active.
+            item.state = abs(current - value) < 0.01 ? .on : .off
             menu.addItem(item)
         }
         return menu

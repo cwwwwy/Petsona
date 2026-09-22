@@ -8,7 +8,7 @@ use std::time::Duration;
 
 use serde_json::{json, Value};
 
-use crate::config::DeepSeekConfig;
+use crate::config::{DeepSeekConfig, PROVIDER_CUSTOM, PROVIDER_DEEPSEEK};
 use crate::error::{Error, Result};
 use crate::memory::{now_ms, GreetingContext};
 use crate::persona::Persona;
@@ -98,7 +98,10 @@ impl DeepSeekClient {
         self.complete(&system, &user, 400)
     }
 
-    fn complete(&self, system: &str, user: &str, max_chars: usize) -> Result<String> {
+    /// Request body for one completion. The DeepSeek-only `thinking` field is
+    /// gated by the provider: strict OpenAI-compatible endpoints reject unknown
+    /// fields, so a custom endpoint must never receive it (REQ-S16).
+    pub fn request_body(&self, system: &str, user: &str) -> Value {
         let mut body = json!({
             "model": self.config.model.clone(),
             "messages": [
@@ -109,9 +112,14 @@ impl DeepSeekClient {
             "max_tokens": self.config.max_tokens.clamp(16, 4000),
             "temperature": self.config.temperature.clamp(0.0, 2.0),
         });
-        if self.config.thinking_disabled {
+        if self.config.thinking_disabled && self.config.provider != PROVIDER_CUSTOM {
             body["thinking"] = json!({ "type": "disabled" });
         }
+        body
+    }
+
+    fn complete(&self, system: &str, user: &str, max_chars: usize) -> Result<String> {
+        let body = self.request_body(system, user);
 
         let url = format!(
             "{}/chat/completions",
@@ -141,6 +149,86 @@ impl DeepSeekClient {
         }
         Ok(clean_greeting(text, max_chars))
     }
+    /// `GET {base}/models` — the OpenAI-compatible model list. Custom endpoints
+    /// that do not implement it surface a readable error and the UI keeps the
+    /// manual model field (REQ-S16b).
+    pub fn list_models(&self) -> Result<Vec<String>> {
+        let url = format!("{}/models", self.config.base_url.trim_end_matches('/'));
+        let response = self
+            .agent
+            .get(&url)
+            .header("Authorization", &format!("Bearer {}", self.api_key))
+            .call()
+            .map_err(|error| Error::provider(format!("model list request failed: {error}")))?;
+        let value: Value = response
+            .into_body()
+            .read_json()
+            .map_err(|error| Error::provider(format!("model list was not JSON: {error}")))?;
+        Ok(parse_model_ids(&value))
+    }
+}
+
+/// Extract model ids from an OpenAI-compatible `/models` payload, sorted and
+/// deduplicated. Pure so it can be unit-tested without a network.
+pub fn parse_model_ids(value: &Value) -> Vec<String> {
+    let mut ids: Vec<String> = value
+        .get("data")
+        .and_then(Value::as_array)
+        .map(|entries| {
+            entries
+                .iter()
+                .filter_map(|entry| entry.get("id").and_then(Value::as_str))
+                .map(|id| id.trim().to_string())
+                .filter(|id| !id.is_empty())
+                .collect()
+        })
+        .unwrap_or_default();
+    ids.sort();
+    ids.dedup();
+    ids
+}
+
+/// Slot used before per-provider credentials existed.
+pub const LEGACY_KEY_SLOT: &str = "deepseek";
+
+/// Keychain slot for one provider, so switching providers never overwrites the
+/// other one's credential (REQ-S16).
+pub fn api_key_slot(provider: &str) -> String {
+    let provider = if provider == PROVIDER_CUSTOM {
+        PROVIDER_CUSTOM
+    } else {
+        PROVIDER_DEEPSEEK
+    };
+    format!("provider/{provider}")
+}
+
+/// Slots consulted for one provider, most specific first. DeepSeek keeps
+/// working with a key saved before provider slots existed.
+fn key_candidates(provider: &str) -> Vec<&'static str> {
+    if provider == PROVIDER_CUSTOM {
+        vec!["provider/custom"]
+    } else {
+        vec!["provider/deepseek", LEGACY_KEY_SLOT]
+    }
+}
+
+/// Whether a usable credential exists for this config (env var or keychain).
+/// Used by the settings page to show 已配置 / 未配置 without reading the secret.
+pub fn api_key_present(config: &DeepSeekConfig) -> bool {
+    if std::env::var(&config.api_key_env)
+        .map(|key| !key.trim().is_empty())
+        .unwrap_or(false)
+    {
+        return true;
+    }
+
+    let keyring = KeyringStore::new("com.petsona.desktop");
+    key_candidates(&config.provider).iter().any(|slot| {
+        keyring
+            .get(slot)
+            .map(|key| key.is_some_and(|key| !key.trim().is_empty()))
+            .unwrap_or(false)
+    })
 }
 
 pub fn resolve_api_key(config: &DeepSeekConfig) -> Result<String> {
@@ -151,17 +239,35 @@ pub fn resolve_api_key(config: &DeepSeekConfig) -> Result<String> {
     }
 
     let keyring = KeyringStore::new("com.petsona.desktop");
-    match keyring.get("deepseek")? {
-        Some(key) if !key.trim().is_empty() => Ok(key),
-        _ => Err(Error::ProviderNotConfigured(format!(
-            "set {} or save a key in the OS keychain",
-            config.api_key_env
-        ))),
+    for slot in key_candidates(&config.provider) {
+        if let Some(key) = keyring.get(slot)? {
+            if !key.trim().is_empty() {
+                return Ok(key);
+            }
+        }
     }
+
+    Err(Error::ProviderNotConfigured(format!(
+        "set {} or save a key in the OS keychain",
+        config.api_key_env
+    )))
 }
 
-pub fn save_api_key(key: &str) -> Result<()> {
-    KeyringStore::new("com.petsona.desktop").set("deepseek", key.trim())
+/// Save (or, with an empty key, delete) the credential of one provider.
+///
+/// Clearing must drop **every** slot the provider can read, including the
+/// pre-provider `deepseek` entry: deleting only the new slot left the old key
+/// in place, so "清除密钥" looked like a no-op (W19 regression).
+pub fn save_api_key(provider: &str, key: &str) -> Result<()> {
+    let keyring = KeyringStore::new("com.petsona.desktop");
+    if key.trim().is_empty() {
+        for slot in key_candidates(provider) {
+            keyring.delete(slot)?;
+        }
+        return Ok(());
+    }
+
+    keyring.set(api_key_slot(provider).as_str(), key.trim())
 }
 
 fn build_prompt(
@@ -216,5 +322,66 @@ mod tests {
     fn cleans_quotes_and_limits_length() {
         assert_eq!(clean_greeting("“你好呀”", 40), "你好呀");
         assert!(clean_greeting(&"啊".repeat(100), 10).ends_with('…'));
+    }
+
+    fn client(provider: &str) -> DeepSeekClient {
+        let config = DeepSeekConfig {
+            provider: provider.to_string(),
+            ..DeepSeekConfig::default()
+        };
+        DeepSeekClient::with_api_key(config, "sk-test".to_string()).unwrap()
+    }
+
+    /// REQ-S16: strict OpenAI-compatible endpoints reject DeepSeek's `thinking`
+    /// field, so it must only be sent for the built-in provider.
+    #[test]
+    fn thinking_field_is_deepseek_only() {
+        assert!(client(PROVIDER_DEEPSEEK).request_body("s", "u")["thinking"].is_object());
+        let custom = client(PROVIDER_CUSTOM).request_body("s", "u");
+        assert!(
+            custom.get("thinking").is_none(),
+            "custom endpoints must not receive the thinking field"
+        );
+        assert_eq!(custom["model"], DeepSeekConfig::default().model);
+    }
+
+    #[test]
+    fn parses_and_sorts_model_ids() {
+        let payload = serde_json::json!({
+            "object": "list",
+            "data": [
+                { "id": "deepseek-v4-flash" },
+                { "id": " deepseek-v4 " },
+                { "id": "deepseek-v4-flash" },
+                { "id": "" },
+                { "name": "no-id" }
+            ]
+        });
+        assert_eq!(
+            parse_model_ids(&payload),
+            vec!["deepseek-v4".to_string(), "deepseek-v4-flash".to_string()]
+        );
+        // Unexpected shapes must not panic, they just yield nothing.
+        assert!(parse_model_ids(&serde_json::json!({"data": "nope"})).is_empty());
+        assert!(parse_model_ids(&serde_json::json!({})).is_empty());
+    }
+
+    #[test]
+    fn clearing_covers_every_readable_slot() {
+        // "清除密钥" must also drop the legacy slot, otherwise resolve_api_key
+        // still finds it and the UI keeps saying 已配置.
+        assert_eq!(
+            key_candidates(PROVIDER_DEEPSEEK),
+            vec!["provider/deepseek", LEGACY_KEY_SLOT]
+        );
+        assert_eq!(key_candidates(PROVIDER_CUSTOM), vec!["provider/custom"]);
+    }
+
+    #[test]
+    fn api_key_slots_are_per_provider() {
+        assert_eq!(api_key_slot(PROVIDER_DEEPSEEK), "provider/deepseek");
+        assert_eq!(api_key_slot(PROVIDER_CUSTOM), "provider/custom");
+        // An unknown provider must never invent a third slot.
+        assert_eq!(api_key_slot("openai"), "provider/deepseek");
     }
 }

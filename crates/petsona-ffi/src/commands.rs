@@ -4,7 +4,8 @@ use std::time::Duration;
 use petsona_core::config::{DeepSeekConfig, GreetingConfig, MemoryConfig};
 use petsona_core::pet::PetState;
 use petsona_runtime::commands::{
-    MemoryFactInput, PersonaCreate, PersonaDuplicate, PersonaPatch, RuntimeCommand,
+    MemoryFactInput, MemoryFactUpdate, MemoryScope, PersonaCreate, PersonaDuplicate, PersonaPatch,
+    RuntimeCommand,
 };
 
 use crate::buffers::view_string;
@@ -229,11 +230,30 @@ pub fn convert(command: &PetsonaCommand) -> Result<RuntimeCommand, (PetsonaStatu
             })?;
             Ok(RuntimeCommand::RememberFact(input))
         }
+        x if x == PetsonaCommandKind::UpdateMemoryFact as u32 => {
+            let update: MemoryFactUpdate = serde_json::from_str(&text).map_err(|error| {
+                (
+                    PetsonaStatus::InvalidArgument,
+                    format!("memory fact update is not valid JSON: {error}"),
+                )
+            })?;
+            Ok(RuntimeCommand::UpdateFact(update))
+        }
+        x if x == PetsonaCommandKind::ClearMemoryScope as u32 => Ok(
+            RuntimeCommand::ClearMemoryScope(MemoryScope::from_wire(command.value)),
+        ),
+        x if x == PetsonaCommandKind::ExportMemory as u32 => {
+            Ok(RuntimeCommand::ExportMemory(PathBuf::from(text)))
+        }
+        x if x == PetsonaCommandKind::ImportMemory as u32 => {
+            Ok(RuntimeCommand::ImportMemory(PathBuf::from(text)))
+        }
         x if x == PetsonaCommandKind::ForgetFact as u32 => Ok(RuntimeCommand::ForgetFact(text)),
         x if x == PetsonaCommandKind::ClearMemory as u32 => Ok(RuntimeCommand::ClearMemory),
         x if x == PetsonaCommandKind::SaveDeepSeekKey as u32 => {
             Ok(RuntimeCommand::SaveDeepSeekKey(text))
         }
+        x if x == PetsonaCommandKind::ListModels as u32 => Ok(RuntimeCommand::ListModels),
         x if x == PetsonaCommandKind::SendConversation as u32 => {
             Ok(RuntimeCommand::SendConversation(text))
         }

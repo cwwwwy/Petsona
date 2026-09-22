@@ -59,6 +59,13 @@ pub struct PetsonaRuntime {
     /// instead, so this stays `None` there. Removing it is part of the frozen-line
     /// cleanup (REQ-W15).
     pub greeting_rx: Option<Receiver<Result<String, String>>>,
+    /// Cached "credential exists for the current provider" flag. Refreshed when
+    /// the config or the credential changes instead of on every tick, because
+    /// reading it hits the OS credential store (W19 feedback).
+    pub key_configured: bool,
+    /// Model ids returned by `ListModels`, published through `RuntimeTextField::Models`.
+    pub models: Vec<String>,
+    pub models_inflight: bool,
     pub greeting_inflight: bool,
     pub last_greeting_at: Option<Instant>,
     pub conversation_history: Vec<ConversationTurn>,
@@ -146,6 +153,9 @@ impl PetsonaRuntime {
             glance_side: 0,
             last_glance_at: None,
             greeting_rx: None,
+            key_configured: false,
+            models: Vec::new(),
+            models_inflight: false,
             greeting_inflight: false,
             last_greeting_at: None,
             conversation_history: Vec::new(),

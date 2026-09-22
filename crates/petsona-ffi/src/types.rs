@@ -71,6 +71,7 @@ pub enum PetsonaTextField {
     DeepSeekConfig = 14,
     Memory = 15,
     ImportConflict = 16,
+    Models = 17,
 }
 
 #[repr(u32)]
@@ -112,6 +113,11 @@ pub enum PetsonaCommandKind {
     ExportPersona = 34,
     ClearImportConflict = 35,
     UpdateGreetingConfig = 36,
+    UpdateMemoryFact = 37,
+    ClearMemoryScope = 38,
+    ExportMemory = 39,
+    ImportMemory = 40,
+    ListModels = 41,
 }
 
 #[repr(C)]

@@ -3,6 +3,7 @@ using System.Text.Json;
 using Microsoft.UI.Dispatching;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Controls.Primitives;
 using Microsoft.UI.Xaml.Media;
 using System.Runtime.InteropServices.WindowsRuntime;
 using Petsona.Core;
@@ -20,8 +21,32 @@ namespace Petsona.Views;
 /// </summary>
 public sealed partial class SettingsWindow : Window
 {
-    private static readonly double[] ScalePresets = [0.5, 0.75, 1.0, 1.25, 1.5, 1.75, 2.0];
-    private static readonly string[] VerbosityPresets = ["short", "normal", "detailed"];
+    /// The slider snaps to these steps and the tray / status menu uses the same
+    /// set, so both entry points stay consistent (REQ-S12).
+    private const double ScaleMin = 0.5;
+    private const double ScaleMax = 2.0;
+    private const double ScaleStep = 0.25;
+
+    /// Tone presets carry both the style text and the reply length, so the
+    /// persona page needs no separate verbosity control (REQ-S13/S14).
+    private static readonly (string Label, string Tone, string Verbosity)[] TonePresets =
+    [
+        ("温和友好", "温和、友好、乐于帮忙", "normal"),
+        ("简洁干练", "简洁、直接、不说废话", "short"),
+        ("活泼元气", "活泼、元气满满、鼓励式回应", "normal"),
+        ("沉稳顾问", "沉稳、克制、结构化", "detailed"),
+        ("毒舌但温柔", "毒舌但温柔，吐槽背后是真的关心", "short"),
+    ];
+    private const string CustomToneLabel = "自定义…";
+
+    /// Provider presets: the built-in DeepSeek endpoint or any OpenAI-compatible
+    /// one. Only DeepSeek accepts the `thinking` field (REQ-S16).
+    private static readonly (string Label, string Value)[] ProviderPresets =
+    [
+        ("DeepSeek", "deepseek"),
+        ("自定义", "custom"),
+    ];
+    private const string DeepSeekBaseUrlPreset = "https://api.deepseek.com/v1";
     private static readonly JsonSerializerOptions JsonOptions = new() { PropertyNameCaseInsensitive = true };
 
     private const string RepositoryUrl = "https://github.com/cwwwwy/Petsona";
@@ -35,10 +60,14 @@ public sealed partial class SettingsWindow : Window
     private string _lastCodexJson = string.Empty;
     private string _lastPersonasJson = string.Empty;
     private string _lastMemoryJson = string.Empty;
+    private string _lastModelsJson = string.Empty;
+    private string _lastDeepSeekJson = string.Empty;
     private string _lastConflictJson = string.Empty;
     private string _selectedPersonaId = string.Empty;
     private bool _formsLoaded;
     private bool _suppressEvents;
+    private string _personaVerbosity = "normal";
+    private string _editingFactId = string.Empty;
 
     public SettingsWindow(EngineClient engine)
     {
@@ -55,8 +84,10 @@ public sealed partial class SettingsWindow : Window
             ["startup"] = PageStartup,
         };
 
-        ScaleCombo.ItemsSource = ScalePresets.Select(value => $"{value:0.##}x").ToList();
-        PersonaVerbosityCombo.ItemsSource = VerbosityPresets.ToList();
+        PersonaTonePresetCombo.ItemsSource = TonePresets
+            .Select(preset => preset.Label)
+            .Append(CustomToneLabel)
+            .ToList();
 
         _refreshTimer = DispatcherQueue.CreateTimer();
         _refreshTimer.Interval = TimeSpan.FromMilliseconds(500);
@@ -87,10 +118,7 @@ public sealed partial class SettingsWindow : Window
         DeepSeekThinkingDisabled.Toggled += (_, _) => ScheduleApply(ApplyDeepSeekConfig);
 
         PersonaNameBox.TextChanged += (_, _) => ScheduleApply(ApplyPersona);
-        PersonaDescriptionBox.TextChanged += (_, _) => ScheduleApply(ApplyPersona);
         PersonaToneBox.TextChanged += (_, _) => ScheduleApply(ApplyPersona);
-        PersonaVerbosityCombo.SelectionChanged += (_, _) => ScheduleApply(ApplyPersona);
-        PersonaLanguageBox.TextChanged += (_, _) => ScheduleApply(ApplyPersona);
         PersonaEmojiToggle.Toggled += (_, _) => ScheduleApply(ApplyPersona);
         PersonaGreetingBox.TextChanged += (_, _) => ScheduleApply(ApplyPersona);
         PersonaSystemPromptBox.TextChanged += (_, _) => ScheduleApply(ApplyPersona);
@@ -103,6 +131,8 @@ public sealed partial class SettingsWindow : Window
         GreetingIdleMinutesBox.ValueChanged += (_, _) => ScheduleApply(ApplyGreetingConfig);
         GreetingCooldownBox.ValueChanged += (_, _) => ScheduleApply(ApplyGreetingConfig);
         GreetingMaxCharsBox.ValueChanged += (_, _) => ScheduleApply(ApplyGreetingConfig);
+
+        ProviderCombo.ItemsSource = ProviderPresets.Select(preset => preset.Label).ToList();
 
         AboutVersionText.Text = $"版本 {typeof(SettingsWindow).Assembly.GetName().Version?.ToString(3) ?? "0.1.0"} · 原生前端（WinUI 3 + Win32）";
 
@@ -166,6 +196,24 @@ public sealed partial class SettingsWindow : Window
             _suppressEvents = false;
         }
 
+        var deepSeekJson = _engine.Text(PetsonaTextField.DeepSeekConfig);
+        if (deepSeekJson != _lastDeepSeekJson)
+        {
+            _lastDeepSeekJson = deepSeekJson;
+            ApplyKeyStatus(deepSeekJson);
+        }
+
+        var modelsJson = _engine.Text(PetsonaTextField.Models);
+        if (modelsJson != _lastModelsJson)
+        {
+            _lastModelsJson = modelsJson;
+            var models = Parse<List<string>>(modelsJson) ?? [];
+            _suppressEvents = true;
+            ModelCombo.ItemsSource = models;
+            ModelCombo.Visibility = models.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
+            _suppressEvents = false;
+        }
+
         var memoryJson = _engine.Text(PetsonaTextField.Memory);
         if (memoryJson != _lastMemoryJson)
         {
@@ -203,14 +251,16 @@ public sealed partial class SettingsWindow : Window
         StatusText.Text = string.IsNullOrEmpty(status)
             ? "选择要使用的宠物，或导入新的宠物包。"
             : status;
+        UpdateModelFetchStatus(status);
     }
 
     private void LoadScaleAndFlags()
     {
         var snapshot = _engine.Snapshot();
         _suppressEvents = true;
-        var index = Array.FindIndex(ScalePresets, value => Math.Abs(value - snapshot.Scale) < 0.01);
-        ScaleCombo.SelectedIndex = index < 0 ? Array.IndexOf(ScalePresets, 1.0) : index;
+        var scale = Math.Clamp(snapshot.Scale, ScaleMin, ScaleMax);
+        ScaleSlider.Value = Math.Round(scale / ScaleStep) * ScaleStep;
+        ScaleValueText.Text = $"{ScaleSlider.Value:0.##}x";
         ClickThroughToggle.IsOn = snapshot.ClickThrough != 0;
         _suppressEvents = false;
     }
@@ -225,6 +275,9 @@ public sealed partial class SettingsWindow : Window
 
         var root = document.RootElement;
         _suppressEvents = true;
+        var provider = GetString(root, "provider") == "custom" ? "custom" : "deepseek";
+        ProviderCombo.SelectedIndex = provider == "custom" ? 1 : 0;
+        ApplyProviderUi(provider);
         DeepSeekBaseUrl.Text = GetString(root, "baseUrl");
         DeepSeekModel.Text = GetString(root, "model");
         DeepSeekApiKeyEnv.Text = GetString(root, "apiKeyEnv");
@@ -275,17 +328,18 @@ public sealed partial class SettingsWindow : Window
         var root = document.RootElement;
         _suppressEvents = true;
         PersonaNameBox.Text = GetString(root, "name");
-        PersonaDescriptionBox.Text = GetString(root, "description");
         PersonaGreetingBox.Text = GetString(root, "greeting");
         PersonaSystemPromptBox.Text = GetString(root, "systemPrompt");
 
         if (TryGetObject(root, "traits", out var traits))
         {
-            PersonaToneBox.Text = GetString(traits, "tone");
-            var verbosity = GetString(traits, "verbosity");
-            PersonaVerbosityCombo.SelectedItem = VerbosityPresets.Contains(verbosity) ? verbosity : "normal";
-            PersonaLanguageBox.Text = GetString(traits, "language");
-            PersonaEmojiToggle.IsOn = GetBool(traits, "emoji", false);
+            var tone = GetString(traits, "tone");
+            PersonaToneBox.Text = tone;
+            _personaVerbosity = GetString(traits, "verbosity") is { Length: > 0 } verbosity
+                ? verbosity
+                : "normal";
+            PersonaTonePresetCombo.SelectedIndex = FindTonePreset(tone);
+            PersonaEmojiToggle.IsOn = GetBool(traits, "emoji", true);
         }
 
         PersonaIdBox.Text = $"人格 ID：{GetString(root, "id")}（导入 / 导出时使用）";
@@ -479,14 +533,20 @@ public sealed partial class SettingsWindow : Window
 
     // ------------------------------------------------------------ appearance
 
-    private void OnScaleSelectionChanged(object sender, SelectionChangedEventArgs e)
+    /// Slider steps are discrete, so every change is a real user choice: the
+    /// window resizes live and the runtime persists it (REQ-S12).
+    private void OnScaleChanged(object sender, RangeBaseValueChangedEventArgs e)
     {
-        if (_suppressEvents || ScaleCombo.SelectedIndex < 0)
+        // XAML applies Minimum/Maximum while the tree is still being built, which
+        // can raise ValueChanged before the label exists (settings window would
+        // fail to open). Guard both.
+        if (_suppressEvents || ScaleValueText is null || ScaleSlider is null)
         {
             return;
         }
 
-        _engine.Send(PetsonaCommandKind.SetScale, value: ScalePresets[ScaleCombo.SelectedIndex]);
+        ScaleValueText.Text = $"{ScaleSlider.Value:0.##}x";
+        _engine.Send(PetsonaCommandKind.SetScale, value: ScaleSlider.Value);
     }
 
     private void OnClickThroughToggled(object sender, RoutedEventArgs e)
@@ -503,6 +563,7 @@ public sealed partial class SettingsWindow : Window
     {
         SendJson(PetsonaCommandKind.UpdateDeepSeekConfig, new Dictionary<string, object?>
         {
+            ["provider"] = CurrentProvider,
             ["baseUrl"] = DeepSeekBaseUrl.Text.Trim(),
             ["model"] = DeepSeekModel.Text.Trim(),
             ["apiKeyEnv"] = DeepSeekApiKeyEnv.Text.Trim(),
@@ -523,6 +584,106 @@ public sealed partial class SettingsWindow : Window
             ["maxChars"] = (uint)Number(GreetingMaxCharsBox, 40),
         });
         _lastMemoryJson = string.Empty;
+    }
+
+    /// The provider decides whether the base URL is a preset and whether the
+    /// DeepSeek-only thinking switch is relevant (REQ-S16).
+    private void ApplyProviderUi(string provider)
+    {
+        if (DeepSeekBaseUrl is null || DeepSeekBaseUrlHint is null || DeepSeekThinkingDisabled is null)
+        {
+            return;
+        }
+
+        var isDeepSeek = provider != "custom";
+        DeepSeekBaseUrl.IsReadOnly = isDeepSeek;
+        if (isDeepSeek)
+        {
+            DeepSeekBaseUrl.Text = DeepSeekBaseUrlPreset;
+        }
+
+        DeepSeekBaseUrlHint.Text = isDeepSeek
+            ? "DeepSeek 的固定地址；切换到「自定义」后可自行填写。"
+            : "自定义端点的地址，通常以 /v1 结尾。";
+        DeepSeekThinkingDisabled.Visibility = isDeepSeek ? Visibility.Visible : Visibility.Collapsed;
+    }
+
+    private string CurrentProvider => ProviderCombo?.SelectedIndex == 1 ? "custom" : "deepseek";
+
+    private void OnProviderSelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_suppressEvents || ProviderCombo is null)
+        {
+            return;
+        }
+
+        _suppressEvents = true;
+        ApplyProviderUi(CurrentProvider);
+        _suppressEvents = false;
+        ScheduleApply(ApplyDeepSeekConfig);
+    }
+
+    /// Show whether a credential exists without ever displaying the secret
+    /// (W19 feedback). The runtime recomputes the flag when the key or the
+    /// provider changes, so this stays correct after 保存 / 清除.
+    private void ApplyKeyStatus(string deepSeekJson)
+    {
+        if (KeyStatusText is null || ClearKeyButton is null || DeepSeekKeyBox is null)
+        {
+            return;
+        }
+
+        using var document = ParseDocument(deepSeekJson);
+        var configured = document is not null &&
+            GetBool(document.RootElement, "keyConfigured", false);
+        KeyStatusText.Text = configured ? "已配置（密钥不会显示）" : "未配置";
+        ClearKeyButton.IsEnabled = configured;
+        DeepSeekKeyBox.PlaceholderText = configured
+            ? "已配置：输入新密钥可覆盖"
+            : "sk-...";
+    }
+
+    /// A failed model fetch must be visible where the user clicked, not only in
+    /// the window's status bar (W19 feedback).
+    private void UpdateModelFetchStatus(string status)
+    {
+        if (ModelFetchStatus is null)
+        {
+            return;
+        }
+
+        var failed = status.StartsWith("拉取模型列表失败", StringComparison.Ordinal) ||
+                     status.StartsWith("服务商没有返回", StringComparison.Ordinal);
+        if (failed)
+        {
+            ModelFetchStatus.Text = status;
+            ModelFetchStatus.Foreground = new SolidColorBrush(Microsoft.UI.Colors.IndianRed);
+            ModelFetchStatus.Visibility = Visibility.Visible;
+        }
+        else
+        {
+            ModelFetchStatus.Visibility = Visibility.Collapsed;
+        }
+    }
+
+    private void OnListModelsClick(object sender, RoutedEventArgs e)
+    {
+        _engine.Send(PetsonaCommandKind.ListModels);
+    }
+
+    /// Picking a fetched model just fills the text field; the normal debounced
+    /// apply persists it (REQ-S16b).
+    private void OnModelComboChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_suppressEvents || ModelCombo.SelectedItem is not string model || model.Length == 0)
+        {
+            return;
+        }
+
+        _suppressEvents = true;
+        DeepSeekModel.Text = model;
+        _suppressEvents = false;
+        ScheduleApply(ApplyDeepSeekConfig);
     }
 
     private void OnSaveKeyClick(object sender, RoutedEventArgs e)
@@ -559,15 +720,47 @@ public sealed partial class SettingsWindow : Window
         ReloadPersonaSoon();
     }
 
+    private void OnPersonaTonePresetChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_suppressEvents || PersonaTonePresetCombo.SelectedIndex < 0)
+        {
+            return;
+        }
+
+        var index = PersonaTonePresetCombo.SelectedIndex;
+        if (index >= TonePresets.Length)
+        {
+            return; // "自定义…" keeps whatever the user typed
+        }
+
+        _suppressEvents = true;
+        PersonaToneBox.Text = TonePresets[index].Tone;
+        _personaVerbosity = TonePresets[index].Verbosity;
+        _suppressEvents = false;
+        ScheduleApply(ApplyPersona);
+    }
+
+    /// Preset index, or the "custom" entry when the tone is not one of them.
+    private static int FindTonePreset(string tone)
+    {
+        for (var index = 0; index < TonePresets.Length; index++)
+        {
+            if (string.Equals(TonePresets[index].Tone, tone.Trim(), StringComparison.Ordinal))
+            {
+                return index;
+            }
+        }
+
+        return TonePresets.Length;
+    }
+
     private void ApplyPersona()
     {
         SendJson(PetsonaCommandKind.UpdatePersona, new Dictionary<string, object?>
         {
-            ["description"] = PersonaDescriptionBox.Text,
             ["name"] = PersonaNameBox.Text.Trim(),
             ["tone"] = PersonaToneBox.Text,
-            ["verbosity"] = PersonaVerbosityCombo.SelectedItem as string ?? "normal",
-            ["language"] = PersonaLanguageBox.Text.Trim(),
+            ["verbosity"] = _personaVerbosity,
             ["emoji"] = PersonaEmojiToggle.IsOn,
             ["greeting"] = PersonaGreetingBox.Text,
             ["system_prompt"] = PersonaSystemPromptBox.Text,
@@ -692,14 +885,61 @@ public sealed partial class SettingsWindow : Window
             return;
         }
 
-        SendJson(PetsonaCommandKind.RememberFact, new Dictionary<string, object?>
+        if (_editingFactId.Length > 0)
         {
-            ["key"] = key,
-            ["value"] = value,
-        });
+            SendJson(PetsonaCommandKind.UpdateMemoryFact, new Dictionary<string, object?>
+            {
+                ["id"] = _editingFactId,
+                ["key"] = key,
+                ["value"] = value,
+            });
+        }
+        else
+        {
+            SendJson(PetsonaCommandKind.RememberFact, new Dictionary<string, object?>
+            {
+                ["key"] = key,
+                ["value"] = value,
+            });
+        }
+
+        ResetFactEditor();
+        _lastMemoryJson = string.Empty;
+    }
+
+    /// Selecting a fact loads it into the editor; the same button then updates
+    /// it in place instead of creating a duplicate (REQ-S15).
+    private void OnFactSelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_suppressEvents || FactsList.SelectedItem is not FactEntry entry)
+        {
+            return;
+        }
+
+        _editingFactId = entry.Id;
+        _suppressEvents = true;
+        FactKeyBox.Text = entry.Key;
+        FactValueBox.Text = entry.Value;
+        _suppressEvents = false;
+        FactSubmitButton.Content = "更新事实";
+        FactCancelButton.Visibility = Visibility.Visible;
+    }
+
+    private void OnCancelFactEditClick(object sender, RoutedEventArgs e)
+    {
+        ResetFactEditor();
+    }
+
+    private void ResetFactEditor()
+    {
+        _editingFactId = string.Empty;
+        _suppressEvents = true;
         FactKeyBox.Text = string.Empty;
         FactValueBox.Text = string.Empty;
-        _lastMemoryJson = string.Empty;
+        FactsList.SelectedItem = null;
+        _suppressEvents = false;
+        FactSubmitButton.Content = "添加事实";
+        FactCancelButton.Visibility = Visibility.Collapsed;
     }
 
     private void OnForgetFactClick(object sender, RoutedEventArgs e)
@@ -707,15 +947,62 @@ public sealed partial class SettingsWindow : Window
         if (FactsList.SelectedItem is FactEntry entry)
         {
             _engine.Send(PetsonaCommandKind.ForgetFact, text: entry.Id);
+            ResetFactEditor();
+            _lastMemoryJson = string.Empty;
+        }
+    }
+
+    private void OnClearFactsClick(object sender, RoutedEventArgs e)
+    {
+        _engine.Send(PetsonaCommandKind.ClearMemoryScope, value: 1);
+        ResetFactEditor();
+        _lastMemoryJson = string.Empty;
+    }
+
+    private void OnClearEventsClick(object sender, RoutedEventArgs e)
+    {
+        _engine.Send(PetsonaCommandKind.ClearMemoryScope, value: 2);
+        _lastMemoryJson = string.Empty;
+    }
+
+    private async void OnExportMemoryClick(object sender, RoutedEventArgs e)
+    {
+        var picker = new FileSavePicker();
+        picker.FileTypeChoices.Add("记忆文件", new List<string> { ".json" });
+        picker.SuggestedFileName = "petsona-memory";
+        Initialize(picker);
+        var file = await picker.PickSaveFileAsync();
+        if (file is not null)
+        {
+            _engine.Send(PetsonaCommandKind.ExportMemory, text: file.Path);
+        }
+    }
+
+    private async void OnImportMemoryClick(object sender, RoutedEventArgs e)
+    {
+        var picker = new FileOpenPicker();
+        picker.FileTypeFilter.Add(".json");
+        Initialize(picker);
+        var file = await picker.PickSingleFileAsync();
+        if (file is null)
+        {
+            return;
+        }
+
+        if (await ConfirmAsync("导入记忆", "导入会用文件内容覆盖当前人格的偏好与事件，确定继续吗？"))
+        {
+            _engine.Send(PetsonaCommandKind.ImportMemory, text: file.Path);
+            ResetFactEditor();
             _lastMemoryJson = string.Empty;
         }
     }
 
     private async void OnClearMemoryClick(object sender, RoutedEventArgs e)
     {
-        if (await ConfirmAsync("清空记忆", "确定清空当前人格的事实与事件记忆吗？"))
+        if (await ConfirmAsync("全部清空", "确定清空当前人格的偏好与事件记忆吗？"))
         {
             _engine.Send(PetsonaCommandKind.ClearMemory);
+            ResetFactEditor();
             _lastMemoryJson = string.Empty;
         }
     }
@@ -969,6 +1256,8 @@ public sealed partial class SettingsWindow : Window
 
         public required string Value { get; init; }
 
-        public override string ToString() => $"{Key}：{Value}";
+        public string Label => $"{Key}：{Value}";
+
+        public override string ToString() => Label;
     }
 }

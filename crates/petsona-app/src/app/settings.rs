@@ -397,10 +397,6 @@ impl PetsonaApp {
                     ui.text_edit_singleline(&mut self.persona.traits.tone);
                     ui.end_row();
 
-                    ui.label("语言");
-                    ui.text_edit_singleline(&mut self.persona.traits.language);
-                    ui.end_row();
-
                     ui.label("固定问候");
                     ui.text_edit_singleline(&mut self.greeting_draft);
                     ui.end_row();
@@ -576,7 +572,7 @@ impl PetsonaApp {
                         .hint_text("sk-..."),
                 );
                 if ui.button("保存 Key").clicked() {
-                    match save_api_key(&self.api_key_draft) {
+                    match save_api_key("deepseek", &self.api_key_draft) {
                         Ok(()) => {
                             self.api_key_draft.clear();
                             self.status = "API Key 已保存到系统钥匙串".to_string();

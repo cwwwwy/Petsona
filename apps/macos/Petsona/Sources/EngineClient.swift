@@ -179,6 +179,30 @@ final class EngineClient: ObservableObject {
         sendJSONObject(kind: PETSONA_COMMAND_UPDATE_MEMORY_CONFIG, object: object)
     }
 
+    func listModels() {
+        send(kind: PETSONA_COMMAND_LIST_MODELS)
+    }
+
+    func updateMemoryFact(_ object: [String: Any]) {
+        sendJSONObject(kind: PETSONA_COMMAND_UPDATE_MEMORY_FACT, object: object)
+    }
+
+    func updateMemoryFact(id: String, key: String, value: String, confidence: Double = 0.8) {
+        updateMemoryFact(["id": id, "key": key, "value": value, "confidence": confidence])
+    }
+
+    func clearMemory(scope: Int) {
+        send(kind: PETSONA_COMMAND_CLEAR_MEMORY_SCOPE, value: Double(scope))
+    }
+
+    func exportMemory(to url: URL, personaId: String) {
+        send(kind: PETSONA_COMMAND_EXPORT_MEMORY, text: url.path)
+    }
+
+    func importMemory(from url: URL, personaId: String) {
+        send(kind: PETSONA_COMMAND_IMPORT_MEMORY, text: url.path)
+    }
+
     func updateGreetingConfig(_ object: [String: Any]) {
         sendJSONObject(kind: PETSONA_COMMAND_UPDATE_GREETING_CONFIG, object: object)
     }

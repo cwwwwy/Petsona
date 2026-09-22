@@ -9,11 +9,9 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct PersonaPatch {
-    pub description: Option<String>,
     pub name: Option<String>,
     pub tone: Option<String>,
     pub verbosity: Option<String>,
-    pub language: Option<String>,
     pub emoji: Option<bool>,
     pub greeting: Option<String>,
     pub system_prompt: Option<String>,
@@ -35,6 +33,33 @@ pub struct PersonaDuplicate {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MemoryFactInput {
+    pub key: String,
+    pub value: String,
+    pub confidence: Option<f32>,
+}
+
+/// Which part of a persona's memory a clear command targets (REQ-S15).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum MemoryScope {
+    #[default]
+    All,
+    Facts,
+    Events,
+}
+
+impl MemoryScope {
+    pub fn from_wire(value: f64) -> Self {
+        match value as i64 {
+            1 => Self::Facts,
+            2 => Self::Events,
+            _ => Self::All,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MemoryFactUpdate {
+    pub id: String,
     pub key: String,
     pub value: String,
     pub confidence: Option<f32>,
@@ -120,8 +145,14 @@ pub enum RuntimeCommand {
     UpdateGreetingConfig(GreetingConfig),
     RememberFact(MemoryFactInput),
     ForgetFact(String),
+    UpdateFact(MemoryFactUpdate),
     ClearMemory,
+    ClearMemoryScope(MemoryScope),
+    ExportMemory(PathBuf),
+    ImportMemory(PathBuf),
     SaveDeepSeekKey(String),
+    ListModels,
+    ModelsResult(Result<Vec<String>, String>),
     SendConversation(String),
     ConversationResult(Result<String, String>),
     GreetingResult(Result<String, String>),

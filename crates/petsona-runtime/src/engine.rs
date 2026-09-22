@@ -21,7 +21,8 @@ use petsona_core::pet::PetLibrary;
 use petsona_core::pet::PetState;
 
 use crate::commands::{
-    ImportConflict, MemoryFactInput, PersonaCreate, PersonaPatch, RuntimeCommand,
+    ImportConflict, MemoryFactInput, MemoryFactUpdate, MemoryScope, PersonaCreate, PersonaPatch,
+    RuntimeCommand,
 };
 use crate::events::RuntimeWaker;
 use crate::instance_lock::InstanceLock;
@@ -218,6 +219,7 @@ fn load_runtime(
         .context("cannot acquire the Petsona data-directory lock")?;
     let config = AppConfig::load(&paths.config_file).context("cannot load Petsona config")?;
     let mut runtime = PetsonaRuntime::load(paths, config).context("cannot load Petsona runtime")?;
+    runtime.key_configured = petsona_core::deepseek::api_key_present(&runtime.config.deepseek);
     let wake_tx = command_tx.clone();
     let external_wake = Arc::clone(external_wake);
     runtime.sync_state_server(move || {
@@ -555,6 +557,8 @@ fn apply_command(
         }
         RuntimeCommand::UpdateDeepSeekConfig(config) => {
             runtime.config.deepseek = sanitize_deepseek_config(config);
+            runtime.key_configured =
+                petsona_core::deepseek::api_key_present(&runtime.config.deepseek);
             match runtime.save_config() {
                 Ok(()) => runtime.status = "DeepSeek 配置已保存".to_string(),
                 Err(error) => runtime.status = format!("保存 DeepSeek 配置失败：{error}"),
@@ -601,6 +605,69 @@ fn apply_command(
             }
             true
         }
+        RuntimeCommand::UpdateFact(MemoryFactUpdate {
+            id,
+            key,
+            value,
+            confidence,
+        }) => {
+            match runtime.memory.update_fact(
+                &runtime.persona.id,
+                &id,
+                key.trim(),
+                value.trim(),
+                confidence.unwrap_or(0.8).clamp(0.0, 1.0),
+            ) {
+                Ok(Some(_)) => runtime.status = "已更新这条记忆偏好".to_string(),
+                Ok(None) => runtime.status = "这条偏好已经不存在".to_string(),
+                Err(error) => runtime.status = format!("更新偏好失败：{error}"),
+            }
+            true
+        }
+        RuntimeCommand::ClearMemoryScope(scope) => {
+            let result = match scope {
+                MemoryScope::All => runtime
+                    .memory
+                    .clear_persona(&runtime.persona.id)
+                    .map(|()| "已清空当前人格的全部记忆".to_string()),
+                MemoryScope::Facts => runtime
+                    .memory
+                    .clear_facts(&runtime.persona.id)
+                    .map(|removed| format!("已清空 {removed} 条偏好（事件保留）")),
+                MemoryScope::Events => runtime
+                    .memory
+                    .clear_events(&runtime.persona.id)
+                    .map(|removed| format!("已清空 {removed} 条互动事件（偏好保留）")),
+            };
+            runtime.status = match result {
+                Ok(message) => message,
+                Err(error) => format!("清空记忆失败：{error}"),
+            };
+            true
+        }
+        RuntimeCommand::ExportMemory(path) => {
+            match runtime.memory.export_persona(&runtime.persona.id, &path) {
+                Ok(memory) => {
+                    runtime.status = format!(
+                        "已导出记忆：{} 条偏好 / {} 条事件",
+                        memory.facts.len(),
+                        memory.events.len()
+                    );
+                }
+                Err(error) => runtime.status = format!("导出记忆失败：{error}"),
+            }
+            true
+        }
+        RuntimeCommand::ImportMemory(path) => {
+            match runtime.memory.import_persona(&runtime.persona.id, &path) {
+                Ok((facts, events)) => {
+                    runtime.status =
+                        format!("已导入记忆：{facts} 条偏好 / {events} 条事件（覆盖当前人格）");
+                }
+                Err(error) => runtime.status = format!("导入记忆失败：{error}"),
+            }
+            true
+        }
         RuntimeCommand::ClearMemory => {
             match runtime.memory.clear_persona(&runtime.persona.id) {
                 Ok(()) => runtime.status = "已清空当前人格的记忆".to_string(),
@@ -609,9 +676,56 @@ fn apply_command(
             true
         }
         RuntimeCommand::SaveDeepSeekKey(key) => {
-            match petsona_core::deepseek::save_api_key(&key) {
-                Ok(()) => runtime.status = "DeepSeek 密钥已保存到系统凭据库".to_string(),
+            // Credentials are per provider: switching to a custom endpoint must
+            // not overwrite (or clear) the DeepSeek key (REQ-S16).
+            let provider = runtime.config.deepseek.provider.clone();
+            match petsona_core::deepseek::save_api_key(&provider, &key) {
+                Ok(()) if key.trim().is_empty() => {
+                    runtime.status = format!("已清除 {provider} 的凭据");
+                }
+                Ok(()) => {
+                    runtime.status = format!("{provider} 密钥已保存到系统凭据库");
+                }
                 Err(error) => runtime.status = format!("保存密钥失败：{error}"),
+            }
+            runtime.key_configured =
+                petsona_core::deepseek::api_key_present(&runtime.config.deepseek);
+            true
+        }
+        RuntimeCommand::ListModels => {
+            if runtime.models_inflight {
+                return true;
+            }
+            runtime.models_inflight = true;
+            runtime.status = "正在拉取模型列表…".to_string();
+            let persona = runtime.persona.clone();
+            let config = runtime.config.deepseek.clone();
+            let tx = command_tx.clone();
+            thread::spawn(move || {
+                let result = DeepSeekClient::new(config)
+                    .and_then(|client| client.list_models())
+                    .map_err(|error| {
+                        let _ = &persona;
+                        format!("{error:#}")
+                    });
+                let _ = tx.send(RuntimeCommand::ModelsResult(result));
+            });
+            true
+        }
+        RuntimeCommand::ModelsResult(result) => {
+            runtime.models_inflight = false;
+            match result {
+                Ok(models) => {
+                    runtime.models = models.clone();
+                    runtime.status = if models.is_empty() {
+                        "服务商没有返回任何模型；请手动填写模型名".to_string()
+                    } else {
+                        format!("已拉取 {} 个模型", models.len())
+                    };
+                }
+                Err(error) => {
+                    runtime.status = format!("拉取模型列表失败：{error}（可手动填写模型名）");
+                }
             }
             true
         }
@@ -751,9 +865,6 @@ fn apply_command(
 }
 
 fn apply_persona_patch(persona: &mut Persona, patch: PersonaPatch) {
-    if let Some(value) = patch.description {
-        persona.description = empty_to_none(value);
-    }
     if let Some(value) = patch.name {
         persona.name = value;
     }
@@ -762,9 +873,6 @@ fn apply_persona_patch(persona: &mut Persona, patch: PersonaPatch) {
     }
     if let Some(value) = patch.verbosity {
         persona.traits.verbosity = value;
-    }
-    if let Some(value) = patch.language {
-        persona.traits.language = value;
     }
     if let Some(value) = patch.emoji {
         persona.traits.emoji = value;
@@ -885,6 +993,7 @@ fn create_persona(
 }
 
 fn sanitize_deepseek_config(mut config: DeepSeekConfig) -> DeepSeekConfig {
+    config.provider = normalize_provider(&config.provider);
     if config.base_url.trim().is_empty() {
         config.base_url = DeepSeekConfig::default().base_url;
     }
@@ -905,6 +1014,19 @@ fn sanitize_greeting_config(mut config: GreetingConfig) -> GreetingConfig {
     config.cooldown_minutes = config.cooldown_minutes.clamp(0, 24 * 60);
     config.max_chars = config.max_chars.clamp(1, 200);
     config
+}
+
+/// Only the two shipped providers exist; anything else (or an empty string in
+/// a hand-edited config) falls back to DeepSeek.
+fn normalize_provider(provider: &str) -> String {
+    if provider
+        .trim()
+        .eq_ignore_ascii_case(petsona_core::config::PROVIDER_CUSTOM)
+    {
+        petsona_core::config::PROVIDER_CUSTOM.to_string()
+    } else {
+        petsona_core::config::PROVIDER_DEEPSEEK.to_string()
+    }
 }
 
 fn sanitize_memory_config(mut config: MemoryConfig) -> MemoryConfig {
@@ -1021,16 +1143,25 @@ fn publish_projection(runtime: &PetsonaRuntime, projection: &Arc<SharedProjectio
                 serde_json::json!({
                     "id": persona.id,
                     "name": persona.name,
-                    "description": persona.description,
                     "builtin": persona.builtin,
                 })
             })
             .collect::<Vec<_>>(),
     )
     .unwrap_or_else(|_| "[]".to_string());
+    let models = serde_json::to_string(&runtime.models).unwrap_or_else(|_| "[]".to_string());
     let persona = serde_json::to_string(&runtime.persona).unwrap_or_else(|_| "{}".to_string());
+    // The UI needs to show 已配置 / 未配置 without ever reading the secret.
+    let mut deepseek_value =
+        serde_json::to_value(&runtime.config.deepseek).unwrap_or_else(|_| serde_json::json!({}));
+    if let Some(object) = deepseek_value.as_object_mut() {
+        object.insert(
+            "keyConfigured".to_string(),
+            serde_json::json!(runtime.key_configured),
+        );
+    }
     let deepseek_config =
-        serde_json::to_string(&runtime.config.deepseek).unwrap_or_else(|_| "{}".to_string());
+        serde_json::to_string(&deepseek_value).unwrap_or_else(|_| "{}".to_string());
     let memory_snapshot = runtime.memory.persona_snapshot(&runtime.persona.id);
     let memory = serde_json::to_string(&serde_json::json!({
         "config": runtime.config.memory,
@@ -1056,6 +1187,7 @@ fn publish_projection(runtime: &PetsonaRuntime, projection: &Arc<SharedProjectio
         deepseek_config,
         memory,
         import_conflict,
+        models,
         persona_id: runtime.persona.id.clone(),
         persona_name: runtime.persona.name.clone(),
         ..RuntimeTexts::default()
@@ -1382,6 +1514,170 @@ mod tests {
             engine.text(RuntimeTextField::State)
         );
         engine.stop();
+    }
+
+    #[test]
+    fn memory_edit_scoped_clear_and_export_round_trip() {
+        let home = engine_home();
+        let mut engine = RuntimeEngine::spawn(Some(home.path().to_path_buf()), || {}).unwrap();
+        for _ in 0..200 {
+            if engine.snapshot().ready {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+
+        engine
+            .send(RuntimeCommand::RememberFact(MemoryFactInput {
+                key: "咖啡".to_string(),
+                value: "美式".to_string(),
+                confidence: None,
+            }))
+            .expect("remember fact");
+        assert!(
+            wait_for_text_contains(&engine, RuntimeTextField::Memory, "美式"),
+            "fact did not appear: {}",
+            engine.text(RuntimeTextField::Memory)
+        );
+
+        let memory: serde_json::Value =
+            serde_json::from_str(&engine.text(RuntimeTextField::Memory)).unwrap();
+        let fact_id = memory["facts"][0]["id"].as_str().unwrap().to_string();
+
+        engine
+            .send(RuntimeCommand::UpdateFact(MemoryFactUpdate {
+                id: fact_id,
+                key: "咖啡".to_string(),
+                value: "拿铁".to_string(),
+                confidence: None,
+            }))
+            .expect("update fact");
+        assert!(
+            wait_for_text_contains(&engine, RuntimeTextField::Memory, "拿铁"),
+            "edited fact did not appear: {}",
+            engine.text(RuntimeTextField::Memory)
+        );
+
+        let export = home.path().join("memory-export.json");
+        engine
+            .send(RuntimeCommand::ExportMemory(export.clone()))
+            .expect("export memory");
+        let mut exported = false;
+        for _ in 0..200 {
+            if export.exists() {
+                exported = true;
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert!(exported, "export file was not written");
+
+        engine
+            .send(RuntimeCommand::ClearMemoryScope(MemoryScope::Facts))
+            .expect("clear facts");
+        let mut cleared = false;
+        for _ in 0..200 {
+            let memory: serde_json::Value =
+                serde_json::from_str(&engine.text(RuntimeTextField::Memory)).unwrap();
+            if memory["facts"]
+                .as_array()
+                .is_some_and(|facts| facts.is_empty())
+            {
+                cleared = true;
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert!(cleared, "scoped clear left facts behind");
+
+        engine
+            .send(RuntimeCommand::ImportMemory(export))
+            .expect("import memory");
+        assert!(
+            wait_for_text_contains(&engine, RuntimeTextField::Memory, "拿铁"),
+            "imported fact did not come back: {}",
+            engine.text(RuntimeTextField::Memory)
+        );
+        engine.stop();
+    }
+
+    /// REQ-S16b: `ListModels` goes out over HTTP and lands in the projection.
+    /// A stub listener stands in for the provider so the test never touches the
+    /// network (and proves the request goes to `{base}/models`).
+    #[test]
+    fn list_models_publishes_the_provider_catalog() {
+        use std::io::{Read as _, Write as _};
+        use std::net::TcpListener;
+
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let server = std::thread::spawn(move || {
+            let deadline = Instant::now() + Duration::from_secs(5);
+            while Instant::now() < deadline {
+                match listener.accept() {
+                    Ok((mut stream, _)) => {
+                        let mut buffer = [0u8; 1024];
+                        let _ = stream.read(&mut buffer);
+                        let body = r#"{"object":"list","data":[{"id":"stub-model-b"},{"id":"stub-model-a"}]}"#;
+                        let response = format!(
+                            "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+                            body.len()
+                        );
+                        let _ = stream.write_all(response.as_bytes());
+                        return;
+                    }
+                    Err(_) => std::thread::sleep(Duration::from_millis(20)),
+                }
+            }
+        });
+
+        let home = engine_home();
+        let paths = AppPaths::resolve(home.path().to_path_buf());
+        let mut config = AppConfig::load(&paths.config_file).expect("isolated config");
+        config.deepseek.provider = "custom".to_string();
+        config.deepseek.base_url = format!("http://127.0.0.1:{port}/v1");
+        config.deepseek.api_key_env = "PETSONA_TEST_MODELS_KEY".to_string();
+        config
+            .save(&paths.config_file)
+            .expect("config with stub provider");
+        std::env::set_var("PETSONA_TEST_MODELS_KEY", "sk-test");
+
+        let mut engine = RuntimeEngine::spawn(Some(home.path().to_path_buf()), || {}).unwrap();
+        for _ in 0..200 {
+            if engine.snapshot().ready {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+
+        engine
+            .send(RuntimeCommand::ListModels)
+            .expect("list models");
+        assert!(
+            wait_for_text_contains(&engine, RuntimeTextField::Models, "stub-model-a"),
+            "model list did not arrive: {}",
+            engine.text(RuntimeTextField::Models)
+        );
+        assert!(engine
+            .text(RuntimeTextField::Models)
+            .contains("stub-model-b"));
+        engine.stop();
+        let _ = server.join();
+    }
+
+    fn wait_for_text_contains(
+        engine: &RuntimeEngine,
+        field: RuntimeTextField,
+        needle: &str,
+    ) -> bool {
+        for _ in 0..300 {
+            if engine.text(field).contains(needle) {
+                return true;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        false
     }
 
     #[test]

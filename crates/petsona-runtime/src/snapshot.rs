@@ -21,6 +21,7 @@ pub enum RuntimeTextField {
     DeepSeekConfig,
     Memory,
     ImportConflict,
+    Models,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -67,6 +68,7 @@ pub struct RuntimeTexts {
     pub deepseek_config: String,
     pub memory: String,
     pub import_conflict: String,
+    pub models: String,
 }
 
 impl RuntimeTexts {
@@ -89,6 +91,7 @@ impl RuntimeTexts {
             RuntimeTextField::DeepSeekConfig => &self.deepseek_config,
             RuntimeTextField::Memory => &self.memory,
             RuntimeTextField::ImportConflict => &self.import_conflict,
+            RuntimeTextField::Models => &self.models,
         }
     }
 }

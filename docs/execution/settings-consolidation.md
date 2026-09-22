@@ -32,6 +32,8 @@
 | E-S04 | 失败记录：XAML 编译 | `WMC0011: Unknown member 'Resources' on element 'Window'`（WinUI 3 的 `Window` 无 `Resources`）→ 资源字典移到根 `Grid.Resources`；保留失败记录 |
 | E-S05 | smoke 阻断诊断（2026-09-21） | `windows-smoke.ps1` 两次在 N18 失败并中止（`CopyFromScreen` 句柄无效）。隔离探针（`.scratch/composer-probe.ps1`，已清理）定位根因：`WindowFromPoint(编辑按钮中心)` 返回 `LockScreenBackstopFrame` —— **桌面处于锁屏状态**，合成鼠标事件落在锁屏上；与本次改动无关。用户解锁后 `-Full` 一次通过（见 E-S06） |
 | E-S06 | `verify-windows.ps1 -Full`（解锁后） | exit 0；native smoke **25/25 PASS、0 SKIP**（源码构建 + 解压包各一轮），dotnet 36/36，FFI SHA256 守卫与打包结构全绿；日志 `/tmp/verify-settings-full.log` |
+| E-S08 | 失败记录（REQ-S13 首轮） | ① XAML 删控件后 code-behind 仍引用 `PersonaDescriptionBox` / `PersonaVerbosityCombo` / `PersonaLanguageBox`（CS0103 + XAML WMC9999）→ 清掉构造函数的即时生效挂接；② `PersonaTonePresetCombo` 同时被 XAML 与构造函数挂事件 → 只保留 XAML 一处。两次失败均保留，修复后 exit 0 |
+| E-S09 | REQ-S13 提示词改写 | `cargo test -p petsona-core` **61/61**：新增 `traits_default_to_emoji_enabled`，`effective_prompt_includes_traits_and_pet` 增加「必须含『用与用户相同的语言回答』、不得含『默认语言』」断言 |
 | E-S07 | 桌面验收包刷新 | `scripts\package-windows.ps1` exit 0；`Desktop\Petsona-验收-修复版\Petsona-windows-x64-0.1.0\` 已替换为新构建（59 文件，`petsona_ffi.dll` md5 `5a9ec34922d856fe6593706a4bef6a77`），旧包改名保留 |
 
 ## 审查及关闭
@@ -52,7 +54,72 @@
 ### 第二批进度（v1.1）
 
 - **REQ-S17 已完成**（2026-09-21）：`SettingsWindow.xaml` 侧边栏六个分区各加 `SymbolIcon`（Folder / Font / Contact / Clock / World / Setting），`PaneDisplayMode="Auto"` + `CompactModeThresholdWidth=720` + `ExpandedModeThresholdWidth=1000`，窗口变窄自动收成纯图标栏。证据：`verify-windows.ps1` exit 0（cargo 95 项 + dotnet 36/36 + FFI 守卫），桌面验收包已刷新为含图标的构建（`petsona_ffi.dll` md5 `2cd17c66b3a843186f87b017942349ee`）。
-- **REQ-S11～S16 待实施**（计划 v1.1）：宠物页导入合并、缩放滑块 + 托盘同步、人格页精简（含 `traits.language` / `description` 字段删除与提示词改写）、语气预设、记忆页「编辑 + 分级清空 + 导出导入」、模型供应商（DeepSeek / 自定义 + 拉取模型列表 + `thinking` 门控 + 凭据按供应商隔离）——均需两端同批，macOS 侧待 Mac 验证。
+- **REQ-S11 / S13 / S14 已实施**（2026-09-21 第三轮）：
+  - 共享层：`Persona` 删除 `description`，`PersonaTraits` 删除 `language`；提示词不再输出「默认语言：xx」，改为「用与用户相同的语言回答」；`emoji` 默认改为 **true**（只影响新建人格，老文件保持原值）。`PersonaPatch` 同步收缩，旧 `persona.json` 仍可加载。
+  - Windows：宠物页两个导入按钮合并为「导入…」（MenuFlyout：文件夹 / zip），「重新扫描」移入 Codex 卡片；人格页删除 简介 / 回答长度 / 默认语言，新增 **语气预设 + 自定义**（预设同时决定 `verbosity`），系统提示词收进「高级」Expander；「固定问候文案」移到「连接与问候」的空闲问候区。
+  - macOS：同一套结构（`DisclosureGroup("高级")` + 预设 Picker + 问候文案移入问候 Section + 单一「导入…」按钮 + Codex 区加导入/重扫）。**未编译**，需 Mac 门禁。
+  - 证据：`cargo test` core **61/61**、runtime **8/8**；`verify-windows.ps1` exit 0（cargo 95 项 + dotnet 36/36 + FFI 守卫）；失败记录见下。桌面验收包已刷新（`petsona_ffi.dll` md5 `77d58c4caba78e0c5899817f4375c1b9`）。
+- **REQ-S12 已实施**（2026-09-22 第四轮）：
+  - Windows：`ScaleCombo` → `Slider`（0.5–2.0、`StepFrequency=0.25` + `SnapsTo=StepValues`，即原先 7 个档位吸附），右侧实时显示百分比；拖动即生效（档位离散，最多 6 次写入），落盘仍由 `SetScale` 负责。
+  - macOS：设置页「大小」由 Picker 改为 `Slider(step: 0.25)` + 百分比标签；状态栏菜单保留同一套 7 档并**给当前档位打勾**，与滑块完全一致（Windows 托盘菜单本来就没有缩放入口，无需改）。
+  - 证据：`verify-windows.ps1` exit 0；`windows-smoke.ps1` **25/25 PASS**（含 N12/N19 空库首启设置窗）。
+  - **失败记录（重要）**：首次 smoke 出现 N12/N19 FAIL —— 空库首启时设置窗根本没显示。用隔离探针（空 home + 枚举窗口）复现：`WinUIDesktopWin32WindowClass` 窗口存在但 `visible=False`。根因是 `Slider` 在 `InitializeComponent()` 期间设置 `Minimum/Maximum` 就触发了 `ValueChanged`，此时 `ScaleValueText` 还没构造 → `NullReferenceException` 让设置窗构造失败（异常被上层吞掉，进程仍活着）。修法：处理函数里 `if (_suppressEvents || ScaleValueText is null || ScaleSlider is null) return;`。修复后 smoke 25/25。
+- **REQ-S15 已实施**（2026-09-22 第五轮）：
+  - 共享层：`PetMemory` 新增 `update_fact`（原地编辑保留 `createdAt`）、`clear_facts` / `clear_events`（分级清空）、`export_persona` / `import_persona`（可移植 JSON：`kind = petsona.memory.persona` + facts/events；导入覆盖当前人格的偏好与事件、保留 last seen / last greeting，外来文件被拒）。
+  - ABI：追加 4 个命令（37 `UpdateMemoryFact`、38 `ClearMemoryScope`（value: 0 全部 / 1 偏好 / 2 事件）、39 `ExportMemory`、40 `ImportMemory`），`contracts/petsona.h` 与 `ABI.md` 同步；ABI 版本不变。
+  - Windows：记忆页选中一条偏好即填入编辑框、按钮变「更新」（或点「取消编辑」），新增「只清偏好 / 只清事件 / 全部清空」与「导出记忆… / 导入记忆…」（导入前 `ContentDialog` 确认会覆盖）。
+  - macOS：同一套（编辑/更新 + 三个分级清空 + 导出/导入面板 + 覆盖确认），`EngineClient` 增加 `updateMemoryFact(id:key:value:)`、`clearMemory(scope:)`、`exportMemory`、`importMemory`。**未编译**，待 Mac 门禁。
+  - 证据：`cargo test` core **63/63**（新增 `edit_and_scoped_clears_keep_the_other_half`、`export_then_import_round_trips_one_persona`）、runtime **9/9**（新增 `memory_edit_scoped_clear_and_export_round_trip`）；`verify-windows.ps1` exit 0（dotnet **37/37**，新增 `MemoryFactEditScopedClearAndExportRoundTrip` 覆盖 FFI 全链路）；`windows-smoke.ps1` **25/25 PASS**；桌面验收包已刷新（md5 `75cedaa029714f6fc8019c758274d726`）。
+- **REQ-S16a 已实施**（2026-09-22 第六轮，S16 的第一半）：模型供应商 + `thinking` 门控 + 凭据按供应商隔离
+  - 共享层：`DeepSeekConfig` 新增 `provider`（`deepseek` / `custom`，默认 deepseek，未知值归一为 deepseek，旧配置自动视为 DeepSeek）；`DeepSeekClient::request_body` 抽出为可测函数，**`thinking` 字段只在 DeepSeek 下发送**（严格 OpenAI 兼容端点会拒绝未知字段）；凭据槽位 `provider/deepseek`、`provider/custom`，DeepSeek 仍回落到旧的 `deepseek` 槽（老用户密钥不丢），`save_api_key(provider, key)` 空 key = 删除。
+  - 运行时：`UpdateDeepSeekConfig` 归一化 provider；`SaveDeepSeekKey` 按当前 provider 读写凭据（切换供应商不再互相覆盖）。
+  - Windows：连接页新增「服务商」卡片（DeepSeek / 自定义）；选 DeepSeek 时 Base URL 固定为内置地址并只读、显示「禁用思考模式」开关；选自定义时 Base URL 可编辑、隐藏该开关并说明"不会发送 thinking 字段"。
+  - macOS：同一套（Picker + Base URL disabled + 自定义说明 + 按 provider 读写 Keychain；`KeychainService.account(for:)` / `hasKey(provider:)` / `deleteDeepSeekKey(provider:)`）。**未编译**，待 Mac 门禁。
+  - 证据：`cargo test` core **65/65**（新增 `thinking_field_is_deepseek_only`、`api_key_slots_are_per_provider`）；`verify-windows.ps1` exit 0（dotnet **37/37**，DeepSeek 配置往返断言加入 `provider: custom`）；`windows-smoke.ps1` **25/25 PASS**；桌面验收包已刷新（md5 `86a8f054b45c60c33829ec0aff62ed37`）。
+  - 失败记录：`save_api_key` 改签名后冻结的旧 egui 入口编译失败（E0061）→ 旧线调用点固定传 `"deepseek"`，不改其行为。
+- **REQ-S16b 已实施**（2026-09-22 第七轮，S16 完成）：拉取模型列表
+  - 共享层：`DeepSeekClient::list_models()`（`GET {base}/models`，Bearer 认证）+ 纯函数 `parse_model_ids`（排序 / 去重 / 容忍异常结构）。
+  - ABI：文本字段 17 `Models`（JSON 数组）+ 命令 41 `ListModels`；`contracts/petsona.h`、`ABI.md`、FFI 枚举 / 分发 / render 映射同步。
+  - 运行时：`ListModels` → 独立线程请求 → `ModelsResult` 回写 `runtime.models` 并发布；进行中忽略重复点击；成功/空列表/失败三种状态都写进状态条（失败提示"可手动填写模型名"）。
+  - Windows：模型卡片新增「拉取模型列表」按钮 + 拉取成功后的模型下拉（选中即填入文本框，仍可手填）。
+  - macOS：同一套（按钮 + Picker，来自 `PETSONA_TEXT_MODELS`）。**未编译**，待 Mac 门禁。
+  - 证据：`cargo test` core **66/66**（新增 `parses_and_sorts_model_ids`）、runtime **10/10**（新增 `list_models_publishes_the_provider_catalog` —— 用本地 stub HTTP 服务验证请求打到 `{base}/models` 并把结果发布到投影）；`verify-windows.ps1 -Full` **exit 0**（cargo 106 项 + dotnet 37/37 + FFI 守卫 + native smoke 25/25 ×2 + 打包结构）；桌面验收包已刷新（md5 `d9927c1fe5407372593c8add4445f762`）。
+
+## 第八轮：W19 反馈修复（2026-09-22）
+
+用户实机复测：W15/W16/W17/W18 通过；**W19 失败**（"API key 清除之后未生效"）。另提三条建议：密钥应显示是否已配置、偏好提取把问句当陈述（"我叫什么" → 记住"称呼=什么"）、响应式布局（侧边栏展开太晚 + 卡片宽度不一）。
+
+| 问题 | 根因 | 修复 |
+|---|---|---|
+| 清除密钥未生效 | S16a 引入按 provider 隔离的凭据槽位后，`resolve_api_key` 会**依次尝试 `provider/deepseek` 与旧槽 `deepseek`**，而清除只删了新槽：上一轮验收保存在旧槽里的密钥仍然命中，看起来"没清除" | `save_api_key(provider, "")` 现在删除 `key_candidates(provider)` 里的**每一个**槽（DeepSeek = 新槽 + 旧槽；自定义 = 自己的槽）；新增 `key_candidates` 与回归测试 `clearing_covers_every_readable_slot` |
+| 用户无法判断是否已配置密钥 | UI 只在本次会话点过保存后才知道状态 | 运行时缓存 `key_configured`（在加载、保存/清除密钥、切换 provider 时刷新，不做每帧 keychain 读取），并把 `keyConfigured` 注入 DeepSeek 配置投影；Windows/macOS 显示"已配置（密钥不会显示）/ 未配置"，未配置时禁用「清除密钥」，密钥框在已配置时提示"输入新密钥可覆盖" |
+| 问句被当成偏好 | `extract_preference` 只看前缀（`我叫` + 值），没有区分疑问句 | 含 `?`/`？` 直接不提取；值以疑问词开头（什么/啥/哪/谁/多少/怎么/为什么/what/who/how…）或以 吗/呢/么 结尾也不提取；新增 `questions_are_never_stored_as_preferences` 回归测试（含"我叫什么？""我的名字是什么""我喜欢什么""What is my name?"），并保留"我叫小明"等正例 |
+| 侧边栏展开太晚 / 卡片宽度不一致 | 阈值 720/1000 对 125% 缩放的 1000px 窗口偏大；页面容器是 `HorizontalAlignment="Left"`，宽度随内容变化 | 阈值改为 640/900；容器改 `HorizontalAlignment="Stretch"` + `MinWidth=560`（各页卡片对齐，最宽 1000） |
+
+- 证据：`cargo test` core **68/68**（新增 `questions_are_never_stored_as_preferences`、`clearing_covers_every_readable_slot`）；`verify-windows.ps1` exit 0（dotnet 37/37）；`windows-smoke.ps1` 25/25；桌面验收包已刷新（md5 `6543268a804928da9196668b2a5bfa03`）。
+- 失败记录：本轮 clippy 先报 `needless_borrow`（`keyring.get(&slot)` → `keyring.get(slot)`），修正后通过。
+- 待人工复测：W19（清除密钥后状态变为"未配置"且不再调用模型）、W20（问"我叫什么"不写偏好；"我叫小明"仍写入）、W21（缩到窄窗口看侧边栏收纳 / 拉宽看卡片等宽）。
+- 新增人工项：**W20**（偏好提取不把问句当陈述）、**W21**（响应式：640/900 阈值与卡片等宽）。
+
+## 第九轮：卡片顺序 / 失败提示 / 问候归位（2026-09-22）
+
+用户复测：W19 / W20 / W21 全部通过。新反馈：模型拉取失败要有提示、模型服务卡片顺序应为「服务商 → URL → API → 模型 → 高级」、空闲问候移到「外观与交互」、人格与宠物直接绑定（下一轮）、人格与记忆重塑待议。
+
+| 反馈 | 处理 |
+|---|---|
+| 拉取模型失败要有提示 | 失败信息除状态条外，**就地显示在「模型」卡片内**（红字），由运行时状态文案驱动（`拉取模型列表失败…` / `服务商没有返回…`）；成功时隐藏 |
+| 模型服务顺序 | 两端重排为 **服务商 → Base URL → API Key → 模型 → 高级**（超时 / token / 温度 / thinking / 环境变量名收进「高级」） |
+| 空闲问候归位 | 从模型页移到**「外观与交互」**页（含固定问候文案、空闲分钟、冷却、最大字数）；导航标签 `连接与问候` → **`模型服务`** |
+| 人格与宠物绑定 | **待决策**（数据模型变更，见下一轮提案） |
+
+- 证据：`verify-windows.ps1` exit 0（dotnet 37/37）；`windows-smoke.ps1` **25/25**；桌面验收包已刷新（md5 `c297c8afe24a90bfd7986ed0078f0737`）。
+- 待人工：W22（视觉顺序与失败提示）、W23（问候在外观页）。
+- macOS 同步做了顺序调整、`高级` 分区、失败提示与问候搬移（**未编译**，待 Mac 门禁）。
+
+## 计划功能面收尾（2026-09-22）
+
+- **settings-consolidation 的功能项 S01–S17 全部实施完毕**（S11–S16 于本轮系列完成，S17 侧边栏图标 / 响应式在此前完成）。
+- 仍待办（非功能项）：**macOS 编译与门禁**（`bash scripts/verify-macos-all.sh`，本机无工具链）、**人工验收** W15–W19（设置页外观 / 缩放滑块 / 记忆页 / 服务商 / 拉取模型）、`MACOS_VERIFICATION.md` 与 `FEATURE_PARITY.md` 收尾、Windows 发布项 D1–D6 与 CI 首跑。
 
 ## 下一批（用户 2026-09-21 提出的设置页微调，已在计划 v1.1 落盘）
 
