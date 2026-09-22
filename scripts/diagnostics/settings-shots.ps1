@@ -15,7 +15,9 @@
 [CmdletBinding()]
 param(
     [string] $AppPath = "",
-    [string] $OutputDirectory = ""
+    [string] $OutputDirectory = "",
+    [ValidateSet("system", "light", "dark")]
+    [string] $Theme = "system"
 )
 
 $ErrorActionPreference = "Stop"
@@ -98,16 +100,17 @@ $memory = @'
 
 foreach ($page in $pages) {
     $home2 = Join-Path $env:TEMP ("petsona-shots-" + [Guid]::NewGuid().ToString("N"))
-    New-Item -ItemType Directory -Path (Join-Path $home2 "config") -Force | Out-Null
+    New-Item -ItemType Directory -Path $home2 -Force | Out-Null
     [System.IO.File]::WriteAllText((Join-Path $home2 "config.json"),
         '{"firstRun":false,"stateServer":{"enabled":false},"memory":{"enabled":true,"recentEvents":5,"factLimit":20}}',
         (New-Object System.Text.UTF8Encoding($false)))
-    [System.IO.File]::WriteAllText((Join-Path $home2 "config\memory.json"), $memory,
+    [System.IO.File]::WriteAllText((Join-Path $home2 "memory.json"), $memory,
         (New-Object System.Text.UTF8Encoding($false)))
 
     $previousHome = $env:PETSONA_HOME
     $env:PETSONA_HOME = $home2
     $env:PETSONA_SETTINGS_PAGE = $page.Tag
+    if ($Theme -ne "system") { $env:PETSONA_SETTINGS_THEME = $Theme } else { $env:PETSONA_SETTINGS_THEME = $null }
     $process = $null
     try {
         $process = Start-Process -FilePath $AppPath -PassThru
@@ -119,8 +122,10 @@ foreach ($page in $pages) {
         }
         if ($handle -eq [IntPtr]::Zero) { throw "settings window did not open for page $($page.Tag)" }
 
-        Start-Sleep -Milliseconds 900
-        $path = Join-Path $OutputDirectory ($page.Name + ".png")
+        # WinUI re-lays out and re-themes asynchronously; give it time before capture.
+        Start-Sleep -Milliseconds 1800
+        $suffix = if ($Theme -eq "system") { "" } else { "-" + $Theme }
+        $path = Join-Path $OutputDirectory ($page.Name + $suffix + ".png")
         $rect = New-Object "ShotWin+RECT"
         [void][ShotWin]::GetWindowRect($handle, [ref]$rect)
         $width = $rect.Right - $rect.Left

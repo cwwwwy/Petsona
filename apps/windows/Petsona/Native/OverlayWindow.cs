@@ -100,6 +100,11 @@ internal sealed unsafe class OverlayWindow : IDisposable
         _ = NativeWin32.ShowWindow(_hwnd, visible ? NativeWin32.SW_SHOWNOACTIVATE : NativeWin32.SW_HIDE);
     }
 
+    private const float BubblePaddingX = 16f;
+    private const float BubblePaddingY = 12f;
+    private const float BubbleMaxTextWidth = 300f;
+    private const float BubbleRadius = 12f;
+
     private void RenderBubble(string text)
     {
         using var measureFont = CreateFont(14);
@@ -107,26 +112,40 @@ internal sealed unsafe class OverlayWindow : IDisposable
         float textHeight;
         using (var probe = Graphics.FromHwnd(0))
         {
-            var measured = probe.MeasureString(text, measureFont, new SizeF(250f, 240f));
+            var measured = probe.MeasureString(text, measureFont, new SizeF(BubbleMaxTextWidth, 240f));
             textWidth = measured.Width;
             textHeight = measured.Height;
         }
 
-        var width = (int)Math.Clamp(Math.Ceiling(textWidth) + 28, 120, 280);
-        var height = (int)Math.Ceiling(textHeight) + 22;
+        var width = (int)Math.Clamp(
+            Math.Ceiling(textWidth) + (BubblePaddingX * 2),
+            120f,
+            BubbleMaxTextWidth + (BubblePaddingX * 2));
+        var height = (int)Math.Ceiling(textHeight) + (int)(BubblePaddingY * 2);
+        var palette = BubblePalette.Current();
         using var bitmap = new Bitmap(width, height, PixelFormat.Format32bppPArgb);
         using (var graphics = Graphics.FromImage(bitmap))
         {
             graphics.SmoothingMode = SmoothingMode.AntiAlias;
             graphics.TextRenderingHint = TextRenderingHint.AntiAliasGridFit;
-            using var path = RoundedRect(new RectangleF(0.5f, 0.5f, width - 1f, height - 1f), 12f);
-            using var fill = new SolidBrush(Color.FromArgb(242, 255, 255, 255));
+            using var path = RoundedRect(new RectangleF(0.5f, 0.5f, width - 1f, height - 1f), BubbleRadius);
+            using var fill = new SolidBrush(palette.Fill);
             graphics.FillPath(fill, path);
-            using var border = new Pen(Color.FromArgb(70, 0, 0, 0), 1f);
+            using var border = new Pen(palette.Border, 1f);
             graphics.DrawPath(border, path);
-            using var textBrush = new SolidBrush(Color.FromArgb(32, 32, 32));
-            graphics.DrawString(text, measureFont, textBrush, new RectangleF(14f, 11f, width - 28f, height - 22f));
+            using var textBrush = new SolidBrush(palette.Text);
+            graphics.DrawString(
+                text,
+                measureFont,
+                textBrush,
+                new RectangleF(
+                    BubblePaddingX,
+                    BubblePaddingY,
+                    width - (BubblePaddingX * 2),
+                    height - (BubblePaddingY * 2)));
         }
+
+        BubblePalette.Snapshot(bitmap);
 
         Width = width;
         Height = height;

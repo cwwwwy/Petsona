@@ -42,6 +42,8 @@ internal sealed unsafe class AppController : IDisposable
     private bool _draggingPet;
     private bool _faultReported;
     private bool _disposed;
+    private bool _diagnosticsComposerOpened;
+    private bool _diagnosticsBubbleShown;
 
     private readonly DispatcherQueue _dispatcher;
 
@@ -132,6 +134,32 @@ internal sealed unsafe class AppController : IDisposable
             ApplyInitialPosition();
             // The next tick (≤33 ms) shows the pet, already in its final place.
             _window.DeferShow = false;
+        }
+
+        // Diagnostics hook for screenshots: render a fixed bubble once the pet
+        // is up, so bubble-shots.ps1 never depends on the protocol.
+        if (!_diagnosticsBubbleShown &&
+            Environment.GetEnvironmentVariable("PETSONA_BUBBLE_SNAPSHOT") is { Length: > 0 } &&
+            snapshot.Ready != 0 &&
+            snapshot.HasPet != 0 &&
+            snapshot.PetVisible != 0)
+        {
+            _diagnosticsBubbleShown = true;
+            _engine.Send(
+                PetsonaCommandKind.ShowBubble,
+                ttlMilliseconds: 120000u,
+                text: "你好呀，今天想聊点什么？我在听。");
+        }
+
+        // Diagnostics hook for screenshots: open the composer once the pet is up.
+        if (!_diagnosticsComposerOpened &&
+            Environment.GetEnvironmentVariable("PETSONA_OPEN_COMPOSER") == "1" &&
+            snapshot.Ready != 0 &&
+            snapshot.HasPet != 0 &&
+            snapshot.PetVisible != 0)
+        {
+            _diagnosticsComposerOpened = true;
+            OpenComposer();
         }
 
         if (snapshot.Ready != 0 && snapshot.HasPet == 0 && !_emptyLibraryHandled)
@@ -434,6 +462,7 @@ internal sealed unsafe class AppController : IDisposable
         var petRect = _window.CurrentRect();
         var handle = WinRT.Interop.WindowNative.GetWindowHandle(_composer);
         WindowIcon.Apply(handle);
+        Petsona.Native.WindowTheme.Apply(handle, Microsoft.UI.Xaml.ElementTheme.Default);
         NativeWin32.RECT composerRect;
         if (NativeWin32.GetWindowRect(handle, &composerRect) == 0)
         {

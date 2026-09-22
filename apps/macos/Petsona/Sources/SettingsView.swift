@@ -217,7 +217,7 @@ enum SettingsSection: String, CaseIterable, Identifiable {
         case .library: return "宠物库"
         case .behavior: return "外观与交互"
         case .deepSeek: return "模型服务"
-        case .persona: return "说话方式"
+        case .persona: return "人格"
         case .memory: return "记忆"
         case .startup: return "系统"
         }
@@ -349,7 +349,7 @@ struct SettingsView: View {
         case .deepSeek:
             settingsForm(title: "模型服务") { deepSeekSection }
         case .persona:
-            settingsForm(title: "说话方式") { personaSection }
+            settingsForm(title: "人格") { personaSection }
         case .memory:
             settingsForm(title: "记忆") { memorySection }
         case .startup:
@@ -472,13 +472,13 @@ struct SettingsView: View {
     }
 
     private var personaSection: some View {
-        Section("这只宠物的说话方式") {
+        Section("这只宠物的人格") {
             HStack {
                 Button("导入…") { importPersona() }
                 Button("导出…") { exportPersona(engine.text(PETSONA_TEXT_PERSONA_ID)) }
                 Button("重置为内置") {
                     let alert = NSAlert()
-                    alert.messageText = "重置说话方式"
+                    alert.messageText = "重置人格"
                     alert.informativeText = "会恢复内置的语气、emoji 与提示词；这只宠物的记忆不受影响。"
                     alert.addButton(withTitle: "重置")
                     alert.addButton(withTitle: "取消")

@@ -303,6 +303,16 @@ internal sealed unsafe class TrayService : IDisposable
             }
         }
 
+        // Nothing next to the exe (the portable build embeds the icon instead of
+        // shipping the .ico): read the executable's own icon. Falling back to
+        // SystemIcons.Application here is what made the tray show a generic
+        // icon in the acceptance build (2026-09-22 report).
+        var embedded = WindowIcon.Small;
+        if (embedded != 0)
+        {
+            return (embedded, false);
+        }
+
         return (System.Drawing.SystemIcons.Application.Handle, false);
     }
 

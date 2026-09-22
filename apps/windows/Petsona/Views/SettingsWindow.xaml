@@ -5,31 +5,6 @@
     Title="Petsona 设置">
 
     <Grid>
-        <Grid.Resources>
-            <!-- Hand-written card look (no third-party toolkit, see settings-consolidation S04). -->
-            <Style x:Key="SettingsCardStyle" TargetType="Border">
-                <Setter Property="Background" Value="{ThemeResource CardBackgroundFillColorDefaultBrush}" />
-                <Setter Property="BorderBrush" Value="{ThemeResource CardStrokeColorDefaultBrush}" />
-                <Setter Property="BorderThickness" Value="1" />
-                <Setter Property="CornerRadius" Value="4" />
-                <Setter Property="Padding" Value="16,12" />
-                <Setter Property="Margin" Value="0,0,0,6" />
-            </Style>
-            <Style x:Key="CardHeaderStyle" TargetType="TextBlock">
-                <Setter Property="FontWeight" Value="SemiBold" />
-                <Setter Property="TextWrapping" Value="Wrap" />
-            </Style>
-            <Style x:Key="CardDescriptionStyle" TargetType="TextBlock">
-                <Setter Property="Opacity" Value="0.7" />
-                <Setter Property="FontSize" Value="12" />
-                <Setter Property="TextWrapping" Value="Wrap" />
-            </Style>
-            <Style x:Key="SectionHeaderStyle" TargetType="TextBlock">
-                <Setter Property="FontWeight" Value="SemiBold" />
-                <Setter Property="FontSize" Value="14" />
-                <Setter Property="Margin" Value="0,14,0,6" />
-            </Style>
-        </Grid.Resources>
         <Grid.RowDefinitions>
             <RowDefinition Height="*" />
             <RowDefinition Height="Auto" />
@@ -45,6 +20,7 @@
                         OpenPaneLength="200"
                         IsBackButtonVisible="Collapsed"
                         IsSettingsVisible="False"
+                        IsPaneToggleButtonVisible="False"
                         SelectionChanged="OnNavSelectionChanged">
             <NavigationView.MenuItems>
                 <NavigationViewItem Content="宠物" Tag="pets" IsSelected="True">
@@ -57,7 +33,7 @@
                         <SymbolIcon Symbol="Font" />
                     </NavigationViewItem.Icon>
                 </NavigationViewItem>
-                <NavigationViewItem Content="说话方式" Tag="persona">
+                <NavigationViewItem Content="人格" Tag="persona">
                     <NavigationViewItem.Icon>
                         <SymbolIcon Symbol="Contact" />
                     </NavigationViewItem.Icon>
@@ -99,8 +75,12 @@
                                         </DataTemplate>
                                     </ListView.ItemTemplate>
                                 </ListView>
+                                <TextBlock x:Name="PetEmptyHint"
+                                           Text="还没有宠物。先「导入…」一个宠物包，或到下面的「从 Codex 导入」里挑一个。"
+                                           Style="{StaticResource CardDescriptionStyle}"
+                                           Visibility="Collapsed" />
                                 <StackPanel Orientation="Horizontal" Spacing="8">
-                                    <Button Content="导入…">
+                                    <Button Content="导入…" Style="{ThemeResource AccentButtonStyle}">
                                         <Button.Flyout>
                                             <MenuFlyout>
                                                 <MenuFlyoutItem Text="从文件夹导入…" Click="OnImportFolderClick" />
@@ -108,8 +88,8 @@
                                             </MenuFlyout>
                                         </Button.Flyout>
                                     </Button>
-                                    <Button Content="导出…" Click="OnExportPetClick" />
-                                    <Button Content="删除" Click="OnDeletePetClick" />
+                                    <Button x:Name="ExportPetButton" Content="导出…" Click="OnExportPetClick" IsEnabled="False" />
+                                    <Button x:Name="DeletePetButton" Content="删除" Click="OnDeletePetClick" IsEnabled="False" Style="{StaticResource DangerButtonStyle}" />
                                 </StackPanel>
                             </StackPanel>
                         </Border>
@@ -144,6 +124,10 @@
                                 <StackPanel Orientation="Horizontal" Spacing="8">
                                     <Button Content="重新扫描" Click="OnScanCodexClick" />
                                 </StackPanel>
+                                <TextBlock x:Name="CodexEmptyHint"
+                                           Text="没有发现可导入的宠物目录。请确认 ~/.codex/pets 里已有宠物包，然后点「重新扫描」。"
+                                           Style="{StaticResource CardDescriptionStyle}"
+                                           Visibility="Collapsed" />
                             </StackPanel>
                         </Border>
                     </StackPanel>
@@ -158,12 +142,14 @@
                                     <TextBlock Text="拖动调整宠物大小，按固定档位吸附（50%–200%）；托盘菜单与这里保持同一套档位。"
                                                Style="{StaticResource CardDescriptionStyle}" />
                                 </StackPanel>
-                                <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="12" VerticalAlignment="Center">
-                                    <Slider x:Name="ScaleSlider" Width="220" Minimum="0.5" Maximum="2.0"
+                                <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="12" VerticalAlignment="Center"
+                                            HorizontalAlignment="Right">
+                                    <Slider x:Name="ScaleSlider" Width="{StaticResource SliderWidth}" Minimum="0.5" Maximum="2.0"
                                             StepFrequency="0.25" SnapsTo="StepValues"
                                             TickFrequency="0.25" TickPlacement="Outside"
                                             ValueChanged="OnScaleChanged" />
-                                    <TextBlock x:Name="ScaleValueText" MinWidth="52" VerticalAlignment="Center"
+                                    <TextBlock x:Name="ScaleValueText" MinWidth="44" TextAlignment="Right"
+                                               VerticalAlignment="Center" HorizontalAlignment="Right"
                                                Style="{StaticResource CardDescriptionStyle}" />
                                 </StackPanel>
                             </Grid>
@@ -175,7 +161,7 @@
                                     <TextBlock Text="开启后，透明像素的点击会落到桌面，只有宠物身体的像素会拦截鼠标；拖动与设置不受影响。"
                                                Style="{StaticResource CardDescriptionStyle}" />
                                 </StackPanel>
-                                <ToggleSwitch Grid.Column="1" x:Name="ClickThroughToggle" VerticalAlignment="Center"
+                                <ToggleSwitch Style="{StaticResource SettingsToggleStyle}" Grid.Column="1" x:Name="ClickThroughToggle" VerticalAlignment="Center"
                                               Toggled="OnClickThroughToggled" />
                             </Grid>
                         </Border>
@@ -187,7 +173,7 @@
                                     <TextBlock Text="一段时间没有操作后，宠物会用一句短问候冒泡；没有配置 DeepSeek 时使用人格里的固定问候。"
                                                Style="{StaticResource CardDescriptionStyle}" />
                                 </StackPanel>
-                                <ToggleSwitch Grid.Column="1" x:Name="GreetingEnabledToggle" VerticalAlignment="Center"
+                                <ToggleSwitch Style="{StaticResource SettingsToggleStyle}" Grid.Column="1" x:Name="GreetingEnabledToggle" VerticalAlignment="Center"
                                               />
                             </Grid>
                         </Border>
@@ -197,8 +183,8 @@
                                     <TextBlock Text="空闲时长（分钟）" Style="{StaticResource CardHeaderStyle}" />
                                     <TextBlock Text="连续多久没有点击 / 拖动 / 输入后触发问候。" Style="{StaticResource CardDescriptionStyle}" />
                                 </StackPanel>
-                                <NumberBox Grid.Column="1" x:Name="GreetingIdleMinutesBox" Minimum="1" Maximum="1440"
-                                           MinWidth="120" VerticalAlignment="Center" />
+                                <NumberBox Grid.Column="1" x:Name="GreetingIdleMinutesBox" Style="{StaticResource SettingsNumberBoxStyle}" Minimum="1" Maximum="1440"
+                                           />
                             </Grid>
                         </Border>
                         <Border Style="{StaticResource SettingsCardStyle}">
@@ -207,8 +193,8 @@
                                     <TextBlock Text="问候冷却（分钟）" Style="{StaticResource CardHeaderStyle}" />
                                     <TextBlock Text="两次问候之间的最短间隔；0 表示不限制。" Style="{StaticResource CardDescriptionStyle}" />
                                 </StackPanel>
-                                <NumberBox Grid.Column="1" x:Name="GreetingCooldownBox" Minimum="0" Maximum="1440"
-                                           MinWidth="120" VerticalAlignment="Center" />
+                                <NumberBox Grid.Column="1" x:Name="GreetingCooldownBox" Style="{StaticResource SettingsNumberBoxStyle}" Minimum="0" Maximum="1440"
+                                           />
                             </Grid>
                         </Border>
                         <Border Style="{StaticResource SettingsCardStyle}">
@@ -225,24 +211,24 @@
                                     <TextBlock Text="问候最大字数" Style="{StaticResource CardHeaderStyle}" />
                                     <TextBlock Text="模型回复超过该长度会被截断；建议 20–40。" Style="{StaticResource CardDescriptionStyle}" />
                                 </StackPanel>
-                                <NumberBox Grid.Column="1" x:Name="GreetingMaxCharsBox" Minimum="1" Maximum="200"
-                                           MinWidth="120" VerticalAlignment="Center" />
+                                <NumberBox Grid.Column="1" x:Name="GreetingMaxCharsBox" Style="{StaticResource SettingsNumberBoxStyle}" Minimum="1" Maximum="200"
+                                           />
                             </Grid>
                         </Border>
                     </StackPanel>
 
-                    <!-- ============================================== 说话方式 -->
+                    <!-- ============================================== 人格 -->
                     <StackPanel x:Name="PagePersona" Spacing="6" Visibility="Collapsed">
-                        <TextBlock Text="说话方式" Style="{StaticResource SectionHeaderStyle}" />
+                        <TextBlock Text="人格" Style="{StaticResource SectionHeaderStyle}" />
                         <Border Style="{StaticResource SettingsCardStyle}">
                             <StackPanel Spacing="8">
-                                <TextBlock Text="这只宠物的说话方式" Style="{StaticResource CardHeaderStyle}" />
-                                <TextBlock Text="说话方式跟着宠物走：切换宠物就是切换语气与提示词。记忆、模型服务在各自页面配置。"
+                                <TextBlock Text="这只宠物的人格" Style="{StaticResource CardHeaderStyle}" />
+                                <TextBlock Text="人格跟着宠物走：切换宠物就是切换语气与提示词。记忆、模型服务在各自页面配置。"
                                            Style="{StaticResource CardDescriptionStyle}" />
                                 <StackPanel Orientation="Horizontal" Spacing="8">
                                     <Button Content="导入…" Click="OnImportPersonaClick" />
                                     <Button Content="导出…" Click="OnExportPersonaClick" />
-                                    <Button Content="重置为内置" Click="OnResetPersonaClick" />
+                                    <Button Content="重置为内置" Click="OnResetPersonaClick" Style="{StaticResource DangerButtonStyle}" />
                                 </StackPanel>
                             </StackPanel>
                         </Border>
@@ -252,7 +238,8 @@
                                 <TextBlock Text="选一个预设，或直接改成自己的说法；预设同时决定回答的长短。" Style="{StaticResource CardDescriptionStyle}" />
                                 <ComboBox x:Name="PersonaTonePresetCombo" MinWidth="220" HorizontalAlignment="Left"
                                           SelectionChanged="OnPersonaTonePresetChanged" />
-                                <TextBox x:Name="PersonaToneBox" PlaceholderText="例如：毒舌但温柔，吐槽背后是真的关心" />
+                                <TextBox x:Name="PersonaToneBox" Width="420" HorizontalAlignment="Left"
+                                         PlaceholderText="例如：毒舌但温柔，吐槽背后是真的关心" />
                             </StackPanel>
                         </Border>
                         <Border Style="{StaticResource SettingsCardStyle}">
@@ -261,7 +248,7 @@
                                     <TextBlock Text="允许 emoji" Style="{StaticResource CardHeaderStyle}" />
                                     <TextBlock Text="关闭时提示词会明确要求不要使用 emoji。" Style="{StaticResource CardDescriptionStyle}" />
                                 </StackPanel>
-                                <ToggleSwitch Grid.Column="1" x:Name="PersonaEmojiToggle" VerticalAlignment="Center"
+                                <ToggleSwitch Style="{StaticResource SettingsToggleStyle}" Grid.Column="1" x:Name="PersonaEmojiToggle" VerticalAlignment="Center"
                                               />
                             </Grid>
                         </Border>
@@ -295,7 +282,7 @@
                                     <TextBlock Text="启用记忆" Style="{StaticResource CardHeaderStyle}" />
                                     <TextBlock Text="关闭后不再记录事件、也不再把记忆送给模型；已有内容保留。" Style="{StaticResource CardDescriptionStyle}" />
                                 </StackPanel>
-                                <ToggleSwitch Grid.Column="1" x:Name="MemoryEnabledToggle" VerticalAlignment="Center"
+                                <ToggleSwitch Style="{StaticResource SettingsToggleStyle}" Grid.Column="1" x:Name="MemoryEnabledToggle" VerticalAlignment="Center"
                                               />
                             </Grid>
                         </Border>
@@ -305,8 +292,8 @@
                                     <TextBlock Text="保留近期事件" Style="{StaticResource CardHeaderStyle}" />
                                     <TextBlock Text="发送给模型的近期事件条数。" Style="{StaticResource CardDescriptionStyle}" />
                                 </StackPanel>
-                                <NumberBox Grid.Column="1" x:Name="MemoryRecentEventsBox" Minimum="1" Maximum="100"
-                                           MinWidth="120" VerticalAlignment="Center" />
+                                <NumberBox Grid.Column="1" x:Name="MemoryRecentEventsBox" Style="{StaticResource SettingsNumberBoxStyle}" Minimum="1" Maximum="100"
+                                           />
                             </Grid>
                         </Border>
                         <Border Style="{StaticResource SettingsCardStyle}">
@@ -315,8 +302,8 @@
                                     <TextBlock Text="事实上限" Style="{StaticResource CardHeaderStyle}" />
                                     <TextBlock Text="长期偏好（事实）保留的条数；超出时旧的会并入一条「画像」。" Style="{StaticResource CardDescriptionStyle}" />
                                 </StackPanel>
-                                <NumberBox Grid.Column="1" x:Name="MemoryFactLimitBox" Minimum="1" Maximum="50"
-                                           MinWidth="120" VerticalAlignment="Center" />
+                                <NumberBox Grid.Column="1" x:Name="MemoryFactLimitBox" Style="{StaticResource SettingsNumberBoxStyle}" Minimum="1" Maximum="50"
+                                           />
                             </Grid>
                         </Border>
                         <Border Style="{StaticResource SettingsCardStyle}">
@@ -325,8 +312,8 @@
                                     <TextBlock Text="事件保留天数" Style="{StaticResource CardHeaderStyle}" />
                                     <TextBlock Text="超过这个天数的互动事件会被清理；0 = 永久保留。" Style="{StaticResource CardDescriptionStyle}" />
                                 </StackPanel>
-                                <NumberBox Grid.Column="1" x:Name="MemoryRetentionBox" Minimum="0" Maximum="3650"
-                                           MinWidth="120" VerticalAlignment="Center" />
+                                <NumberBox Grid.Column="1" x:Name="MemoryRetentionBox" Style="{StaticResource SettingsNumberBoxStyle}" Minimum="0" Maximum="3650"
+                                           />
                             </Grid>
                         </Border>
                         <Border Style="{StaticResource SettingsCardStyle}">
@@ -335,7 +322,7 @@
                                     <TextBlock Text="自动压缩偏好" Style="{StaticResource CardHeaderStyle}" />
                                     <TextBlock Text="偏好超过上限时合并成一条「画像」，而不是丢弃。" Style="{StaticResource CardDescriptionStyle}" />
                                 </StackPanel>
-                                <ToggleSwitch Grid.Column="1" x:Name="MemoryCompressToggle" VerticalAlignment="Center" />
+                                <ToggleSwitch Style="{StaticResource SettingsToggleStyle}" Grid.Column="1" x:Name="MemoryCompressToggle" VerticalAlignment="Center" />
                             </Grid>
                         </Border>
 
@@ -353,7 +340,11 @@
                                     <Button x:Name="FactCancelButton" Content="取消编辑" Click="OnCancelFactEditClick"
                                             VerticalAlignment="Bottom" Visibility="Collapsed" />
                                 </StackPanel>
-                                <ListView x:Name="FactsList" MaxHeight="220" SelectionChanged="OnFactSelectionChanged">
+                                <TextBlock x:Name="FactsEmptyHint"
+                                           Text="还没有偏好。在对话里说「我喜欢… / 请叫我…」，或在上面的输入框手动添加一条。"
+                                           Style="{StaticResource CardDescriptionStyle}"
+                                           Visibility="Collapsed" />
+                                <ListView x:Name="FactsList" MaxHeight="140" SelectionChanged="OnFactSelectionChanged">
                                     <ListView.ItemTemplate>
                                         <DataTemplate>
                                             <StackPanel Spacing="2">
@@ -364,10 +355,11 @@
                                     </ListView.ItemTemplate>
                                 </ListView>
                                 <StackPanel Orientation="Horizontal" Spacing="8">
-                                    <Button Content="删除选中事实" Click="OnForgetFactClick" />
-                                    <Button Content="只清偏好" Click="OnClearFactsClick" />
-                                    <Button Content="只清事件" Click="OnClearEventsClick" />
-                                    <Button Content="清空这只宠物的记忆" Click="OnClearMemoryClick" />
+                                    <Button x:Name="ForgetFactButton" Content="删除选中事实" Click="OnForgetFactClick" IsEnabled="False" />
+                                    <Button x:Name="ClearFactsButton" Content="只清偏好" Click="OnClearFactsClick" />
+                                    <Button x:Name="ClearEventsButton" Content="只清事件" Click="OnClearEventsClick" />
+                                    <Button x:Name="ClearMemoryButton" Content="清空这只宠物的记忆" Click="OnClearMemoryClick"
+                                            Style="{StaticResource DangerButtonStyle}" />
                                 </StackPanel>
                                 <StackPanel Orientation="Horizontal" Spacing="8">
                                     <Button Content="导出记忆…" Click="OnExportMemoryClick" />
@@ -389,7 +381,7 @@
                                     <TextBlock Text="DeepSeek 使用内置地址与参数；自定义适用于任意 OpenAI 兼容端点（不会发送 DeepSeek 专有字段）。"
                                                Style="{StaticResource CardDescriptionStyle}" />
                                 </StackPanel>
-                                <ComboBox Grid.Column="1" x:Name="ProviderCombo" MinWidth="160" VerticalAlignment="Center"
+                                <ComboBox Grid.Column="1" x:Name="ProviderCombo" Style="{StaticResource SettingsComboBoxStyle}"
                                           SelectionChanged="OnProviderSelectionChanged" />
                             </Grid>
                         </Border>
@@ -408,7 +400,7 @@
                                            Style="{StaticResource CardDescriptionStyle}" />
                                 <PasswordBox x:Name="DeepSeekKeyBox" PlaceholderText="sk-..." />
                                 <StackPanel Orientation="Horizontal" Spacing="8">
-                                    <Button Content="保存密钥" Click="OnSaveKeyClick" />
+                                    <Button Content="保存密钥" Click="OnSaveKeyClick" Style="{StaticResource PrimaryButtonStyle}" />
                                     <Button x:Name="ClearKeyButton" Content="清除密钥" Click="OnClearKeyClick" />
                                     <TextBlock x:Name="KeyStatusText" VerticalAlignment="Center" Style="{StaticResource CardDescriptionStyle}" />
                                 </StackPanel>
@@ -420,8 +412,11 @@
                                 <TextBlock Text="用于对话与空闲问候的模型名；可以从服务商拉取列表，也可以手动填写。" Style="{StaticResource CardDescriptionStyle}" />
                                 <TextBox x:Name="DeepSeekModel" />
                                 <StackPanel Orientation="Horizontal" Spacing="8">
-                                    <Button Content="拉取模型列表" Click="OnListModelsClick" />
-                                    <ComboBox x:Name="ModelCombo" MinWidth="240" Visibility="Collapsed"
+                                    <Button x:Name="ListModelsButton" Content="拉取模型列表" Click="OnListModelsClick" />
+                                    <TextBlock x:Name="ModelEmptyHint" VerticalAlignment="Center"
+                                               Text="还没有模型列表：点「拉取模型列表」，或直接填写模型名。"
+                                               Style="{StaticResource CardDescriptionStyle}" />
+                                    <ComboBox x:Name="ModelCombo" Style="{StaticResource SettingsComboBoxStyle}" Visibility="Collapsed"
                                               PlaceholderText="选择模型" SelectionChanged="OnModelComboChanged" />
                                 </StackPanel>
                                 <TextBlock x:Name="ModelFetchStatus" Visibility="Collapsed" TextWrapping="Wrap"
@@ -444,8 +439,8 @@
                                             <TextBlock Text="超时（秒）" Style="{StaticResource CardHeaderStyle}" />
                                             <TextBlock Text="单次请求的最长等待时间。" Style="{StaticResource CardDescriptionStyle}" />
                                         </StackPanel>
-                                        <NumberBox Grid.Column="1" x:Name="DeepSeekTimeout" Minimum="1" Maximum="600"
-                                                   MinWidth="120" VerticalAlignment="Center" />
+                                        <NumberBox Grid.Column="1" x:Name="DeepSeekTimeout" Style="{StaticResource SettingsNumberBoxStyle}" Minimum="1" Maximum="600"
+                                                   />
                                     </Grid>
                                 </Border>
                                 <Border Style="{StaticResource SettingsCardStyle}">
@@ -454,8 +449,8 @@
                                             <TextBlock Text="最大 token" Style="{StaticResource CardHeaderStyle}" />
                                             <TextBlock Text="对话回复的长度上限。" Style="{StaticResource CardDescriptionStyle}" />
                                         </StackPanel>
-                                        <NumberBox Grid.Column="1" x:Name="DeepSeekMaxTokens" Minimum="16" Maximum="4000"
-                                                   MinWidth="120" VerticalAlignment="Center" />
+                                        <NumberBox Grid.Column="1" x:Name="DeepSeekMaxTokens" Style="{StaticResource SettingsNumberBoxStyle}" Minimum="16" Maximum="4000"
+                                                   />
                                     </Grid>
                                 </Border>
                                 <Border Style="{StaticResource SettingsCardStyle}">
@@ -464,8 +459,8 @@
                                             <TextBlock Text="温度" Style="{StaticResource CardHeaderStyle}" />
                                             <TextBlock Text="越高越随机；0.7 左右比较自然。" Style="{StaticResource CardDescriptionStyle}" />
                                         </StackPanel>
-                                        <NumberBox Grid.Column="1" x:Name="DeepSeekTemperature" Minimum="0" Maximum="2"
-                                                   SmallChange="0.1" MinWidth="120" VerticalAlignment="Center"
+                                        <NumberBox Grid.Column="1" x:Name="DeepSeekTemperature" Style="{StaticResource SettingsNumberBoxStyle}" Minimum="0" Maximum="2"
+                                                   SmallChange="0.1"
                                                    />
                                     </Grid>
                                 </Border>
@@ -475,7 +470,7 @@
                                             <TextBlock Text="禁用思考模式" Style="{StaticResource CardHeaderStyle}" />
                                             <TextBlock Text="关闭思考链以缩短延迟，适合短问候。" Style="{StaticResource CardDescriptionStyle}" />
                                         </StackPanel>
-                                        <ToggleSwitch Grid.Column="1" x:Name="DeepSeekThinkingDisabled" VerticalAlignment="Center"
+                                        <ToggleSwitch Style="{StaticResource SettingsToggleStyle}" Grid.Column="1" x:Name="DeepSeekThinkingDisabled" VerticalAlignment="Center"
                                                       Visibility="Collapsed" />
                                     </Grid>
                                 </Border>
@@ -500,7 +495,7 @@
                                     <TextBlock Text="开机自启动" Style="{StaticResource CardHeaderStyle}" />
                                     <TextBlock Text="登录 Windows 后自动启动 Petsona（HKCU Run）。" Style="{StaticResource CardDescriptionStyle}" />
                                 </StackPanel>
-                                <ToggleSwitch Grid.Column="1" x:Name="AutostartToggle" VerticalAlignment="Center"
+                                <ToggleSwitch Style="{StaticResource SettingsToggleStyle}" Grid.Column="1" x:Name="AutostartToggle" VerticalAlignment="Center"
                                               Toggled="OnAutostartToggled" />
                             </Grid>
                         </Border>
@@ -540,7 +535,7 @@
             </ScrollViewer>
         </NavigationView>
 
-        <Border Grid.Row="1" Padding="16,8" BorderThickness="0,1,0,0"
+        <Border x:Name="StatusBar" Grid.Row="1" Padding="16,8" BorderThickness="0,1,0,0"
                 BorderBrush="{ThemeResource DividerStrokeColorDefaultBrush}"
                 Background="{ThemeResource LayerFillColorDefaultBrush}">
             <TextBlock x:Name="StatusText" Text="正在加载…" Opacity="0.8" TextWrapping="Wrap" />

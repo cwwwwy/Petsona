@@ -73,7 +73,7 @@ public sealed partial class SettingsWindow : Window
     {
         _engine = engine;
         InitializeComponent();
-        AppWindow.Resize(new Windows.Graphics.SizeInt32(1000, 720));
+        AppWindow.Resize(ClampToWorkArea(1000, 840));
         _pages = new Dictionary<string, StackPanel>
         {
             ["pets"] = PagePets,
@@ -135,6 +135,26 @@ public sealed partial class SettingsWindow : Window
 
         ProviderCombo.ItemsSource = ProviderPresets.Select(preset => preset.Label).ToList();
         ApplyRequestedPage();
+        ApplyRequestedTheme();
+        // Re-assert the title bar whenever the window surfaces: the system theme
+        // may have changed while it was closed.
+        Activated += (_, _) => ApplyTitleBarTheme();
+        // Live switch: ActualThemeChanged fires when Windows flips dark/light
+        // while the window is open (the client area follows by itself, the DWM
+        // frame does not).
+        RootPanel.ActualThemeChanged += (_, _) => ApplyTitleBarTheme();
+
+        // Esc closes the window; an open ContentDialog handles Esc itself first.
+        var escape = new Microsoft.UI.Xaml.Input.KeyboardAccelerator
+        {
+            Key = Windows.System.VirtualKey.Escape,
+        };
+        escape.Invoked += (_, args) =>
+        {
+            args.Handled = true;
+            Close();
+        };
+        RootPanel.KeyboardAccelerators.Add(escape);
 
         AboutVersionText.Text = $"版本 {AppVersion()} · 原生前端（WinUI 3 + Win32）";
 
@@ -167,6 +187,64 @@ public sealed partial class SettingsWindow : Window
                 return;
             }
         }
+    }
+
+    /// <summary>
+    /// The default size has to fit the monitor work area: a fixed 840 px tall
+    /// window hangs off the bottom on a 1366×768 screen (review finding R2).
+    /// </summary>
+    private Windows.Graphics.SizeInt32 ClampToWorkArea(int width, int height)
+    {
+        var area = Microsoft.UI.Windowing.DisplayArea.GetFromWindowId(
+            AppWindow.Id,
+            Microsoft.UI.Windowing.DisplayAreaFallback.Nearest);
+        if (area is null)
+        {
+            return new Windows.Graphics.SizeInt32(width, height);
+        }
+
+        var work = area.WorkArea;
+        var maxWidth = Math.Max(720, work.Width - 80);
+        var maxHeight = Math.Max(520, work.Height - 80);
+        return new Windows.Graphics.SizeInt32(
+            Math.Min(width, maxWidth),
+            Math.Min(height, maxHeight));
+    }
+
+    /// <summary>
+    /// Diagnostics hook for screenshots: `PETSONA_SETTINGS_THEME=dark|light`
+    /// forces the window theme instead of following the system.
+    /// </summary>
+    private static ElementTheme RequestedElementTheme()
+    {
+        var requested = Environment.GetEnvironmentVariable("PETSONA_SETTINGS_THEME");
+        if (string.IsNullOrWhiteSpace(requested))
+        {
+            return ElementTheme.Default;
+        }
+
+        return requested.Equals("dark", StringComparison.OrdinalIgnoreCase)
+            ? ElementTheme.Dark
+            : ElementTheme.Light;
+    }
+
+    private void ApplyRequestedTheme()
+    {
+        var theme = RequestedElementTheme();
+        if (theme == ElementTheme.Default)
+        {
+            return;
+        }
+
+        RootPanel.RequestedTheme = theme;
+    }
+
+    /// <summary>The client area can be dark while the DWM frame stays light.</summary>
+    private void ApplyTitleBarTheme()
+    {
+        Native.WindowTheme.Apply(
+            WinRT.Interop.WindowNative.GetWindowHandle(this),
+            RequestedElementTheme());
     }
 
     /// <summary>Give the settings surface keyboard focus once it is foreground.</summary>
@@ -203,6 +281,8 @@ public sealed partial class SettingsWindow : Window
         if (codexJson != _lastCodexJson)
         {
             _lastCodexJson = codexJson;
+            var codexEntries = Parse<List<PetEntry>>(codexJson) ?? [];
+            CodexEmptyHint.Visibility = codexEntries.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
             _ = ReloadCodexAsync(codexJson);
         }
 
@@ -221,6 +301,7 @@ public sealed partial class SettingsWindow : Window
             _suppressEvents = true;
             ModelCombo.ItemsSource = models;
             ModelCombo.Visibility = models.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
+            ModelEmptyHint.Visibility = models.Count > 0 ? Visibility.Collapsed : Visibility.Visible;
             _suppressEvents = false;
         }
 
@@ -228,7 +309,10 @@ public sealed partial class SettingsWindow : Window
         if (memoryJson != _lastMemoryJson)
         {
             _lastMemoryJson = memoryJson;
-            FactsList.ItemsSource = ParseMemoryFacts(memoryJson);
+            var facts = ParseMemoryFacts(memoryJson);
+            FactsList.ItemsSource = facts;
+            FactsEmptyHint.Visibility = facts.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
+            UpdateMemoryActionState(memoryJson);
             if (!_formsLoaded)
             {
                 _formsLoaded = true;
@@ -258,9 +342,11 @@ public sealed partial class SettingsWindow : Window
         }
 
         var status = _engine.Text(PetsonaTextField.Status);
-        StatusText.Text = string.IsNullOrEmpty(status)
-            ? "选择要使用的宠物，或导入新的宠物包。"
-            : status;
+        UpdateModelFetchButton(status);
+        // The bar is for action feedback, not for background state: the worker
+        // also reports things like "状态服务已关闭" that the user cannot act on.
+        StatusText.Text = status;
+        StatusBar.Visibility = IsUserFacingStatus(status) ? Visibility.Visible : Visibility.Collapsed;
         UpdateModelFetchStatus(status);
     }
 
@@ -361,10 +447,29 @@ public sealed partial class SettingsWindow : Window
 
     private void OnPetSelectionChanged(object sender, SelectionChangedEventArgs e)
     {
+        UpdatePetActionState();
         if (!_suppressEvents && PetList.SelectedItem is PetListItem item)
         {
             _engine.Send(PetsonaCommandKind.SelectPet, text: item.Id);
         }
+    }
+
+    /// <summary>
+    /// Export/Delete only make sense with a selection, and an empty library gets
+    /// a hint instead of a blank list (polish step 3.1).
+    /// </summary>
+    private void UpdatePetActionState()
+    {
+        if (PetList is null || ExportPetButton is null || DeletePetButton is null)
+        {
+            return;
+        }
+
+        var hasPets = PetList.Items.Count > 0;
+        PetEmptyHint.Visibility = hasPets ? Visibility.Collapsed : Visibility.Visible;
+        var selected = PetList.SelectedItem is PetListItem;
+        ExportPetButton.IsEnabled = selected;
+        DeletePetButton.IsEnabled = selected;
     }
 
     private async Task ReloadPetsAsync(string json)
@@ -382,6 +487,7 @@ public sealed partial class SettingsWindow : Window
         }
 
         PetList.ItemsSource = items;
+        UpdatePetActionState();
     }
 
     private async Task ReloadCodexAsync(string json)
@@ -652,6 +758,31 @@ public sealed partial class SettingsWindow : Window
             : "sk-...";
     }
 
+    /// Background bookkeeping that should not clutter the status bar.
+    private static readonly string[] QuietStatuses =
+    [
+        "",
+        "状态服务已关闭",
+        "状态协议已启动",
+        "尚未导入宠物",
+    ];
+
+    private static bool IsUserFacingStatus(string status)
+    {
+        if (status.Length == 0)
+        {
+            return false;
+        }
+
+        // "状态协议已监听 http://…" is also background noise.
+        if (status.StartsWith("状态协议已监听", StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        return !QuietStatuses.Contains(status);
+    }
+
     /// A failed model fetch must be visible where the user clicked, not only in
     /// the window's status bar (W19 feedback).
     private void UpdateModelFetchStatus(string status)
@@ -673,6 +804,38 @@ public sealed partial class SettingsWindow : Window
         {
             ModelFetchStatus.Visibility = Visibility.Collapsed;
         }
+    }
+
+    /// <summary>While the worker is fetching models the button says so and is off.</summary>
+    private void UpdateModelFetchButton(string status)
+    {
+        if (ListModelsButton is null)
+        {
+            return;
+        }
+
+        var busy = status.StartsWith("正在拉取", StringComparison.Ordinal);
+        ListModelsButton.IsEnabled = !busy;
+        ListModelsButton.Content = busy ? "正在拉取…" : "拉取模型列表";
+    }
+
+    /// <summary>Clear buttons only make sense when there is something to clear.</summary>
+    private void UpdateMemoryActionState(string memoryJson)
+    {
+        if (ClearFactsButton is null || ClearEventsButton is null || ClearMemoryButton is null)
+        {
+            return;
+        }
+
+        using var document = ParseDocument(memoryJson);
+        var facts = document is not null && document.RootElement.TryGetProperty("facts", out var f) &&
+                    f.ValueKind == JsonValueKind.Array ? f.GetArrayLength() : 0;
+        var events = document is not null && document.RootElement.TryGetProperty("events", out var e) &&
+                     e.ValueKind == JsonValueKind.Array ? e.GetArrayLength() : 0;
+
+        ClearFactsButton.IsEnabled = facts > 0;
+        ClearEventsButton.IsEnabled = events > 0;
+        ClearMemoryButton.IsEnabled = facts > 0 || events > 0;
     }
 
     private void OnListModelsClick(object sender, RoutedEventArgs e)
@@ -767,7 +930,7 @@ public sealed partial class SettingsWindow : Window
 
     private async void OnResetPersonaClick(object sender, RoutedEventArgs e)
     {
-        if (await ConfirmAsync("重置说话方式", "这会恢复内置的语气、emoji 与提示词，当前宠物的记忆不受影响。确定继续吗？"))
+        if (await ConfirmAsync("重置人格", "这会恢复内置的语气、emoji 与提示词，当前宠物的记忆不受影响。确定继续吗？"))
         {
             _engine.Send(PetsonaCommandKind.ResetPersona);
             _lastPersonasJson = string.Empty;
@@ -796,7 +959,7 @@ public sealed partial class SettingsWindow : Window
 
         var picker = new FileSavePicker();
         picker.SuggestedFileName = id;
-        picker.FileTypeChoices.Add("说话方式 JSON", [".json"]);
+        picker.FileTypeChoices.Add("人格 JSON", [".json"]);
         Initialize(picker);
         var file = await picker.PickSaveFileAsync();
         if (file is not null)
@@ -855,6 +1018,11 @@ public sealed partial class SettingsWindow : Window
     /// it in place instead of creating a duplicate (REQ-S15).
     private void OnFactSelectionChanged(object sender, SelectionChangedEventArgs e)
     {
+        if (ForgetFactButton is not null)
+        {
+            ForgetFactButton.IsEnabled = FactsList.SelectedItem is FactEntry;
+        }
+
         if (_suppressEvents || FactsList.SelectedItem is not FactEntry entry)
         {
             return;

@@ -1,0 +1,110 @@
+<!--
+    Petsona design tokens (settings-consolidation polish step 3.1).
+
+    Every settings surface pulls spacing, type and control sizes from here so a
+    page never hard-codes its own numbers. Values follow the Windows 11 /
+    Fluent settings look: a 4 px spacing rhythm, 15/14/14/12 type scale and
+    4 px card corners.
+-->
+<ResourceDictionary
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+
+    <!-- Spacing: a 4 px rhythm (XS=4, S=8, M=12, L=16, XL=24) -->
+    <x:Double x:Key="SpaceXS">4</x:Double>
+    <x:Double x:Key="SpaceS">8</x:Double>
+    <x:Double x:Key="SpaceM">12</x:Double>
+    <x:Double x:Key="SpaceL">16</x:Double>
+    <x:Double x:Key="SpaceXL">24</x:Double>
+
+    <!-- Type scale -->
+    <x:Double x:Key="TextSectionSize">15</x:Double>
+    <x:Double x:Key="TextCardSize">14</x:Double>
+    <x:Double x:Key="TextBodySize">14</x:Double>
+    <x:Double x:Key="TextCaptionSize">12</x:Double>
+    <x:Double x:Key="TextCaptionOpacity">0.6</x:Double>
+
+    <!-- Containers -->
+    <CornerRadius x:Key="CardCorner">4</CornerRadius>
+    <Thickness x:Key="CardPadding">16,12</Thickness>
+    <Thickness x:Key="CardMargin">0,0,0,8</Thickness>
+    <Thickness x:Key="SectionHeaderMargin">0,16,0,8</Thickness>
+    <x:Double x:Key="ContentMaxWidth">1000</x:Double>
+    <x:Double x:Key="ContentMinWidth">560</x:Double>
+
+    <!-- Controls -->
+    <x:Double x:Key="NumberBoxWidth">140</x:Double>
+    <x:Double x:Key="ComboBoxWidth">220</x:Double>
+    <x:Double x:Key="SliderWidth">220</x:Double>
+    <x:Double x:Key="PaneWidth">200</x:Double>
+
+    <!-- Card / type styles built from the tokens above -->
+    <Style x:Key="SettingsCardStyle" TargetType="Border">
+        <Setter Property="Background" Value="{ThemeResource CardBackgroundFillColorDefaultBrush}" />
+        <Setter Property="BorderBrush" Value="{ThemeResource CardStrokeColorDefaultBrush}" />
+        <Setter Property="BorderThickness" Value="1" />
+        <Setter Property="CornerRadius" Value="{StaticResource CardCorner}" />
+        <Setter Property="Padding" Value="{StaticResource CardPadding}" />
+        <Setter Property="Margin" Value="{StaticResource CardMargin}" />
+    </Style>
+
+    <Style x:Key="CardHeaderStyle" TargetType="TextBlock">
+        <Setter Property="FontWeight" Value="SemiBold" />
+        <Setter Property="FontSize" Value="{StaticResource TextCardSize}" />
+        <Setter Property="TextWrapping" Value="Wrap" />
+    </Style>
+
+    <Style x:Key="CardDescriptionStyle" TargetType="TextBlock">
+        <Setter Property="Opacity" Value="{StaticResource TextCaptionOpacity}" />
+        <Setter Property="FontSize" Value="{StaticResource TextCaptionSize}" />
+        <Setter Property="TextWrapping" Value="Wrap" />
+    </Style>
+
+    <Style x:Key="SectionHeaderStyle" TargetType="TextBlock">
+        <Setter Property="FontWeight" Value="SemiBold" />
+        <Setter Property="FontSize" Value="{StaticResource TextSectionSize}" />
+        <Setter Property="Margin" Value="{StaticResource SectionHeaderMargin}" />
+    </Style>
+
+    <!-- Right-aligned controls keep one width across the page -->
+    <Style x:Key="SettingsNumberBoxStyle" TargetType="NumberBox">
+        <Setter Property="MinWidth" Value="{StaticResource NumberBoxWidth}" />
+        <Setter Property="VerticalAlignment" Value="Center" />
+    </Style>
+
+    <Style x:Key="SettingsComboBoxStyle" TargetType="ComboBox">
+        <Setter Property="MinWidth" Value="{StaticResource ComboBoxWidth}" />
+        <Setter Property="VerticalAlignment" Value="Center" />
+    </Style>
+
+    <!-- Danger actions (delete / clear) read as critical without shouting -->
+    <Style x:Key="DangerButtonStyle" TargetType="Button" BasedOn="{StaticResource DefaultButtonStyle}">
+        <Setter Property="Foreground" Value="{ThemeResource SystemFillColorCriticalBrush}" />
+    </Style>
+
+    <!-- One accent action per card: the thing that commits something new -->
+    <Style x:Key="PrimaryButtonStyle" TargetType="Button" BasedOn="{StaticResource AccentButtonStyle}" />
+
+    <!--
+        A switch inside a card already has a header, so the on/off text is noise.
+        MinWidth matters: the default ToggleSwitch reserves ~154 px for that label,
+        which left the switch floating ~120 px away from the right edge instead of
+        lining up with the NumberBox/ComboBox column (acceptance 2026-09-22).
+    -->
+    <Style x:Key="SettingsToggleStyle" TargetType="ToggleSwitch">
+        <Setter Property="OnContent" Value="" />
+        <Setter Property="OffContent" Value="" />
+        <Setter Property="HorizontalAlignment" Value="Right" />
+        <Setter Property="VerticalAlignment" Value="Center" />
+        <!--
+            Fixed width: the default template reserves ~154 px for the (empty)
+            on/off label, which left the switch ~110 px away from the card edge.
+            Right-to-left flow would fix the position but mirrors the control, so
+            the knob ends up on the wrong side when the switch is on — clamping
+            the width keeps the native left-to-right animation instead.
+        -->
+        <Setter Property="MinWidth" Value="0" />
+        <Setter Property="Width" Value="48" />
+        <Setter Property="Padding" Value="0" />
+    </Style>
+</ResourceDictionary>

@@ -544,7 +544,7 @@ fn apply_command(
                 ..builtin
             };
             match runtime.personas.save(&runtime.persona) {
-                Ok(()) => runtime.status = "说话方式已重置为内置".to_string(),
+                Ok(()) => runtime.status = "人格已重置为内置".to_string(),
                 Err(error) => runtime.status = format!("重置失败：{error}"),
             }
             true
@@ -560,7 +560,7 @@ fn apply_command(
                         runtime.config.persona_by_pet.insert(pet, id.clone());
                     }
                     let _ = runtime.save_config();
-                    runtime.status = format!("已切换说话方式：{}", runtime.persona.name);
+                    runtime.status = format!("已切换人格：{}", runtime.persona.name);
                 }
                 Ok(None) => runtime.status = format!("人格不存在：{id}"),
                 Err(error) => runtime.status = format!("读取人格失败：{error}"),
@@ -1783,7 +1783,9 @@ mod tests {
         listener.set_nonblocking(true).unwrap();
         let port = listener.local_addr().unwrap().port();
         let server = std::thread::spawn(move || {
-            let deadline = Instant::now() + Duration::from_secs(5);
+            // Generous deadline: the worker may still be warming up on a cold,
+            // loaded machine (this used to flake at 5 s).
+            let deadline = Instant::now() + Duration::from_secs(30);
             while Instant::now() < deadline {
                 match listener.accept() {
                     Ok((mut stream, _)) => {

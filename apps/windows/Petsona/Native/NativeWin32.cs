@@ -277,6 +277,9 @@ internal static unsafe partial class NativeWin32
     [LibraryImport("user32.dll", EntryPoint = "LoadIconW", SetLastError = true)]
     internal static partial nint LoadIconW(nint hInstance, nint name);
 
+    [LibraryImport("dwmapi.dll", EntryPoint = "DwmSetWindowAttribute")]
+    internal static partial int DwmSetWindowAttribute(nint hwnd, uint attribute, void* value, int size);
+
     [LibraryImport("user32.dll", EntryPoint = "SendMessageW")]
     internal static partial nint SendMessageW(nint hWnd, uint message, nuint wParam, nint lParam);
 
