@@ -27,6 +27,8 @@ jobs:
         run: bash scripts/verify-macos-all.sh
 
       - name: Package app bundle
+        env:
+          PETSONA_INCLUDE_ACCEPTANCE_PACKAGE: "0"
         run: |
           version="${GITHUB_REF_NAME:-}"
           version="${version#macos-v}"
@@ -48,5 +50,8 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: Petsona-macos-${{ runner.arch }}-unsigned
-          path: dist/
+          path: |
+            dist/Petsona.app/
+            dist/Petsona-macos-*.zip
+            !dist/*-acceptance.zip
           if-no-files-found: error

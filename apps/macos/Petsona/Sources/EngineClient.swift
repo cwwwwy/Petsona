@@ -30,6 +30,12 @@ final class EngineClient: ObservableObject {
         }
     }
 
+    func shutdown() {
+        guard let handle else { return }
+        petsona_engine_destroy(handle)
+        self.handle = nil
+    }
+
     deinit {
         if let handle {
             petsona_engine_destroy(handle)

@@ -314,3 +314,60 @@ E-07 的 xcresult 摘要在上一只读审查中因 TestReport 临时写入权�
 | E-25d | 最终 dist 交付包 | `bash scripts/package-macos.sh dist`；`PETSONA_NATIVE_APP=dist/Petsona.app PETSONA_SMOKE_STATE_PORT=17972 PETSONA_SMOKE_HOOK_PORT=17973 bash scripts/macos-smoke.sh` | 两条命令均 exit 0；`dist/Petsona.app` 与 `dist/Petsona-macos-arm64.zip` 刷新，dist smoke 7/7；包仍明确为未签名 |
 
 阶段五结论：发布链路代码和未签名交付包自动验证通过；真实 Developer ID 签名、公证、目标机器安装仍待凭据与人工验收。旧入口清理继续等待 REQ-16，不因本阶段自动门禁通过而提前删除。未执行 Git add/commit/push。
+
+### 8.19 macOS 最新共享设置改动门禁修复（2026-09-22）
+
+- 接手 HEAD：`2e7c383` / `main`，开始时工作区干净；OS macOS 27.0、arm64。近期共享设置/人格改动之前没有新的 Mac 完整门禁证据。
+- 首轮门禁的受限执行失败于 Rust 状态服务测试绑定 `127.0.0.1:0`（Operation not permitted）；获得本机回环权限后继续验证，发现如下真实测试/编译问题：
+  1. FFI/runtime 测试夹具通过启动路径检查真实系统 Keychain，违反凭据隔离；workspace 顺序下 worker 未及时 ready。夹具现在使用专用假环境凭据，避免访问用户 Keychain / Credential Manager。
+  2. FFI invalid-command 测试从运行时 `TEXT_ERROR` 读取线程局部 ABI 错误；按 ABI 契约改用 `petsona_last_error_copy` 并验证错误文案。FFI create 测试等待 ready 最长 5 秒，超时会销毁句柄并明确失败。
+  3. `SettingsView.swift` 仍解码已从共享 `PersonaTraits` 删除的 `language` 字段；移除过时投影赋值。模型服务、外观与交互、系统页各返回多个 `Section`，补上 `@ViewBuilder`。
+  4. `NativeLifecycleTests` 仍断言旧分区名“DeepSeek / 启动”；更新为当前“模型服务 / 系统”。Swift EngineClient 测试使用测试专属 API key 环境变量，避免触碰系统凭据。
+
+| 证据ID | 目标 | 命令 | 结果 |
+|---|---|---|---|
+| E-26a | 初始完整门禁，受限执行 | `bash scripts/verify-macos-all.sh > .scratch/current-macos-gate.log 2>&1` | exit 101；core 状态服务 5 项因沙箱禁止 loopback bind 失败；同名日志随后被最终重跑覆盖 |
+| E-26b | 定位 FFI/runtime 测试契约与隔离问题 | `cargo test --workspace --locked`（允许 loopback） | 初轮 exit 101：core 70/70；FFI 因错误读取 ABI 错误文本、未隔离 OS 凭据而失败，runtime 测试同样受真实 Keychain 查询影响 |
+| E-26c | Swift 设置页首轮原生构建 | `bash scripts/verify-macos-all.sh`（允许 loopback） | exit 65；Release 编译发现过时 `language` 解码与多个 Section 缺少 `@ViewBuilder`；失败详情记录于本轮工具输出 |
+| E-26d | 修复后 Rust workspace | `cargo fmt --all -- --check && cargo test --workspace --locked`（允许 loopback） | exit 0；core 70/70、FFI 4/4、runtime 13/13；日志 `.scratch/current-workspace-tests.log` |
+| E-26e | 修复后目标 XCTest | `xcodebuild -quiet -project apps/macos/Petsona.xcodeproj -scheme Petsona -configuration Debug -destination 'platform=macOS,arch=arm64' -derivedDataPath .scratch/current-native-tests -only-testing:PetsonaTests/EngineClientTests -only-testing:PetsonaTests/NativeLifecycleTests CODE_SIGNING_ALLOWED=NO test` | exit 0；两个目标测试类通过 |
+| E-26f | 最新完整 macOS 门禁 | `bash scripts/verify-macos-all.sh > .scratch/current-macos-gate.log 2>&1`（允许 loopback） | exit 0；XCTest 13/13、native smoke 7/7、Release build、静态依赖、arm64、app/zip/LaunchAgent 包结构检查全通过；日志 `.scratch/current-macos-gate.log` |
+
+本次仅关闭自动编译/测试/打包门禁；M-01～M-06 的桌面交互、IME、Keychain/LaunchAgent 登录行为、CPU 长测和真实签名/公证仍需人工或发布凭据。未执行 Git add/commit/push。
+
+### 8.20 独立代码审查反馈修复：宿主隔离、无 Key 路径与设置文案（2026-09-22）
+
+- 复核确认此前 E-26f 的“测试隔离”结论不完整：宿主测试会先于测试方法运行 `AppDelegate`，其默认 `EngineClient()` 曾写入真实用户 `config.json` / `logs/petsona.log`。只在 `makeIsolatedHome()` 注入假凭据并不能隔离宿主。
+- 已修正为 XcodeGen TestAction pre-action 在 app host 启动前创建 `.scratch/macos-native-tests/host-home/config.json`（关闭状态服务、设置测试 Key 环境名）并放置 active marker；Debug `AppDelegate` 只有检测到 marker / XCTest 信号才从该临时 home 创建引擎，并跳过宠物窗、状态栏与 timer 初始化。退出时先销毁 runtime，再清理隔离 home。scheme post-action 清 marker；工程 spec 与生成 scheme 已同步。
+- `verify-macos-all.sh` 在 XCTest 前后比对默认用户目录下 `config.json`、`logs/petsona.log`、`petsona.lock` 的存在状态与 inode/mtime/size，并检查 `host-started` marker 指向指定临时 home。守卫失败即令门禁失败。
+- 凭据状态增加 `api_key_present_with_store` 注入点，Core 用 MemorySecretStore 覆盖“无凭据/有凭据”；RuntimeEngine 可注入 key-presence resolver。无 Key 主动问候不再尝试构造模型客户端/查询真实 Keychain，而是直接走本地固定问候；新增 runtime 集成测试确认 `keyConfigured=false` 投影、气泡问候回退；已有配置路径也断言 `keyConfigured=true`。
+- macOS 设置视图的 DeepSeek 凭据标签抽为可测投影，XCTest 覆盖“已配置 / 未配置”；Mac 与 Windows 高级提示词说明同时去除已删除的语言设置描述。
+- 用户提供的审查报告确认上次门禁曾写入真实文件：`~/Library/Application Support/Petsona/config.json` mtime 为 2026-09-22 22:04:55，`logs/petsona.log` 为 22:04:56；随后修复后的完整门禁指纹前后相同，mtime 未再变化。没有运行前备份，未擅自回滚或覆盖真实配置；用户可自行检查当前配置内容。
+
+| 证据ID | 目标 | 命令 | 结果 |
+|---|---|---|---|
+| E-28a | 初始 XCTest Host 断言探针 | `xcodebuild ... -only-testing:PetsonaTests/EngineClientTests -only-testing:PetsonaTests/NativeLifecycleTests ... test` | exit 65；测试 bundle 无法通过 `NSApplication.shared.delegate` 读取宿主 delegate；此脆弱断言已移除，改由 scheme pre-action 启动 marker 与脚本 home 指纹守卫覆盖；报告 `.scratch/review-followup-native-tests/Logs/Test/Test-Petsona-2026.09.22_23-12-54-+0800.xcresult` |
+| E-28b | Rust 注入凭据与 no-key 回退 | `cargo fmt --all -- --check && cargo test -p petsona-core -p petsona-runtime --locked`（允许 loopback） | exit 0；core 71/71、runtime 14/14；`.scratch/review-followup-rust-tests.log` |
+| E-28c | XcodeGen 工程同步 | `xcodegen generate --spec apps/macos/project.yml --project apps/macos` | exit 0；XcodeGen 2.46.0；TestAction pre/post actions 已生成 |
+| E-28d | 最新完整 Mac 门禁 | `bash scripts/verify-macos-all.sh > .scratch/review-followup-macos-gate.log 2>&1`（允许 loopback） | exit 0；core 71/71、FFI 4/4、runtime 14/14、XCTest 14/14、smoke 7/7、静态链接/arm64/包结构通过；真实用户 config/log/lock 指纹未变化；日志 `.scratch/review-followup-macos-gate.log` |
+
+本次完成了 Mac 侧自动验收修复，但共享 runtime 改动尚未在 Windows 实机运行 `verify-windows.ps1 -Full`；Windows 发布前必须补该回归。M-01～M-06 视觉 / IME / 系统集成验收和签名/公证仍待完成。没有回滚前次写入真实用户配置的操作，也没有执行 Git add/commit/push。
+
+### 历史记录：代码审查修复中间摘要（最终状态见 E-28d）
+
+- 该阶段性摘要已合并至上方 8.20；最终改动与证据以 E-28a～E-28d 为准。
+
+### 8.21 macOS 整体验收目录与固定隔离数据（2026-09-23）
+
+- 用户确认人工验收包采用整体文件夹，不把可写数据放进 `.app`。本机 `scripts/package-macos.sh` 默认同时生成常规应用包和 `Petsona-macos-<arch>-acceptance/`，后者包含 `Petsona.app`、固定 `acceptance-data/` 与启动说明；重复打包更新 app 但保留本机验收数据。对应 zip 始终以干净初始数据暂存，不会把本机导入的宠物/设置打包带出。
+- 验收 home 初始无内置宠物、关闭状态服务并预留 17873；启动命令把 LaunchAgent plist 重定向到验收目录，避免更改日常自启项（因此不测试真实登录自启）。钥匙串仍使用正式服务 `com.petsona.desktop`，说明文件明确禁止在该包中保存/清除 API Key。
+- 常规 bundle 在最终写入版本与图标后进行 ad-hoc 签名并验证；这不是 Developer ID 签名或公证。Release workflow 设 `PETSONA_INCLUDE_ACCEPTANCE_PACKAGE=0`，仅上传常规发布产物。
+
+| 证据 ID | 目标 | 命令 | 结果 |
+|---|---|---|---|
+| E-29a | 脚本/补丁静态检查 | `bash -n scripts/package-macos.sh scripts/verify-macos-all.sh && git diff --check` | exit 0；脚本语法与 diff 空白检查通过 |
+| E-29b | 完整 macOS 门禁（arm64） | `bash scripts/verify-macos-all.sh > .scratch/acceptance-folder-macos-gate.log 2>&1`（允许 loopback） | exit 0；core 71、FFI 4、runtime 14、XCTest 14/14、原始 build app smoke 7/7；包结构、有效签名、重复打包保留本机验收数据、zip 不包含本机数据、release-only 模式不生成验收包均通过。日志 `.scratch/acceptance-folder-macos-gate.log` |
+| E-29c | 最终 dist 整体验收包 | `PETSONA_SKIP_BUILD=1 PETSONA_NATIVE_DERIVED_DATA=.scratch/macos-native-gates bash scripts/package-macos.sh dist` | exit 0；生成 `dist/Petsona-macos-arm64-acceptance/` 与 `.zip`，zip 可完整解压，含 `.app`、README、空宠物库与独立 config |
+| E-29d | 打包 app 独立启动 smoke | `PETSONA_NATIVE_APP=dist/Petsona-macos-arm64-acceptance/Petsona.app PETSONA_SMOKE_STATE_PORT=17972 PETSONA_SMOKE_HOOK_PORT=17973 bash scripts/macos-smoke.sh` | exit 1；直接执行时 AppKit `Abort trap: 6`。随后同一 smoke 对原始 `.scratch/macos-native-gates/Build/Products/Release/Petsona.app` 也 exit 1；`open` 对两种 bundle 均返回 `kLSNoExecutableErr`。完整门禁在稍早时点 build app smoke 曾 exit 0（7/7），当前自动化终端重复启动不稳定；原因未确认，**不能宣称人工验收包 GUI 启动已通过** |
+
+结果：整体文件夹和清洁 zip 的自动结构验收通过；交付路径 `dist/Petsona-macos-arm64-acceptance/` 已生成。用户实际 Finder/Terminal 会话启动仍待确认；钥匙串和真实登录自启也不由本包隔离。

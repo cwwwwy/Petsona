@@ -12,8 +12,10 @@
 CI 只能证明“能编译”，不能证明“能用”；**真实结论以本清单为准**。
 最小可用判定：**B1（左键）、B3（拖拽）、B5（转头）、B6（穿透）、B11（空闲 CPU）全部通过**。
 
-## 已知状态（2026-09-20）
+## 已知状态（2026-09-23）
 
+- ⚠️ 2026-09-23 已生成整体验收包 `dist/Petsona-macos-arm64-acceptance/`（应用 + 固定 `acceptance-data/`）及干净初始数据 zip；目录、签名结构、重打包保留数据、zip 解压与正式包排除检查通过。完整门禁曾通过 build app smoke 7/7；但随后从验收包和原始 Xcode Release `.app` 分别启动均出现 AppKit `Abort trap: 6`，`open` 也返回 `kLSNoExecutableErr`。因此实际 GUI 启动仍**未确认**，不将目录结构通过等同于可启动验收通过。执行证据见 [macOS 执行记录](execution/native-ui-rewrite.md) 8.21。
+- ✅ 2026-09-22 近期设置收束 / 一宠一人格共享改动和审查修复后，`bash scripts/verify-macos-all.sh` 完整通过：Rust core 71、FFI 4、runtime 14；原生 XCTest 14/14；native smoke 7/7；Release 静态依赖、arm64 与包结构检查通过。XCTest Host 使用临时 home、关闭协议端口，完整门禁确认真实用户 config / 日志 / 锁元数据未变化。证据见 [macOS 执行记录](execution/native-ui-rewrite.md) 8.20。
 - ✅ 已通过：A3、B1–B4、B6–B7；透明穿透、托盘菜单、设置聚焦、当前 Space 稳定。
 - ✅ 2026-09-17 完整 `verify-macos-all.sh` 通过；34 项 runtime smoke 含 LaunchAgent plist 开 / 关。
 - ✅ 2026-09-18 `bash scripts/verify-macos-all.sh` 通过：fmt / clippy / workspace tests（app 19、core 59、runtime 1、macOS shell 7）/ release、33 项 runtime smoke、打包结构检查。
@@ -32,12 +34,16 @@ CI 只能证明“能编译”，不能证明“能用”；**真实结论以本
 ```bash
 xcode-select --install            # 只需一次
 cargo test --workspace
-PETSONA_HOME="$HOME/.petsona-mac-test" cargo run -p petsona-shell-macos
+bash scripts/package-macos.sh
+cd "dist/Petsona-macos-$(uname -m)-acceptance" && open --env "PETSONA_HOME=$PWD/acceptance-data" --env "PETSONA_AUTOSTART_PLIST_DIR=$PWD/acceptance-data/LaunchAgents" -n "$PWD/Petsona.app"
 ```
 
 - 默认数据目录：`~/Library/Application Support/Petsona/`；日志写入 `logs/petsona.log` 和终端
   （`RUST_LOG=debug` 可调级别）。
-- 单实例锁在数据目录的 `petsona.lock`；换 `PETSONA_HOME` 才能起隔离实例。
+- 人工验收包为 `dist/Petsona-macos-<架构>-acceptance/`，包含 `Petsona.app` 与同级 `acceptance-data/`；同一目录重复打包会保留验收数据，不会每次生成新的临时目录。压缩包为 `dist/Petsona-macos-<架构>-acceptance.zip`，解压后也是完整目录。
+- 隔离 home 初始为空宠物库、关闭状态服务（端口预留 17873）；首次启动会进入空库设置，宠物只在用户手动导入后进入该验收目录。配置、日志、宠物库和单实例锁均留在 `acceptance-data/`。
+- 启动命令将 LaunchAgent plist 重定向到 `acceptance-data/LaunchAgents`，用于避免改动日常登录自启；它**不验证真实登录后自启**。macOS 钥匙串仍使用正式服务标识 `com.petsona.desktop`；在隔离包中不要保存或清除 API Key，以免影响日常应用凭据。
+- 验收结束后删除整个 `Petsona-macos-<架构>-acceptance/` 文件夹即可清理本包数据。打包脚本生成的压缩包始终使用干净初始数据，不会把已有验收记录或导入的宠物打进去。
 
 ## A. 基础回归
 
@@ -96,11 +102,13 @@ curl -XPOST http://127.0.0.1:17872/state \
 ## D. 打包 / 发布
 
 - [x] `cargo build --release` 通过；bundle 结构检查完成
-- [x] `scripts/package-macos.sh` 生成 `.app`（Info.plist、bundle id、图标、zip）
+- [x] `scripts/package-macos.sh` 生成 `.app`（Info.plist、bundle id、图标、常规 zip）；本地包 ad-hoc 签名，不含 Developer ID / 公证
+- [x] `scripts/package-macos.sh` 生成包含 `.app` + `acceptance-data/` 的整体验收目录与干净初始数据 zip
 - [x] `LSUIElement = true`，默认不显示 Dock 图标
 - [x] `scripts/install-macos-launch-agent.sh` 安装 / 卸载 LaunchAgent
 - [x] `scripts/sign-macos.sh`、`scripts/notarize-macos.sh` 流程就绪（ad-hoc 签名验证过）
 - [x] `.github/workflows/release-macos.yml` tag / 手动触发运行完整原生门禁、对最终 dist 包 smoke，并以 `unsigned` 标记产物
+- [x] Release workflow 禁止生成并上传本机验收数据包，只上传常规应用包
 - [ ] 真实 Developer ID 签名 + 公证 + 目标 Mac 实机验证
 
 > 当前发布工作流故意只生成并上传未签名产物；没有 Developer ID 证书和
@@ -108,12 +116,15 @@ curl -XPOST http://127.0.0.1:17872/state \
 
 ```bash
 ./scripts/package-macos.sh
+cd "dist/Petsona-macos-$(uname -m)-acceptance" && open --env "PETSONA_HOME=$PWD/acceptance-data" --env "PETSONA_AUTOSTART_PLIST_DIR=$PWD/acceptance-data/LaunchAgents" -n "$PWD/Petsona.app"
 ./scripts/install-macos-launch-agent.sh install dist/Petsona.app
 ./scripts/install-macos-launch-agent.sh uninstall
 
 CODESIGN_IDENTITY="Developer ID Application: ..." ./scripts/sign-macos.sh
 NOTARYTOOL_PROFILE="petsona-notary" ./scripts/notarize-macos.sh
 ```
+
+> 注意：2026-09-23 在当前自动化终端中，`open` 对原始 Release `.app` 和整体验收包都返回 `kLSNoExecutableErr`；直接 smoke 也出现 AppKit abort。尽管完整门禁此前一次运行的构建产物 smoke 7/7 通过，重复启动尚未稳定复现，故本机人工验收启动状态仍待确认。
 
 ## E. 自动化验收
 

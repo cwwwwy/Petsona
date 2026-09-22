@@ -299,14 +299,23 @@ mod tests {
         );
     }
     use std::mem::{align_of, size_of};
-    use std::time::Duration;
+    use std::sync::Once;
+    use std::time::{Duration, Instant};
+
+    const TEST_API_KEY_ENV: &str = "PETSONA_FFI_TEST_API_KEY";
+    static SET_TEST_API_KEY: Once = Once::new();
 
     fn temp_home() -> tempfile::TempDir {
+        // Runtime startup checks whether a credential is configured. Resolve
+        // that check through an isolated dummy environment variable so tests
+        // never query the user's macOS Keychain / Windows Credential Manager.
+        SET_TEST_API_KEY.call_once(|| std::env::set_var(TEST_API_KEY_ENV, "test-only-placeholder"));
         let home = tempfile::tempdir().expect("temporary home");
         let paths = petsona_core::config::AppPaths::resolve(home.path().to_path_buf());
         paths.ensure().expect("home directories");
         let mut config = petsona_core::config::AppConfig::default();
         config.state_server.enabled = false;
+        config.deepseek.api_key_env = TEST_API_KEY_ENV.to_string();
         config.save(&paths.config_file).expect("isolated config");
         home
     }
@@ -325,15 +334,24 @@ mod tests {
             unsafe { petsona_engine_create(&options, &mut handle) },
             PetsonaStatus::Ok
         );
-        for _ in 0..100 {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
             let mut snapshot = PetsonaSnapshot::default();
-            let _ = unsafe { petsona_engine_snapshot(handle, &mut snapshot) };
+            let status = unsafe { petsona_engine_snapshot(handle, &mut snapshot) };
+            assert_eq!(
+                status,
+                PetsonaStatus::Ok,
+                "engine failed before becoming ready"
+            );
             if snapshot.ready != 0 {
                 return handle;
             }
+            if Instant::now() >= deadline {
+                unsafe { petsona_engine_destroy(handle) };
+                panic!("runtime worker did not become ready within 5 seconds");
+            }
             std::thread::sleep(Duration::from_millis(5));
         }
-        handle
     }
 
     #[test]
@@ -379,9 +397,16 @@ mod tests {
             unsafe { petsona_engine_command(handle, &command) },
             PetsonaStatus::InvalidArgument
         );
-        let required =
-            petsona_engine_copy_text(handle, PetsonaTextField::Error as u32, ptr::null_mut(), 0);
+        let required = petsona_last_error_copy(ptr::null_mut(), 0);
         assert!(required > 0);
+        let mut message = vec![0; required];
+        assert_eq!(
+            petsona_last_error_copy(message.as_mut_ptr(), message.len()),
+            required
+        );
+        assert!(String::from_utf8(message)
+            .expect("last ABI error is UTF-8")
+            .contains("unknown command kind"));
         unsafe { petsona_engine_destroy(handle) };
     }
 }

@@ -257,7 +257,7 @@
                             <Expander.Header>
                                 <StackPanel Spacing="2" Padding="0,8">
                                     <TextBlock Text="高级" Style="{StaticResource CardHeaderStyle}" />
-                                    <TextBlock Text="系统提示词：模型的核心指令。语气 / emoji / 语言会由上面的设置自动追加，不需要在这里重复。"
+                                    <TextBlock Text="系统提示词：模型的核心指令。语气 / emoji 会由上面的设置自动追加，不需要在这里重复。"
                                                Style="{StaticResource CardDescriptionStyle}" />
                                 </StackPanel>
                             </Expander.Header>

@@ -18,8 +18,8 @@
 | REQ-S05 即时生效 | 已实现：删除三个「保存」按钮与处理函数，改为构造函数里逐控件挂 `ScheduleApply`（文本框 450 ms 去抖，其余立即），`_suppressEvents` 阻止回填触发；人格保存后刷新列表投影 | 通过：dotnet build + `SettingsFlowTests` 36/36（含 `UpdateGreetingConfig` 往返断言） | **2026-09-21 用户实机通过** |
 | REQ-S06 危险操作确认 | 已实现：删除宠物 / 清空记忆沿用 `ConfirmAsync`（`ContentDialog`）；覆盖导入面板保留在「宠物」页并说明后果 | 通过：编译 + 现有测试 | **2026-09-21 用户实机通过** |
 | REQ-S07 关于区 | 已实现：系统页「关于」卡片显示版本与项目主页；数据目录 / 日志目录卡片可直接打开（`PETSONA_HOME` 优先） | 通过：编译 | **2026-09-21 用户实机通过** |
-| REQ-S08 macOS 同构 | 已实现（待 Mac 编译）：`SettingsView.swift` 删除全部死字段与三个「保存」按钮，改为 `personaSignature` / `deepSeekSignature` / `memorySignature` / `greetingSignature` + 450 ms 去抖的即时生效；分区改名为「连接与问候」「系统」；新增空闲问候四项；系统页新增数据目录与关于区；`EngineClient.updateGreetingConfig` 已就位。macOS 用原生 `Form`/`Section` 分组（等价于 Windows 卡片，不引第三方样式） | 未跑（本机无 macOS 工具链） | 待 Mac：`bash scripts/verify-macos-all.sh` + 人工检查 |
-| REQ-S09 门禁 | 通过（Windows）：`verify-windows.ps1 -Full` **exit 0** —— cargo fmt/clippy/**95 项测试** + MSVC FFI DLL SHA256 守卫 + dotnet **36/36** + native smoke **25/25 ×2**（源码 + 解压包，0 SKIP）+ 打包结构检查 | E-S02/E-S06 | Windows 人工条目 W15 待用户确认；macOS 门禁待 Mac |
+| REQ-S08 macOS 同构 | 已实现：`SettingsView.swift` 删除全部死字段与三个「保存」按钮，改为 `personaSignature` / `deepSeekSignature` / `memorySignature` / `greetingSignature` + 450 ms 去抖的即时生效；分区改名为「模型服务」「系统」；新增空闲问候四项；系统页新增数据目录与关于区；`EngineClient.updateGreetingConfig` 已就位。macOS 用原生 `Form`/`Section` 分组 | 通过：2026-09-22 `verify-macos-all.sh`，见 E-28d | Mac 人工设置页检查仍待 |
+| REQ-S09 门禁 | 通过：Windows `verify-windows.ps1 -Full`（历史见 E-S02/E-S06）；macOS `verify-macos-all.sh` exit 0、XCTest 14/14、native smoke 7/7（E-28d） | E-S02/E-S06/E-28d | Windows W22/W23 与 macOS 设置页视觉/即时生效仍待人工 |
 | REQ-S10 文档 | 部分：本文件 + 计划 + `contracts/ABI.md`；`WINDOWS_VERIFICATION.md` / `MACOS_VERIFICATION.md` / `FEATURE_PARITY.md` / `AGENTS.md` 待补 | 待做 | 待做 |
 
 ## 命令证据
@@ -44,12 +44,12 @@
 
 ## 交付与接续
 
-- 实际完成范围：REQ-S01～S08 实现；REQ-S09 Windows 侧全部通过（`-Full` exit 0）；REQ-S10 部分（计划 / 执行记录 / ABI / W15 已落盘，`MACOS_VERIFICATION.md` 与 `FEATURE_PARITY.md` 待补）。
-- 未完成/失败/SKIP/人工待验：**macOS 编译与门禁**（改动只能在 Mac 上验证）；**W15 人工检查**（新设置页逐页 + 即时生效 + 空闲问候观感）；`MACOS_VERIFICATION.md` / `FEATURE_PARITY.md` 收尾（S10）。
+- 实际完成范围：REQ-S01～S08 实现；REQ-S09 Windows `-Full` 与 macOS 完整门禁均有通过证据；REQ-S10 的计划/执行记录和 Mac 验收文档已更新，功能对照表仍需整体收尾。
+- 未完成/失败/SKIP/人工待验：Windows W22/W23 设置视觉；macOS 设置页逐页、即时生效、缩放/模型/记忆体验人工检查；`FEATURE_PARITY.md` 全表状态收尾。
 - 对用户数据的影响：`persona.json` / `config.json` 不再写出已删字段，旧文件仍可加载；新增 `UpdateGreetingConfig`（ABI 命令值 36，追加式，ABI 版本仍为 3）。
-- 下一个执行者的安全接续点：在 Mac 上跑 `bash scripts/verify-macos-all.sh`，修掉可能的 Swift 编译问题（去抖 / `onChange` 签名是最可能出问题的两处），并完成 macOS 侧设置页人工检查；Windows 侧只剩 W15 人工确认。
+- 下一个执行者的安全接续点：Mac 自动门禁已通过（E-28d），接续 macOS 设置页实机验收；Windows 侧复核 W22/W23。
 - Git 操作是否发生（默认无）：无。
-- 完成判定：**未完成**（macOS 未经编译/门禁、S10 未收尾；Windows 自动门禁 + W15 人工均已通过）。
+- 完成判定：**未完成**（两端仍有设置页人工项，功能状态汇总文档未完全收尾）。
 
 ### 第二批进度（v1.1）
 
@@ -119,7 +119,7 @@
 ## 计划功能面收尾（2026-09-22）
 
 - **settings-consolidation 的功能项 S01–S17 全部实施完毕**（S11–S16 于本轮系列完成，S17 侧边栏图标 / 响应式在此前完成）。
-- 仍待办（非功能项）：**macOS 编译与门禁**（`bash scripts/verify-macos-all.sh`，本机无工具链）、**人工验收** W15–W19（设置页外观 / 缩放滑块 / 记忆页 / 服务商 / 拉取模型）、`MACOS_VERIFICATION.md` 与 `FEATURE_PARITY.md` 收尾、Windows 发布项 D1–D6 与 CI 首跑。
+- 仍待办（非功能项）：macOS 自动门禁已于 2026-09-22 通过（E-28d）；Windows W22/W23 与 macOS 设置页人工验收、`FEATURE_PARITY.md` 收尾、Windows 发布项 D1–D6 与 CI 首跑仍待办。
 
 ## 下一批（用户 2026-09-21 提出的设置页微调，已在计划 v1.1 落盘）
 
@@ -130,3 +130,15 @@
 5. 连接与问候页：新增模型供应商（DeepSeek / 自定义）——DeepSeek 预填 Base URL，填入 API Key 后可拉取模型列表（需要新的网络命令 + 异步 UI 状态；自定义走 OpenAI 兼容端点，`thinking` 字段必须按供应商门控）。
 
 遗留待办（未变）：macOS 编译与门禁（`bash scripts/verify-macos-all.sh`）、`MACOS_VERIFICATION.md` / `FEATURE_PARITY.md` 收尾。
+
+### macOS 门禁状态更新（2026-09-22）
+
+- 上方较早批次中“Mac 未编译 / 无工具链 / 门禁待跑”的状态已被后续工作覆盖。最新共享设置、人格式设置及其测试夹具已在 Mac 上通过完整门禁；先前 E-26f 为历史快照，最新证据见 2026-09-22 后续复核记录 E-28d（core 71/71、FFI 4/4、runtime 14/14、XCTest 14/14、native smoke 7/7）。
+- 人工验收仍未完成；此前的“遗留待办”仅保留为历史快照，不再代表当前自动门禁状态。
+
+### 代码审查追修（2026-09-22）
+
+- P1 XCTest 宿主隔离：TestAction pre-action 在宿主启动前创建隔离 home、关闭状态服务并写入假凭据配置；真实用户数据指纹与宿主实际 home 路径由统一门禁验证（E-28d）。
+- P2 凭据状态：新增注入式 SecretStore 测试覆盖有 Key / 无 Key；runtime 无 Key 时投影 `keyConfigured=false`，主动问候直接使用固定本地问候；Mac 状态文案覆盖“未配置”。
+- P3 设置文案：Mac / Windows 高级提示词说明删除已移除的“语言设置”描述。
+- `verify-windows.ps1 -Full` 未在 Mac 环境复跑；共享 runtime 的 no-key 问候分支需 Windows 门禁验证后才可认定双端回归完成。

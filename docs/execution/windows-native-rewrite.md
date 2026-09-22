@@ -331,3 +331,8 @@
 - 2026-09-21 人工验收进行中：首轮～第十一轮反馈均已诊断修复（见「B5 验收反馈诊断与修复」「B5 人工验收第五轮反馈与修复」「B5 人工验收第六轮反馈与修复」「B5 人工验收第七轮反馈与修复」「B5 人工验收第八轮反馈与修复」）；桌面修复版验收包位于 `Desktop\Petsona-验收-修复版\`（隔离 home `%TEMP%\petsona-acceptance2`，端口 17873），第九轮复测（2026-09-21）：W14 通过、启动速度用户确认可接受；第十轮复测：W1–W11 / W13 / W14 全部人工通过；第十一轮：CR-W2 选项 A（`action:"clear"`）实施，桌面验收包已刷新为 E-W17 构建（`petsona_ffi.dll` md5 `b203a96dfaae2618ebd6b0b6ff365e65`）。
 - Git操作是否发生（默认无）：无。
 - 完成判定及对应证据：B5 端到端门禁与打包验证通过（E-W6a～d）；第五～第十一轮修复与复测见 E-W11a～e、E-W12a～d、E-W13a～e、E-W14a～e、E-W15a～f、E-W16a～c、E-W17a～d；**W 矩阵除 W12（暂缓）外全部人工通过**；CR-W2 选项 A 的自动验证见 E-W17a～d（`-Full` 的 smoke 步骤待桌面空闲复跑）；启动性能按 CR-W1 选项 C 不改代码（E-W15d 为基线）。
+
+### 共享层审查修复待 Windows 回归（2026-09-22）
+
+- macOS 审查追修为 runtime no-key 主动问候增加了本地固定问候的快速回退；ABI 与 C# 接口未变，Rust core/runtime Mac 测试通过（见 `native-ui-rewrite` E-27c）。
+- 本次工作环境是 Mac，未运行 Windows 原生 `verify-windows.ps1 -Full`；Windows 发布前需在实体 Windows 环境复跑门禁，确认共享 runtime 行为无回归。W12 暂缓项不在本次范围内。

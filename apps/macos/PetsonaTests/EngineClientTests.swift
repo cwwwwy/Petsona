@@ -1,8 +1,11 @@
+import Darwin
 import XCTest
 @testable import Petsona
 
 @MainActor
 final class EngineClientTests: XCTestCase {
+    private let testAPIKeyEnv = "PETSONA_MACOS_TEST_API_KEY"
+
     func testEmptyHomeIsIsolatedAndBecomesReadyWithoutAPet() {
         let home = makeIsolatedHome()
         let client = EngineClient(home: home)
@@ -47,7 +50,7 @@ final class EngineClientTests: XCTestCase {
         client.updateDeepSeekConfig([
             "baseUrl": "https://example.invalid/v1",
             "model": "test-model",
-            "apiKeyEnv": "TEST_DEEPSEEK_KEY",
+            "apiKeyEnv": testAPIKeyEnv,
             "timeoutSeconds": 9,
             "maxTokens": 64,
             "temperature": 0.4,
@@ -99,7 +102,7 @@ final class EngineClientTests: XCTestCase {
             client.updateDeepSeekConfig([
                 "baseUrl": "https://example.invalid/v1",
                 "model": "persisted-model",
-                "apiKeyEnv": "PERSISTED_KEY",
+                "apiKeyEnv": testAPIKeyEnv,
                 "timeoutSeconds": 12,
                 "maxTokens": 96,
                 "temperature": 0.6,
@@ -138,12 +141,14 @@ final class EngineClientTests: XCTestCase {
     }
 
     private func makeIsolatedHome(stateServerEnabled: Bool = false) -> URL {
+        setenv(testAPIKeyEnv, "test-only-placeholder", 1)
         let home = FileManager.default.temporaryDirectory
             .appendingPathComponent("petsona-native-test-\(UUID().uuidString)", isDirectory: true)
         try! FileManager.default.createDirectory(at: home, withIntermediateDirectories: true)
-        let config = stateServerEnabled
-            ? "{\"stateServer\":{\"enabled\":true,\"port\":0}}"
-            : "{\"stateServer\":{\"enabled\":false}}"
+        let stateServer = stateServerEnabled
+            ? "\"enabled\":true,\"port\":0"
+            : "\"enabled\":false"
+        let config = "{\"stateServer\":{\(stateServer)},\"deepSeek\":{\"apiKeyEnv\":\"\(testAPIKeyEnv)\"}}"
         try! config.data(using: .utf8)!.write(to: home.appendingPathComponent("config.json"), options: .atomic)
         return home
     }

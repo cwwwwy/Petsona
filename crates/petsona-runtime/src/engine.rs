@@ -81,6 +81,18 @@ impl RuntimeEngine {
     where
         F: Fn() + Send + Sync + 'static,
     {
+        Self::spawn_with_key_presence(home, external_wake, petsona_core::deepseek::api_key_present)
+    }
+
+    fn spawn_with_key_presence<F, K>(
+        home: Option<PathBuf>,
+        external_wake: F,
+        key_presence: K,
+    ) -> Result<Self>
+    where
+        F: Fn() + Send + Sync + 'static,
+        K: Fn(&DeepSeekConfig) -> bool + Send + Sync + 'static,
+    {
         let (command_tx, command_rx) = mpsc::channel();
         let projection = Arc::new(SharedProjection {
             snapshot: RwLock::new(RuntimeSnapshot {
@@ -101,6 +113,7 @@ impl RuntimeEngine {
                     worker_tx,
                     worker_projection,
                     external_wake,
+                    key_presence,
                 )
             })
             .context("cannot spawn the Petsona runtime worker")?;
@@ -168,14 +181,17 @@ impl Drop for RuntimeEngine {
     }
 }
 
-fn run_worker(
+fn run_worker<K>(
     home: Option<PathBuf>,
     command_rx: Receiver<RuntimeCommand>,
     command_tx: Sender<RuntimeCommand>,
     projection: Arc<SharedProjection>,
     external_wake: Arc<dyn Fn() + Send + Sync>,
-) {
-    let result = load_runtime(home, &command_tx, &external_wake);
+    key_presence: K,
+) where
+    K: Fn(&DeepSeekConfig) -> bool + Send + Sync + 'static,
+{
+    let result = load_runtime(home, &command_tx, &external_wake, &key_presence);
     let (mut runtime, _instance_lock) = match result {
         Ok(value) => value,
         Err(error) => {
@@ -192,7 +208,7 @@ fn run_worker(
         match command_rx.recv_timeout(wait) {
             Ok(RuntimeCommand::Stop) => break,
             Ok(command) => {
-                if apply_command(command, &mut runtime, &command_tx) {
+                if apply_command(command, &mut runtime, &command_tx, &key_presence) {
                     tick_runtime(&mut runtime, &command_tx, &projection, &mut revision);
                 }
             }
@@ -204,11 +220,15 @@ fn run_worker(
     }
 }
 
-fn load_runtime(
+fn load_runtime<K>(
     home: Option<PathBuf>,
     command_tx: &Sender<RuntimeCommand>,
     external_wake: &Arc<dyn Fn() + Send + Sync>,
-) -> Result<(PetsonaRuntime, InstanceLock)> {
+    key_presence: &K,
+) -> Result<(PetsonaRuntime, InstanceLock)>
+where
+    K: Fn(&DeepSeekConfig) -> bool,
+{
     let paths = home.map(AppPaths::resolve).unwrap_or_default();
     paths
         .ensure()
@@ -219,7 +239,7 @@ fn load_runtime(
         .context("cannot acquire the Petsona data-directory lock")?;
     let config = AppConfig::load(&paths.config_file).context("cannot load Petsona config")?;
     let mut runtime = PetsonaRuntime::load(paths, config).context("cannot load Petsona runtime")?;
-    runtime.key_configured = petsona_core::deepseek::api_key_present(&runtime.config.deepseek);
+    runtime.key_configured = key_presence(&runtime.config.deepseek);
     // REQ-P05: honour the retention window on every start.
     let retention = runtime.config.memory.event_retention_days;
     let _ = runtime.memory.prune_events(&runtime.persona.id, retention);
@@ -232,11 +252,15 @@ fn load_runtime(
     Ok((runtime, instance_lock))
 }
 
-fn apply_command(
+fn apply_command<K>(
     command: RuntimeCommand,
     runtime: &mut PetsonaRuntime,
     command_tx: &Sender<RuntimeCommand>,
-) -> bool {
+    key_presence: &K,
+) -> bool
+where
+    K: Fn(&DeepSeekConfig) -> bool,
+{
     match command {
         RuntimeCommand::Wake | RuntimeCommand::Tick => true,
         RuntimeCommand::SetVisibility(visible) => {
@@ -620,8 +644,7 @@ fn apply_command(
         }
         RuntimeCommand::UpdateDeepSeekConfig(config) => {
             runtime.config.deepseek = sanitize_deepseek_config(config);
-            runtime.key_configured =
-                petsona_core::deepseek::api_key_present(&runtime.config.deepseek);
+            runtime.key_configured = key_presence(&runtime.config.deepseek);
             match runtime.save_config() {
                 Ok(()) => runtime.status = "DeepSeek 配置已保存".to_string(),
                 Err(error) => runtime.status = format!("保存 DeepSeek 配置失败：{error}"),
@@ -758,8 +781,7 @@ fn apply_command(
                 }
                 Err(error) => runtime.status = format!("保存密钥失败：{error}"),
             }
-            runtime.key_configured =
-                petsona_core::deepseek::api_key_present(&runtime.config.deepseek);
+            runtime.key_configured = key_presence(&runtime.config.deepseek);
             true
         }
         RuntimeCommand::ListModels => {
@@ -1000,6 +1022,15 @@ fn maybe_request_greeting(runtime: &mut PetsonaRuntime, command_tx: &Sender<Runt
         runtime.last_greeting_at,
         Instant::now(),
     ) {
+        return;
+    }
+
+    if !runtime.key_configured {
+        runtime.greeting_inflight = true;
+        runtime.last_greeting_at = Some(Instant::now());
+        let _ = command_tx.send(RuntimeCommand::GreetingResult(Err(
+            "未配置模型密钥，使用本地问候".to_string(),
+        )));
         return;
     }
 
@@ -1335,14 +1366,22 @@ fn set_fault(projection: &Arc<SharedProjection>, message: String) {
 mod tests {
     use super::*;
     use petsona_core::config::{AppConfig, AppPaths};
+    use std::sync::Once;
     use tempfile::TempDir;
 
+    const TEST_API_KEY_ENV: &str = "PETSONA_RUNTIME_TEST_API_KEY";
+    static SET_TEST_API_KEY: Once = Once::new();
+
     fn engine_home() -> TempDir {
+        // Credential-presence checks must resolve from this dummy environment
+        // variable, never from the developer's real OS keychain.
+        SET_TEST_API_KEY.call_once(|| std::env::set_var(TEST_API_KEY_ENV, "test-only-placeholder"));
         let home = tempfile::tempdir().expect("isolated runtime home");
         let paths = AppPaths::resolve(home.path().to_path_buf());
         paths.ensure().expect("home directories");
         let mut config = AppConfig::default();
         config.state_server.enabled = false;
+        config.deepseek.api_key_env = TEST_API_KEY_ENV.to_string();
         config.save(&paths.config_file).expect("isolated config");
         home
     }
@@ -1420,6 +1459,7 @@ mod tests {
         engine
             .send(RuntimeCommand::UpdateDeepSeekConfig(DeepSeekConfig {
                 model: "test-model".to_string(),
+                api_key_env: TEST_API_KEY_ENV.to_string(),
                 ..DeepSeekConfig::default()
             }))
             .expect("DeepSeek command");
@@ -1456,6 +1496,9 @@ mod tests {
         assert!(engine
             .text(RuntimeTextField::DeepSeekConfig)
             .contains("test-model"));
+        assert!(engine
+            .text(RuntimeTextField::DeepSeekConfig)
+            .contains("\"keyConfigured\":true"));
         assert!(engine.text(RuntimeTextField::Memory).contains("安静音乐"));
         engine.stop();
     }
@@ -1943,5 +1986,71 @@ mod tests {
             engine.text(RuntimeTextField::Bubble)
         );
         engine.stop();
+    }
+
+    #[test]
+    fn missing_key_projects_unconfigured_and_uses_the_local_greeting() {
+        let home = engine_home_with_pet();
+        let mut engine = RuntimeEngine::spawn_with_key_presence(
+            Some(home.path().to_path_buf()),
+            || {},
+            |_| false,
+        )
+        .unwrap();
+        let mut ready = false;
+        for _ in 0..300 {
+            if engine.snapshot().ready && engine.snapshot().has_pet {
+                ready = true;
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert!(ready, "no-key runtime fixture should become ready");
+        assert!(engine
+            .text(RuntimeTextField::DeepSeekConfig)
+            .contains("\"keyConfigured\":false"));
+        engine.stop();
+
+        let paths = AppPaths::resolve(home.path().to_path_buf());
+        let mut config = AppConfig::load(&paths.config_file).expect("isolated config");
+        config.greeting.enabled = true;
+        config.greeting.idle_minutes = 1;
+        config.greeting.cooldown_minutes = 0;
+        config
+            .save(&paths.config_file)
+            .expect("config with idle greeting");
+
+        let mut runtime = PetsonaRuntime::load(paths, config).expect("runtime with fixture pet");
+        runtime.key_configured = false;
+        runtime.last_user_action = Instant::now() - Duration::from_secs(120);
+        runtime.persona.greeting = Some("本地固定问候".to_string());
+
+        let (command_tx, command_rx) = mpsc::channel();
+        maybe_request_greeting(&mut runtime, &command_tx);
+        let result = command_rx
+            .recv_timeout(Duration::from_millis(100))
+            .expect("missing-key path should enqueue a local fallback immediately");
+        assert!(matches!(
+            &result,
+            RuntimeCommand::GreetingResult(Err(message)) if message.contains("未配置模型密钥")
+        ));
+        assert!(apply_command(result, &mut runtime, &command_tx, &|_| false));
+        assert_eq!(
+            runtime.bubble.as_ref().map(|bubble| bubble.text.as_str()),
+            Some("本地固定问候")
+        );
+        assert!(!runtime.greeting_inflight);
+
+        let projection = Arc::new(SharedProjection {
+            snapshot: RwLock::new(RuntimeSnapshot::default()),
+            texts: RwLock::new(RuntimeTexts::default()),
+        });
+        publish_projection(&runtime, &projection, 1);
+        assert!(projection
+            .texts
+            .read()
+            .unwrap()
+            .deepseek_config
+            .contains("\"keyConfigured\":false"));
     }
 }

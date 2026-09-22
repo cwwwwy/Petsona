@@ -54,7 +54,6 @@ private struct PersonaTraitsProjection: Decodable {
         let values = try decoder.container(keyedBy: CodingKeys.self)
         tone = try values.decodeIfPresent(String.self, forKey: .tone) ?? tone
         verbosity = try values.decodeIfPresent(String.self, forKey: .verbosity) ?? verbosity
-        language = try values.decodeIfPresent(String.self, forKey: .language) ?? language
         emoji = try values.decodeIfPresent(Bool.self, forKey: .emoji) ?? emoji
     }
 }
@@ -134,7 +133,7 @@ private struct TonePreset: Identifiable {
     ]
 }
 
-private struct DeepSeekProjection: Decodable {
+struct DeepSeekProjection: Decodable {
     var provider = "deepseek"
     /// Recomputed by the worker when the key or provider changes (W19 feedback).
     var keyConfigured = false
@@ -145,6 +144,10 @@ private struct DeepSeekProjection: Decodable {
     var maxTokens = 80
     var temperature = 0.9
     var thinkingDisabled = true
+
+    var credentialStatusLabel: String {
+        keyConfigured ? "已配置（密钥不会显示）" : "未配置"
+    }
 }
 
 private struct MemoryConfigProjection: Decodable {
@@ -502,7 +505,7 @@ struct SettingsView: View {
             Toggle("允许 emoji", isOn: $personaEmoji)
             DisclosureGroup("高级（系统提示词）") {
                 TextEditor(text: $systemPrompt).frame(minHeight: 120)
-                Text("语气 / emoji / 语言会由上面的设置自动追加，不需要在这里重复。")
+                Text("语气 / emoji 会由上面的设置自动追加，不需要在这里重复。")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
             }
@@ -522,6 +525,7 @@ struct SettingsView: View {
         }
     }
 
+    @ViewBuilder
     private var deepSeekSection: some View {
         Section("模型服务") {
             Picker("服务商", selection: $deepSeekProvider) {
@@ -552,7 +556,7 @@ struct SettingsView: View {
                     catch { engine.reportError(error.localizedDescription) }
                 }
                 .disabled(!deepSeek.keyConfigured)
-                Text(deepSeek.keyConfigured ? "已配置（密钥不会显示）" : "未配置")
+                Text(deepSeek.credentialStatusLabel)
                     .foregroundStyle(.secondary)
             }
             TextField("模型", text: $deepSeekModel)
@@ -669,6 +673,7 @@ struct SettingsView: View {
         }
     }
 
+    @ViewBuilder
     private var behaviorSection: some View {
         Section("行为") {
             HStack {
@@ -720,6 +725,7 @@ struct SettingsView: View {
         }
     }
 
+    @ViewBuilder
     private var startupSection: some View {
         Section("启动") {
             Toggle("登录时启动 Petsona", isOn: $autostart)

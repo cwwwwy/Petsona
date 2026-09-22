@@ -49,6 +49,19 @@ plist_value() {
   /usr/bin/plutil -extract "$2" raw -o - "$1" 2>/dev/null || true
 }
 
+default_petsona_data_fingerprint() {
+  local data_dir="$HOME/Library/Application Support/Petsona"
+  local relative path
+  for relative in config.json logs/petsona.log petsona.lock; do
+    path="$data_dir/$relative"
+    if [[ -e "$path" ]]; then
+      printf '%s:%s\n' "$relative" "$(/usr/bin/stat -f '%d:%i:%m:%z' "$path")"
+    else
+      printf '%s:missing\n' "$relative"
+    fi
+  done
+}
+
 choose_smoke_ports() {
   if [[ -n "${PETSONA_SMOKE_STATE_PORT:-}" || -n "${PETSONA_SMOKE_HOOK_PORT:-}" ]]; then
     PETSONA_VERIFY_STATE_PORT="${PETSONA_SMOKE_STATE_PORT:-17872}"
@@ -122,6 +135,8 @@ xcodebuild \
 step 'macOS native XCTest'
 PETSONA_NATIVE_TEST_DATA="$PETSONA_ROOT/.scratch/macos-native-tests"
 rm -rf "$PETSONA_NATIVE_TEST_DATA"
+PETSONA_DEFAULT_DATA_BEFORE="$(default_petsona_data_fingerprint)"
+set +e
 xcodebuild \
   -quiet \
   -project "$PETSONA_ROOT/apps/macos/Petsona.xcodeproj" \
@@ -137,12 +152,25 @@ xcodebuild \
   -only-testing:PetsonaTests/SystemServiceTests \
   CODE_SIGNING_ALLOWED=NO \
   test
+PETSONA_XCTEST_EXIT=$?
+set -e
+PETSONA_DEFAULT_DATA_AFTER="$(default_petsona_data_fingerprint)"
+[[ "$PETSONA_DEFAULT_DATA_BEFORE" == "$PETSONA_DEFAULT_DATA_AFTER" ]] || \
+  fail 'XCTest changed the real user Petsona config/log/lock; host isolation regression'
+pass 'XCTest kept real user Petsona config/log/lock unchanged'
+PETSONA_TEST_HOST_HOME="$PETSONA_NATIVE_TEST_DATA/host-home"
+PETSONA_TEST_HOST_MARKER="$PETSONA_NATIVE_TEST_DATA/host-started"
+[[ -f "$PETSONA_TEST_HOST_MARKER" ]] || fail 'XCTest app host did not report isolated bootstrap'
+grep -Fqx "$PETSONA_TEST_HOST_HOME" "$PETSONA_TEST_HOST_MARKER" || \
+  fail 'XCTest app host bootstrap used an unexpected data directory'
+pass 'XCTest app host booted from its isolated home with state protocol disabled'
+[[ "$PETSONA_XCTEST_EXIT" == '0' ]] || exit "$PETSONA_XCTEST_EXIT"
 PETSONA_TEST_RESULT="$(find "$PETSONA_NATIVE_TEST_DATA/Logs/Test" -maxdepth 1 -type d -name '*.xcresult' -print | sort | tail -1)"
 [[ -n "$PETSONA_TEST_RESULT" ]] || fail '未找到原生 XCTest xcresult'
 if command -v xcrun >/dev/null 2>&1; then
   xcrun xcresulttool get test-results summary --path "$PETSONA_TEST_RESULT" > "$PETSONA_NATIVE_TEST_DATA/test-summary.json"
   grep -q '"result" : "Passed"' "$PETSONA_NATIVE_TEST_DATA/test-summary.json" || fail '原生 XCTest 结果不是 Passed'
-  pass '原生 XCTest 13 项通过（摘要已保存）'
+  pass '原生 XCTest 14 项通过（摘要已保存）'
 fi
 
 if [[ "$PETSONA_GATES_ONLY" == "1" ]]; then
@@ -178,6 +206,9 @@ PETSONA_ARCH="$PETSONA_NATIVE_ARCH" \
 
 PETSONA_APP="$PETSONA_PACKAGE_TMP/Petsona.app"
 PETSONA_ZIP="$PETSONA_PACKAGE_TMP/Petsona-macos-$(uname -m).zip"
+PETSONA_ACCEPTANCE_NAME="Petsona-macos-$PETSONA_NATIVE_ARCH-acceptance"
+PETSONA_ACCEPTANCE_DIR="$PETSONA_PACKAGE_TMP/$PETSONA_ACCEPTANCE_NAME"
+PETSONA_ACCEPTANCE_ZIP="$PETSONA_PACKAGE_TMP/$PETSONA_ACCEPTANCE_NAME.zip"
 PETSONA_INFO="$PETSONA_APP/Contents/Info.plist"
 PETSONA_EXECUTABLE="$PETSONA_APP/Contents/MacOS/Petsona"
 PETSONA_ICON="$PETSONA_APP/Contents/Resources/Petsona.icns"
@@ -187,6 +218,26 @@ PETSONA_ICON="$PETSONA_APP/Contents/Resources/Petsona.icns"
 [[ -f "$PETSONA_ICON" ]] || fail 'Petsona.icns 缺失'
 [[ -f "$PETSONA_ZIP" ]] || fail 'macOS zip 未生成'
 pass 'app bundle、可执行文件和图标存在'
+
+[[ -x "$PETSONA_ACCEPTANCE_DIR/Petsona.app/Contents/MacOS/Petsona" ]] || fail '整体文件夹验收包缺少可运行 app'
+[[ -d "$PETSONA_ACCEPTANCE_DIR/acceptance-data/pets" ]] || fail '整体文件夹验收包缺少隔离宠物库目录'
+[[ -f "$PETSONA_ACCEPTANCE_DIR/acceptance-data/config.json" ]] || fail '整体文件夹验收包缺少隔离配置'
+[[ -f "$PETSONA_ACCEPTANCE_DIR/README.txt" ]] || fail '整体文件夹验收包缺少启动说明'
+grep -F '"stateServer":{"enabled":false,"port":17873}' "$PETSONA_ACCEPTANCE_DIR/acceptance-data/config.json" >/dev/null || fail '验收包初始状态服务未隔离'
+grep -F 'PETSONA_AUTOSTART_PLIST_DIR' "$PETSONA_ACCEPTANCE_DIR/README.txt" >/dev/null || fail '验收包未说明自启项隔离'
+grep -F '不要在本包中保存或清除 API Key' "$PETSONA_ACCEPTANCE_DIR/README.txt" >/dev/null || fail '验收包未说明钥匙串边界'
+[[ -f "$PETSONA_ACCEPTANCE_ZIP" ]] || fail '整体文件夹验收包 zip 未生成'
+codesign --verify --deep --strict "$PETSONA_ACCEPTANCE_DIR/Petsona.app" >/dev/null || fail '整体文件夹验收包的 app 签名结构无效'
+
+PETSONA_ACCEPTANCE_MARKER="$PETSONA_ACCEPTANCE_DIR/acceptance-data/.repackage-preserves-data"
+: > "$PETSONA_ACCEPTANCE_MARKER"
+PETSONA_SKIP_BUILD=1 \
+PETSONA_NATIVE_DERIVED_DATA="$PETSONA_NATIVE_DERIVED_DATA" \
+PETSONA_ARCH="$PETSONA_NATIVE_ARCH" \
+"$PETSONA_ROOT/scripts/package-macos.sh" "$PETSONA_PACKAGE_TMP" >/dev/null
+[[ -f "$PETSONA_ACCEPTANCE_MARKER" ]] || fail '重新打包意外清除了本机验收数据'
+rm -f "$PETSONA_ACCEPTANCE_MARKER"
+pass '整体文件夹验收包有独立 home、有效 app 签名且重打包保留数据'
 
 if command -v otool >/dev/null 2>&1; then
   otool -L "$PETSONA_EXECUTABLE" > "$PETSONA_PACKAGE_TMP/otool.txt"
@@ -207,6 +258,25 @@ PETSONA_UNPACKED="$PETSONA_PACKAGE_TMP/unpacked"
 ditto -x -k --norsrc "$PETSONA_ZIP" "$PETSONA_UNPACKED"
 [[ -x "$PETSONA_UNPACKED/Petsona.app/Contents/MacOS/Petsona" ]] || fail 'zip 中缺少可运行 app'
 pass 'zip 可解压且包含可运行 app'
+
+PETSONA_ACCEPTANCE_UNPACKED="$PETSONA_PACKAGE_TMP/acceptance-unpacked"
+ditto -x -k --norsrc "$PETSONA_ACCEPTANCE_ZIP" "$PETSONA_ACCEPTANCE_UNPACKED"
+[[ -x "$PETSONA_ACCEPTANCE_UNPACKED/$PETSONA_ACCEPTANCE_NAME/Petsona.app/Contents/MacOS/Petsona" ]] || fail '验收 zip 解压后缺少可运行 app'
+[[ -f "$PETSONA_ACCEPTANCE_UNPACKED/$PETSONA_ACCEPTANCE_NAME/acceptance-data/config.json" ]] || fail '验收 zip 解压后缺少隔离 home'
+[[ ! -e "$PETSONA_ACCEPTANCE_UNPACKED/$PETSONA_ACCEPTANCE_NAME/acceptance-data/.repackage-preserves-data" ]] || fail '验收 zip 意外包含本机验收数据'
+pass '整体文件夹验收 zip 可解压，且使用干净隔离数据而非本机验收数据'
+
+PETSONA_RELEASE_PACKAGE_TMP="$PETSONA_PACKAGE_TMP/release-only"
+mkdir -p "$PETSONA_RELEASE_PACKAGE_TMP"
+PETSONA_SKIP_BUILD=1 \
+PETSONA_NATIVE_DERIVED_DATA="$PETSONA_NATIVE_DERIVED_DATA" \
+PETSONA_ARCH="$PETSONA_NATIVE_ARCH" \
+PETSONA_INCLUDE_ACCEPTANCE_PACKAGE=0 \
+"$PETSONA_ROOT/scripts/package-macos.sh" "$PETSONA_RELEASE_PACKAGE_TMP" >/dev/null
+[[ -f "$PETSONA_RELEASE_PACKAGE_TMP/Petsona-macos-$PETSONA_NATIVE_ARCH.zip" ]] || fail 'release-only 打包缺少常规 macOS zip'
+[[ ! -e "$PETSONA_RELEASE_PACKAGE_TMP/Petsona-macos-$PETSONA_NATIVE_ARCH-acceptance" ]] || fail 'release-only 打包意外生成验收目录'
+[[ ! -e "$PETSONA_RELEASE_PACKAGE_TMP/Petsona-macos-$PETSONA_NATIVE_ARCH-acceptance.zip" ]] || fail 'release-only 打包意外生成验收 zip'
+pass 'release-only 打包不会生成或上传验收数据包'
 
 PETSONA_LAUNCH_AGENT="$PETSONA_ROOT/packaging/macos/com.petsona.desktop.plist"
 plutil -lint "$PETSONA_LAUNCH_AGENT" >/dev/null || fail 'LaunchAgent plist 模板无效'

@@ -1,3 +1,4 @@
+import Darwin
 import AppKit
 import SwiftUI
 
@@ -9,7 +10,10 @@ private final class SettingsWindow: NSWindow {
 
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
-    let engine = EngineClient()
+    #if DEBUG
+    private(set) var testHostHome: URL?
+    #endif
+    let engine: EngineClient
 
     private var statusItem: NSStatusItem!
     private var petWindow: PetWindowController!
@@ -29,7 +33,78 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var draggingPet = false
     private var lastDragRefreshTime = 0.0
 
+    override init() {
+        #if DEBUG
+        if let home = Self.makeIsolatedXCTestHome() {
+            testHostHome = home
+            engine = EngineClient(home: home)
+        } else {
+            engine = EngineClient()
+        }
+        #else
+        engine = EngineClient()
+        #endif
+        super.init()
+    }
+
+    #if DEBUG
+    private static var xctestHomeRoot: URL {
+        let root = (0..<5).reduce(URL(fileURLWithPath: #filePath)) { root, _ in
+            root.deletingLastPathComponent()
+        }
+        return root.appendingPathComponent(".scratch/macos-native-tests", isDirectory: true)
+    }
+
+    private static func makeIsolatedXCTestHome() -> URL? {
+        let fileManager = FileManager.default
+        let testRoot = xctestHomeRoot
+        let activeMarker = testRoot.appendingPathComponent("host-active")
+        let environment = ProcessInfo.processInfo.environment
+        let requestedByEnvironment = environment["PETSONA_XCTEST_HOST"] == "1"
+            || environment["XCTestConfigurationFilePath"] != nil
+        guard requestedByEnvironment || fileManager.fileExists(atPath: activeMarker.path) else {
+            return nil
+        }
+
+        let preparedHome = testRoot.appendingPathComponent("host-home", isDirectory: true)
+        let home = fileManager.fileExists(atPath: activeMarker.path)
+            ? preparedHome
+            : fileManager.temporaryDirectory
+                .appendingPathComponent("petsona-xctest-host-\(UUID().uuidString)", isDirectory: true)
+        let keyEnvironment = "PETSONA_XCTEST_HOST_API_KEY"
+        do {
+            try fileManager.createDirectory(at: home, withIntermediateDirectories: true)
+            let configPath = home.appendingPathComponent("config.json")
+            if !fileManager.fileExists(atPath: configPath.path) {
+                let config: [String: Any] = [
+                    "stateServer": ["enabled": false],
+                    "deepSeek": ["apiKeyEnv": keyEnvironment],
+                ]
+                let data = try JSONSerialization.data(withJSONObject: config)
+                try data.write(to: configPath, options: .atomic)
+            }
+            try fileManager.createDirectory(at: testRoot, withIntermediateDirectories: true)
+            try Data(home.path.utf8).write(
+                to: testRoot.appendingPathComponent("host-started"),
+                options: .atomic
+            )
+        } catch {
+            fatalError("Unable to prepare isolated XCTest home: \(error)")
+        }
+        guard setenv(keyEnvironment, "test-only-placeholder", 1) == 0 else {
+            fatalError("Unable to isolate XCTest credential environment")
+        }
+        return home
+    }
+    #endif
+
     func applicationDidFinishLaunching(_ notification: Notification) {
+        #if DEBUG
+        // The XCTest host is only a loader for the test bundle. It must never
+        // create product windows, a status item, or a default-user runtime.
+        if testHostHome != nil { return }
+        #endif
+
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         statusItem.button?.title = "🐾"
         statusItem.menu = makeMenu()
@@ -80,6 +155,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationWillTerminate(_ notification: Notification) {
         tickTimer?.invalidate()
         tickTimer = nil
+        engine.shutdown()
+        #if DEBUG
+        if let testHostHome { try? FileManager.default.removeItem(at: testHostHome) }
+        #endif
     }
 
     private func makeMenu() -> NSMenu {

@@ -215,6 +215,14 @@ fn key_candidates(provider: &str) -> Vec<&'static str> {
 /// Whether a usable credential exists for this config (env var or keychain).
 /// Used by the settings page to show 已配置 / 未配置 without reading the secret.
 pub fn api_key_present(config: &DeepSeekConfig) -> bool {
+    let keyring = KeyringStore::new("com.petsona.desktop");
+    api_key_present_with_store(config, &keyring)
+}
+
+/// Check credential presence with an injected store. Platform startup uses
+/// [`api_key_present`] and the OS keychain; tests can use `MemorySecretStore`
+/// to cover both configured and unconfigured paths without touching user data.
+pub fn api_key_present_with_store(config: &DeepSeekConfig, store: &dyn SecretStore) -> bool {
     if std::env::var(&config.api_key_env)
         .map(|key| !key.trim().is_empty())
         .unwrap_or(false)
@@ -222,9 +230,8 @@ pub fn api_key_present(config: &DeepSeekConfig) -> bool {
         return true;
     }
 
-    let keyring = KeyringStore::new("com.petsona.desktop");
     key_candidates(&config.provider).iter().any(|slot| {
-        keyring
+        store
             .get(slot)
             .map(|key| key.is_some_and(|key| !key.trim().is_empty()))
             .unwrap_or(false)
@@ -317,6 +324,7 @@ fn clean_greeting(text: &str, max_chars: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::secrets::MemorySecretStore;
 
     #[test]
     fn cleans_quotes_and_limits_length() {
@@ -383,5 +391,22 @@ mod tests {
         assert_eq!(api_key_slot(PROVIDER_CUSTOM), "provider/custom");
         // An unknown provider must never invent a third slot.
         assert_eq!(api_key_slot("openai"), "provider/deepseek");
+    }
+
+    #[test]
+    fn credential_presence_supports_injected_empty_and_populated_stores() {
+        let config = DeepSeekConfig {
+            provider: PROVIDER_CUSTOM.to_string(),
+            api_key_env: format!("PETSONA_NO_SUCH_KEY_{}", std::process::id()),
+            ..DeepSeekConfig::default()
+        };
+        let empty = MemorySecretStore::new();
+        assert!(!api_key_present_with_store(&config, &empty));
+
+        let populated = MemorySecretStore::new();
+        populated
+            .set("provider/custom", "test-only-placeholder")
+            .unwrap();
+        assert!(api_key_present_with_store(&config, &populated));
     }
 }

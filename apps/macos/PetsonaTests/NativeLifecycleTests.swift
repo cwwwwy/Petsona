@@ -9,8 +9,22 @@ final class NativeLifecycleTests: XCTestCase {
             "library", "behavior", "deepSeek", "persona", "memory", "startup",
         ])
         XCTAssertEqual(SettingsSection.allCases.map(\.title), [
-            "宠物库", "外观与交互", "DeepSeek", "人格", "记忆", "启动",
+            "宠物库", "外观与交互", "模型服务", "人格", "记忆", "系统",
         ])
+    }
+
+    func testCredentialStatusLabelCoversConfiguredAndMissingKeys() throws {
+        let configured = try JSONDecoder().decode(
+            DeepSeekProjection.self,
+            from: Data(#"{"provider":"deepseek","keyConfigured":true,"baseUrl":"https://example.invalid","model":"test","apiKeyEnv":"TEST_KEY","timeoutSeconds":20,"maxTokens":80,"temperature":0.9,"thinkingDisabled":true}"#.utf8)
+        )
+        let missing = try JSONDecoder().decode(
+            DeepSeekProjection.self,
+            from: Data(#"{"provider":"deepseek","keyConfigured":false,"baseUrl":"https://example.invalid","model":"test","apiKeyEnv":"TEST_KEY","timeoutSeconds":20,"maxTokens":80,"temperature":0.9,"thinkingDisabled":true}"#.utf8)
+        )
+
+        XCTAssertEqual(configured.credentialStatusLabel, "已配置（密钥不会显示）")
+        XCTAssertEqual(missing.credentialStatusLabel, "未配置")
     }
 
     func testOverlayActivationContractMatchesFocusRules() {

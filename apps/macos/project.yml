@@ -53,5 +53,23 @@ schemes:
         Petsona: all
     test:
       gatherCoverageData: false
+      environmentVariables:
+        PETSONA_XCTEST_HOST: "1"
+      preActions:
+        - name: Prepare isolated XCTest home
+          settingsTarget: Petsona
+          script: |
+            set -euo pipefail
+            test_root="${PROJECT_DIR}/../../.scratch/macos-native-tests"
+            mkdir -p "$test_root/host-home"
+            rm -f "$test_root/host-started"
+            printf '%s\n' '{"stateServer":{"enabled":false},"deepSeek":{"apiKeyEnv":"PETSONA_XCTEST_HOST_API_KEY"}}' > "$test_root/host-home/config.json"
+            : > "$test_root/host-active"
+      postActions:
+        - name: Clear isolated XCTest home marker
+          settingsTarget: Petsona
+          script: |
+            set -euo pipefail
+            rm -f "${PROJECT_DIR}/../../.scratch/macos-native-tests/host-active"
       targets:
         - name: PetsonaTests
