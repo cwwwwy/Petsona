@@ -153,6 +153,7 @@ pub fn convert(command: &PetsonaCommand) -> Result<RuntimeCommand, (PetsonaStatu
             Ok(RuntimeCommand::UpdatePersona(Box::new(patch)))
         }
         x if x == PetsonaCommandKind::SavePersona as u32 => Ok(RuntimeCommand::SavePersona),
+        x if x == PetsonaCommandKind::ResetPersona as u32 => Ok(RuntimeCommand::ResetPersona),
         x if x == PetsonaCommandKind::RefreshPersonas as u32 => Ok(RuntimeCommand::RefreshPersonas),
         x if x == PetsonaCommandKind::CreatePersona as u32 => {
             let spec: PersonaCreate = serde_json::from_str(&text).map_err(|error| {

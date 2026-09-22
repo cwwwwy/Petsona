@@ -63,7 +63,6 @@ public sealed partial class SettingsWindow : Window
     private string _lastModelsJson = string.Empty;
     private string _lastDeepSeekJson = string.Empty;
     private string _lastConflictJson = string.Empty;
-    private string _selectedPersonaId = string.Empty;
     private bool _formsLoaded;
     private bool _suppressEvents;
     private string _personaVerbosity = "normal";
@@ -117,7 +116,6 @@ public sealed partial class SettingsWindow : Window
         DeepSeekTemperature.ValueChanged += (_, _) => ScheduleApply(ApplyDeepSeekConfig);
         DeepSeekThinkingDisabled.Toggled += (_, _) => ScheduleApply(ApplyDeepSeekConfig);
 
-        PersonaNameBox.TextChanged += (_, _) => ScheduleApply(ApplyPersona);
         PersonaToneBox.TextChanged += (_, _) => ScheduleApply(ApplyPersona);
         PersonaEmojiToggle.Toggled += (_, _) => ScheduleApply(ApplyPersona);
         PersonaGreetingBox.TextChanged += (_, _) => ScheduleApply(ApplyPersona);
@@ -126,6 +124,8 @@ public sealed partial class SettingsWindow : Window
         MemoryEnabledToggle.Toggled += (_, _) => ScheduleApply(ApplyMemoryConfig);
         MemoryRecentEventsBox.ValueChanged += (_, _) => ScheduleApply(ApplyMemoryConfig);
         MemoryFactLimitBox.ValueChanged += (_, _) => ScheduleApply(ApplyMemoryConfig);
+        MemoryRetentionBox.ValueChanged += (_, _) => ScheduleApply(ApplyMemoryConfig);
+        MemoryCompressToggle.Toggled += (_, _) => ScheduleApply(ApplyMemoryConfig);
 
         GreetingEnabledToggle.Toggled += (_, _) => ScheduleApply(ApplyGreetingConfig);
         GreetingIdleMinutesBox.ValueChanged += (_, _) => ScheduleApply(ApplyGreetingConfig);
@@ -178,22 +178,6 @@ public sealed partial class SettingsWindow : Window
         {
             _lastCodexJson = codexJson;
             _ = ReloadCodexAsync(codexJson);
-        }
-
-        var personasJson = _engine.Text(PetsonaTextField.Personas);
-        if (personasJson != _lastPersonasJson)
-        {
-            _lastPersonasJson = personasJson;
-            var personas = Parse<List<PersonaEntry>>(personasJson) ?? [];
-            if (_selectedPersonaId.Length == 0 || personas.All(persona => persona.Id != _selectedPersonaId))
-            {
-                _selectedPersonaId = _engine.Text(PetsonaTextField.PersonaId);
-            }
-
-            _suppressEvents = true;
-            PersonaCombo.ItemsSource = personas;
-            PersonaCombo.SelectedItem = personas.FirstOrDefault(persona => persona.Id == _selectedPersonaId);
-            _suppressEvents = false;
         }
 
         var deepSeekJson = _engine.Text(PetsonaTextField.DeepSeekConfig);
@@ -305,6 +289,8 @@ public sealed partial class SettingsWindow : Window
         MemoryEnabledToggle.IsOn = GetBool(config, "enabled", true);
         MemoryRecentEventsBox.Value = GetNumber(config, "recentEvents", 10);
         MemoryFactLimitBox.Value = GetNumber(config, "factLimit", 50);
+        MemoryRetentionBox.Value = GetNumber(config, "eventRetentionDays", 0);
+        MemoryCompressToggle.IsOn = GetBool(config, "factCompress", true);
 
         if (TryGetObject(document.RootElement, "greeting", out var greeting))
         {
@@ -327,7 +313,6 @@ public sealed partial class SettingsWindow : Window
 
         var root = document.RootElement;
         _suppressEvents = true;
-        PersonaNameBox.Text = GetString(root, "name");
         PersonaGreetingBox.Text = GetString(root, "greeting");
         PersonaSystemPromptBox.Text = GetString(root, "systemPrompt");
 
@@ -341,8 +326,6 @@ public sealed partial class SettingsWindow : Window
             PersonaTonePresetCombo.SelectedIndex = FindTonePreset(tone);
             PersonaEmojiToggle.IsOn = GetBool(traits, "emoji", true);
         }
-
-        PersonaIdBox.Text = $"人格 ID：{GetString(root, "id")}（导入 / 导出时使用）";
 
         KeyStatusText.Text = string.Empty;
         _suppressEvents = false;
@@ -708,18 +691,6 @@ public sealed partial class SettingsWindow : Window
 
     // ------------------------------------------------------------ personas
 
-    private void OnPersonaSelectionChanged(object sender, SelectionChangedEventArgs e)
-    {
-        if (_suppressEvents || PersonaCombo.SelectedItem is not PersonaEntry entry)
-        {
-            return;
-        }
-
-        _selectedPersonaId = entry.Id;
-        _engine.Send(PetsonaCommandKind.SelectPersona, text: entry.Id);
-        ReloadPersonaSoon();
-    }
-
     private void OnPersonaTonePresetChanged(object sender, SelectionChangedEventArgs e)
     {
         if (_suppressEvents || PersonaTonePresetCombo.SelectedIndex < 0)
@@ -758,7 +729,6 @@ public sealed partial class SettingsWindow : Window
     {
         SendJson(PetsonaCommandKind.UpdatePersona, new Dictionary<string, object?>
         {
-            ["name"] = PersonaNameBox.Text.Trim(),
             ["tone"] = PersonaToneBox.Text,
             ["verbosity"] = _personaVerbosity,
             ["emoji"] = PersonaEmojiToggle.IsOn,
@@ -769,56 +739,11 @@ public sealed partial class SettingsWindow : Window
         _lastPersonasJson = string.Empty;
     }
 
-    private async void OnCreatePersonaClick(object sender, RoutedEventArgs e)
+    private async void OnResetPersonaClick(object sender, RoutedEventArgs e)
     {
-        var (id, name) = await AskPersonaIdentityAsync("新建人格", string.Empty, "新人格");
-        if (id.Length == 0 || name.Length == 0)
+        if (await ConfirmAsync("重置说话方式", "这会恢复内置的语气、emoji 与提示词，当前宠物的记忆不受影响。确定继续吗？"))
         {
-            return;
-        }
-
-        SendJson(PetsonaCommandKind.CreatePersona, new Dictionary<string, object?>
-        {
-            ["id"] = id,
-            ["name"] = name,
-        });
-        _selectedPersonaId = id;
-        _lastPersonasJson = string.Empty;
-    }
-
-    private async void OnDuplicatePersonaClick(object sender, RoutedEventArgs e)
-    {
-        if (PersonaCombo.SelectedItem is not PersonaEntry source)
-        {
-            return;
-        }
-
-        var (id, name) = await AskPersonaIdentityAsync("复制人格", string.Empty, source.Name + " 副本");
-        if (id.Length == 0 || name.Length == 0)
-        {
-            return;
-        }
-
-        SendJson(PetsonaCommandKind.DuplicatePersona, new Dictionary<string, object?>
-        {
-            ["source_id"] = source.Id,
-            ["id"] = id,
-            ["name"] = name,
-        });
-        _selectedPersonaId = id;
-        _lastPersonasJson = string.Empty;
-    }
-
-    private async void OnDeletePersonaClick(object sender, RoutedEventArgs e)
-    {
-        if (PersonaCombo.SelectedItem is not PersonaEntry entry)
-        {
-            return;
-        }
-
-        if (await ConfirmAsync("删除人格", $"确定删除人格「{entry.Name}」吗？内建人格不能删除。"))
-        {
-            _engine.Send(PetsonaCommandKind.DeletePersona, text: entry.Id);
+            _engine.Send(PetsonaCommandKind.ResetPersona);
             _lastPersonasJson = string.Empty;
         }
     }
@@ -837,30 +762,21 @@ public sealed partial class SettingsWindow : Window
 
     private async void OnExportPersonaClick(object sender, RoutedEventArgs e)
     {
-        if (PersonaCombo.SelectedItem is not PersonaEntry entry)
+        var id = _engine.Text(PetsonaTextField.PersonaId);
+        if (id.Length == 0)
         {
             return;
         }
 
         var picker = new FileSavePicker();
-        picker.SuggestedFileName = entry.Id;
-        picker.FileTypeChoices.Add("人格 JSON", [".json"]);
+        picker.SuggestedFileName = id;
+        picker.FileTypeChoices.Add("说话方式 JSON", [".json"]);
         Initialize(picker);
         var file = await picker.PickSaveFileAsync();
         if (file is not null)
         {
-            _engine.Send(PetsonaCommandKind.ExportPersona, text: entry.Id + "\n" + file.Path);
+            _engine.Send(PetsonaCommandKind.ExportPersona, text: id + "\n" + file.Path);
         }
-    }
-
-    private void ReloadPersonaSoon()
-    {
-        _lastPersonasJson = string.Empty;
-        _ = DispatcherQueue.TryEnqueue(async () =>
-        {
-            await Task.Delay(200);
-            LoadPersonaForm();
-        });
     }
 
     // ------------------------------------------------------------- memory
@@ -872,6 +788,8 @@ public sealed partial class SettingsWindow : Window
             ["enabled"] = MemoryEnabledToggle.IsOn,
             ["recentEvents"] = (uint)Number(MemoryRecentEventsBox, 10),
             ["factLimit"] = (uint)Number(MemoryFactLimitBox, 50),
+            ["eventRetentionDays"] = (uint)Number(MemoryRetentionBox, 0),
+            ["factCompress"] = MemoryCompressToggle.IsOn,
         });
         _lastMemoryJson = string.Empty;
     }
@@ -1115,30 +1033,6 @@ public sealed partial class SettingsWindow : Window
         return await dialog.ShowAsync() == ContentDialogResult.Primary;
     }
 
-    private async Task<(string Id, string Name)> AskPersonaIdentityAsync(string title, string id, string name)
-    {
-        var idBox = new TextBox { Header = "人格 ID（英文、数字或短横线）", Text = id };
-        var nameBox = new TextBox { Header = "名称", Text = name };
-        var panel = new StackPanel { Spacing = 8 };
-        panel.Children.Add(idBox);
-        panel.Children.Add(nameBox);
-        var dialog = new ContentDialog
-        {
-            Title = title,
-            Content = panel,
-            PrimaryButtonText = "创建",
-            CloseButtonText = "取消",
-            DefaultButton = ContentDialogButton.Primary,
-            XamlRoot = RootPanel.XamlRoot,
-        };
-        if (await dialog.ShowAsync() != ContentDialogResult.Primary)
-        {
-            return (string.Empty, string.Empty);
-        }
-
-        return (idBox.Text.Trim(), nameBox.Text.Trim());
-    }
-
     private static List<FactEntry> ParseMemoryFacts(string json)
     {
         using var document = ParseDocument(json);
@@ -1156,6 +1050,7 @@ public sealed partial class SettingsWindow : Window
                 Id = GetString(fact, "id"),
                 Key = GetString(fact, "key"),
                 Value = GetString(fact, "value"),
+                Source = FactSourceLabel(GetString(fact, "source")),
             });
         }
 
@@ -1248,6 +1143,14 @@ public sealed partial class SettingsWindow : Window
         public override string ToString() => $"{Name}（{Id}）";
     }
 
+    private static string FactSourceLabel(string source) => source switch
+    {
+        "conversation" => "对话",
+        "import" => "导入",
+        "compressed" => "压缩",
+        _ => "手动",
+    };
+
     private sealed class FactEntry
     {
         public required string Id { get; init; }
@@ -1256,7 +1159,11 @@ public sealed partial class SettingsWindow : Window
 
         public required string Value { get; init; }
 
+        public required string Source { get; init; }
+
         public string Label => $"{Key}：{Value}";
+
+        public string Meta => $"来源：{Source}";
 
         public override string ToString() => Label;
     }

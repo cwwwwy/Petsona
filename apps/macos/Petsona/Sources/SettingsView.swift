@@ -151,6 +151,8 @@ private struct MemoryConfigProjection: Decodable {
     var enabled = true
     var recentEvents = 5
     var factLimit = 20
+    var eventRetentionDays = 0
+    var factCompress = true
 }
 
 private struct GreetingConfigProjection: Decodable {
@@ -167,6 +169,17 @@ private struct MemoryFactProjection: Decodable, Identifiable {
     let confidence: Double
     let createdAt: Int64
     let updatedAt: Int64
+    var source: String?
+
+    /// Where the fact came from (REQ-P06); older files have no source.
+    var sourceLabel: String {
+        switch source {
+        case "conversation": return "对话"
+        case "import": return "导入"
+        case "compressed": return "压缩"
+        default: return "手动"
+        }
+    }
 }
 
 private struct MemoryEventProjection: Decodable, Identifiable {
@@ -204,7 +217,7 @@ enum SettingsSection: String, CaseIterable, Identifiable {
         case .library: return "宠物库"
         case .behavior: return "外观与交互"
         case .deepSeek: return "模型服务"
-        case .persona: return "人格"
+        case .persona: return "说话方式"
         case .memory: return "记忆"
         case .startup: return "系统"
         }
@@ -263,6 +276,8 @@ struct SettingsView: View {
     @State private var memoryEnabled = true
     @State private var memoryRecentEvents = 5
     @State private var memoryFactLimit = 20
+    @State private var memoryRetentionDays = 0
+    @State private var memoryCompress = true
 
     @State private var greetingEnabled = true
     @State private var greetingIdleMinutes = 30
@@ -334,7 +349,7 @@ struct SettingsView: View {
         case .deepSeek:
             settingsForm(title: "模型服务") { deepSeekSection }
         case .persona:
-            settingsForm(title: "人格") { personaSection }
+            settingsForm(title: "说话方式") { personaSection }
         case .memory:
             settingsForm(title: "记忆") { memorySection }
         case .startup:
@@ -457,26 +472,21 @@ struct SettingsView: View {
     }
 
     private var personaSection: some View {
-        Section("人格管理") {
+        Section("这只宠物的说话方式") {
             HStack {
-                Picker("当前人格", selection: $personaID) {
-                    ForEach(personas) { persona in
-                        Text(persona.name).tag(persona.id)
+                Button("导入…") { importPersona() }
+                Button("导出…") { exportPersona(engine.text(PETSONA_TEXT_PERSONA_ID)) }
+                Button("重置为内置") {
+                    let alert = NSAlert()
+                    alert.messageText = "重置说话方式"
+                    alert.informativeText = "会恢复内置的语气、emoji 与提示词；这只宠物的记忆不受影响。"
+                    alert.addButton(withTitle: "重置")
+                    alert.addButton(withTitle: "取消")
+                    if alert.runModal() == .alertFirstButtonReturn {
+                        engine.resetPersona()
                     }
                 }
-                .onChange(of: personaID) { id in
-                    guard id != engine.text(PETSONA_TEXT_PERSONA_ID) else { return }
-                    engine.selectPersona(id)
-                    reloadLater()
-                }
-                Button("新建") { showingNewPersona = true }
-                Button("复制") { duplicateCurrentPersona() }
-                Button("导出") { exportPersona(personaID) }
-                Button("导入") { importPersona() }
-                Button("删除") { deletePersona(personaID) }
             }
-            TextField("人格 ID", text: $personaID).disabled(true)
-            TextField("名称", text: $personaName)
             TextField("语气", text: $personaTone)
             Picker("语气预设", selection: $personaTonePreset) {
                 Text("自定义…").tag("")
@@ -588,6 +598,8 @@ struct SettingsView: View {
             Toggle("启用记忆", isOn: $memoryEnabled)
             Stepper("保留最近事件：\(memoryRecentEvents)", value: $memoryRecentEvents, in: 1...100)
             Stepper("最多偏好：\(memoryFactLimit)", value: $memoryFactLimit, in: 1...50)
+            Stepper("事件保留：\(memoryRetentionDays) 天（0 = 永久）", value: $memoryRetentionDays, in: 0...3650)
+            Toggle("自动压缩偏好（超出上限合并为「画像」）", isOn: $memoryCompress)
             Divider()
             Text("对话中的“我喜欢… / 我不喜欢… / 请叫我…”等明确表达会自动记录，并用于后续回复。")
                 .font(.footnote)
@@ -611,7 +623,12 @@ struct SettingsView: View {
             }
             ForEach(memory.facts) { fact in
                 HStack {
-                    Text("\(fact.key)：\(fact.value)")
+                    VStack(alignment: .leading) {
+                        Text("\(fact.key)：\(fact.value)")
+                        Text("来源：\(fact.sourceLabel)")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
                     Spacer()
                     Button("编辑") {
                         editingFactID = fact.id
@@ -636,12 +653,15 @@ struct SettingsView: View {
             HStack {
                 Button("只清偏好") { engine.clearMemory(scope: 1) }
                 Button("只清事件") { engine.clearMemory(scope: 2) }
-                Button("全部清空") { engine.clearMemory(scope: 0) }
+                Button("清空这只宠物的记忆") { engine.clearMemory(scope: 0) }
             }
             HStack {
                 Button("导出记忆…") { exportMemory() }
                 Button("导入记忆…") { importMemory() }
             }
+            Text("记忆只保存在这台电脑上；只有配置了模型服务时，对话与记忆片段才会发送给该服务。")
+                .font(.footnote)
+                .foregroundStyle(.secondary)
         }
         .onChange(of: memorySignature) { value in
             guard value != loadedMemorySignature else { return }
@@ -784,6 +804,8 @@ struct SettingsView: View {
         memoryEnabled = memory.config.enabled
         memoryRecentEvents = memory.config.recentEvents
         memoryFactLimit = memory.config.factLimit
+        memoryRetentionDays = memory.config.eventRetentionDays
+        memoryCompress = memory.config.factCompress
         loadedMemorySignature = memorySignature
 
         let greeting = memory.greeting
@@ -817,8 +839,8 @@ struct SettingsView: View {
     }
 
     private var memorySignature: String {
-        [memoryEnabled ? "1" : "0", String(memoryRecentEvents), String(memoryFactLimit)]
-            .joined(separator: "\u{1F}")
+        [memoryEnabled ? "1" : "0", String(memoryRecentEvents), String(memoryFactLimit),
+         String(memoryRetentionDays), memoryCompress ? "1" : "0"].joined(separator: "\u{1F}")
     }
 
     private var greetingSignature: String {
@@ -863,6 +885,8 @@ struct SettingsView: View {
             "enabled": memoryEnabled,
             "recentEvents": memoryRecentEvents,
             "factLimit": memoryFactLimit,
+            "eventRetentionDays": memoryRetentionDays,
+            "factCompress": memoryCompress,
         ])
     }
 

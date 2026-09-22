@@ -220,6 +220,9 @@ fn load_runtime(
     let config = AppConfig::load(&paths.config_file).context("cannot load Petsona config")?;
     let mut runtime = PetsonaRuntime::load(paths, config).context("cannot load Petsona runtime")?;
     runtime.key_configured = petsona_core::deepseek::api_key_present(&runtime.config.deepseek);
+    // REQ-P05: honour the retention window on every start.
+    let retention = runtime.config.memory.event_retention_days;
+    let _ = runtime.memory.prune_events(&runtime.persona.id, retention);
     let wake_tx = command_tx.clone();
     let external_wake = Arc::clone(external_wake);
     runtime.sync_state_server(move || {
@@ -413,13 +416,41 @@ fn apply_command(
                         runtime.selected_pet = Some(id.clone());
                         runtime.config.active_pet = Some(id.clone());
                         runtime.config.first_run = false;
-                        let _ = runtime.memory.record_event(
-                            &runtime.persona.id,
-                            EventKind::PetChanged,
-                            Some(id),
-                        );
-                        if let Err(error) = runtime.save_config() {
-                            runtime.status = format!("保存宠物选择失败：{error}");
+                        // One persona per pet (REQ-P02): follow the binding, or
+                        // adopt the current speaking style for a new pet.
+                        match runtime.config.persona_by_pet.get(&id).cloned() {
+                            Some(persona_id) => {
+                                if let Ok(Some(bound)) = runtime.personas.get(&persona_id) {
+                                    runtime.persona = bound.clone();
+                                    runtime.config.active_persona = Some(bound.id);
+                                }
+                            }
+                            None => {
+                                // REQ-P02: a pet without a binding gets its own
+                                // copy of the current style, so editing one
+                                // pet's speaking style never leaks into
+                                // another. An existing file with that id is
+                                // reused instead of being overwritten.
+                                let style = match runtime.personas.get(&id).ok().flatten() {
+                                    Some(existing) => existing,
+                                    None => {
+                                        let mut copy = runtime.persona.clone();
+                                        copy.id = id.clone();
+                                        copy.builtin = false;
+                                        copy.name = runtime
+                                            .pets
+                                            .iter()
+                                            .find(|pet| pet.id == id)
+                                            .map(|pet| pet.display_name.clone())
+                                            .unwrap_or_else(|| copy.name.clone());
+                                        let _ = runtime.personas.save(&copy);
+                                        copy
+                                    }
+                                };
+                                runtime.persona = style;
+                                runtime.config.active_persona = Some(id.clone());
+                                runtime.config.persona_by_pet.insert(id.clone(), id.clone());
+                            }
                         }
                     }
                     Err(error) => runtime.status = format!("加载宠物失败：{error:#}"),
@@ -433,6 +464,11 @@ fn apply_command(
             match runtime.library.remove_local(&id) {
                 Ok(()) => {
                     runtime.pets = runtime.library.list();
+                    // REQ-P04: dropping a pet removes its binding only. The
+                    // persona file and its memory are kept on purpose — user
+                    // data is never deleted silently (explicit clear lives in
+                    // the settings page).
+                    runtime.config.persona_by_pet.remove(&id);
                     if runtime.config.active_pet.as_deref() == Some(id.as_str()) {
                         if let Some(next) = runtime.pets.first().cloned() {
                             runtime.config.active_pet = Some(next.id.clone());
@@ -495,13 +531,36 @@ fn apply_command(
             }
             true
         }
+        RuntimeCommand::ResetPersona => {
+            // REQ-P03: 「重置为内置」restores the shipped speaking style but
+            // keeps the persona identity (id) and any binding.
+            let builtin = Persona::default();
+            let id = runtime.persona.id.clone();
+            let name = runtime.persona.name.clone();
+            runtime.persona = Persona {
+                id,
+                name,
+                builtin: false,
+                ..builtin
+            };
+            match runtime.personas.save(&runtime.persona) {
+                Ok(()) => runtime.status = "说话方式已重置为内置".to_string(),
+                Err(error) => runtime.status = format!("重置失败：{error}"),
+            }
+            true
+        }
         RuntimeCommand::SelectPersona(id) => {
             match runtime.personas.get(&id) {
                 Ok(Some(persona)) => {
                     runtime.persona = persona;
                     runtime.config.active_persona = Some(id.clone());
+                    // REQ-P02: choosing a speaking style binds it to the pet you
+                    // are looking at, so switching pets restores it later.
+                    if let Some(pet) = runtime.selected_pet.clone() {
+                        runtime.config.persona_by_pet.insert(pet, id.clone());
+                    }
                     let _ = runtime.save_config();
-                    runtime.status = format!("已切换人格：{}", runtime.persona.name);
+                    runtime.status = format!("已切换说话方式：{}", runtime.persona.name);
                 }
                 Ok(None) => runtime.status = format!("人格不存在：{id}"),
                 Err(error) => runtime.status = format!("读取人格失败：{error}"),
@@ -575,6 +634,9 @@ fn apply_command(
         }
         RuntimeCommand::UpdateMemoryConfig(config) => {
             runtime.config.memory = sanitize_memory_config(config);
+            let retention = runtime.config.memory.event_retention_days;
+            let _ = runtime.memory.prune_events(&runtime.persona.id, retention);
+            compress_facts_if_enabled(runtime);
             match runtime.save_config() {
                 Ok(()) => runtime.status = "记忆设置已保存".to_string(),
                 Err(error) => runtime.status = format!("保存记忆设置失败：{error}"),
@@ -586,13 +648,17 @@ fn apply_command(
             value,
             confidence,
         }) => {
-            match runtime.memory.remember_fact(
+            match runtime.memory.remember_fact_from(
                 &runtime.persona.id,
                 key.trim(),
                 value.trim(),
                 confidence.unwrap_or(0.8).clamp(0.0, 1.0),
+                petsona_core::memory::FACT_SOURCE_MANUAL,
             ) {
-                Ok(_) => runtime.status = "已保存一条用户偏好".to_string(),
+                Ok(_) => {
+                    runtime.status = "已保存一条用户偏好".to_string();
+                    compress_facts_if_enabled(runtime);
+                }
                 Err(error) => runtime.status = format!("保存偏好失败：{error}"),
             }
             true
@@ -742,11 +808,15 @@ fn apply_command(
             );
             if runtime.config.memory.enabled {
                 if let Some((key, value, confidence)) = extract_preference(&text) {
-                    let _ =
-                        runtime
-                            .memory
-                            .remember_fact(&runtime.persona.id, &key, &value, confidence);
+                    let _ = runtime.memory.remember_fact_from(
+                        &runtime.persona.id,
+                        &key,
+                        &value,
+                        confidence,
+                        petsona_core::memory::FACT_SOURCE_CONVERSATION,
+                    );
                     runtime.status = "已从对话记录一条用户偏好".to_string();
+                    compress_facts_if_enabled(runtime);
                 }
             }
             runtime
@@ -1018,6 +1088,16 @@ fn sanitize_greeting_config(mut config: GreetingConfig) -> GreetingConfig {
 
 /// Only the two shipped providers exist; anything else (or an empty string in
 /// a hand-edited config) falls back to DeepSeek.
+/// REQ-P05: fold facts beyond `factLimit` into one 「画像」 fact when the user
+/// left compression on. Replaces the old silent truncation.
+fn compress_facts_if_enabled(runtime: &mut PetsonaRuntime) {
+    if !runtime.config.memory.enabled || !runtime.config.memory.fact_compress {
+        return;
+    }
+    let keep = runtime.config.memory.fact_limit.max(1);
+    let _ = runtime.memory.compress_facts(&runtime.persona.id, keep);
+}
+
 fn normalize_provider(provider: &str) -> String {
     if provider
         .trim()
@@ -1513,6 +1593,96 @@ mod tests {
             "clear did not restore {base}, now {}",
             engine.text(RuntimeTextField::State)
         );
+        engine.stop();
+    }
+
+    /// REQ-P01: upgrading an existing install binds the persona that was active
+    /// to the pet that was active, and does it once.
+    #[test]
+    fn first_load_binds_the_active_persona_to_the_active_pet() {
+        let home = engine_home_with_pet();
+        let paths = AppPaths::resolve(home.path().to_path_buf());
+        let mut config = AppConfig::load(&paths.config_file).expect("config");
+        config.active_pet = Some("test_fixture_v2".to_string());
+        config.active_persona = Some("default".to_string());
+        config.save(&paths.config_file).expect("config with a pet");
+
+        let mut engine = RuntimeEngine::spawn(Some(home.path().to_path_buf()), || {}).unwrap();
+        for _ in 0..200 {
+            if engine.snapshot().ready {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        engine.stop();
+
+        let saved = AppConfig::load(&paths.config_file).expect("saved config");
+        assert_eq!(
+            saved.persona_by_pet.get("test_fixture_v2"),
+            Some(&"default".to_string()),
+            "the upgrade must bind the active persona to the active pet"
+        );
+    }
+
+    /// REQ-P02: choosing a speaking style binds it to the current pet, and a
+    /// restart restores that binding instead of the last-used persona.
+    #[test]
+    fn speaking_style_is_bound_to_the_pet_and_restored_after_restart() {
+        let home = engine_home_with_pet();
+        let paths = AppPaths::resolve(home.path().to_path_buf());
+        let mut config = AppConfig::load(&paths.config_file).expect("config");
+        config.active_pet = Some("test_fixture_v2".to_string());
+        config.save(&paths.config_file).expect("config with a pet");
+
+        let mut engine = RuntimeEngine::spawn(Some(home.path().to_path_buf()), || {}).unwrap();
+        for _ in 0..200 {
+            if engine.snapshot().ready && engine.snapshot().has_pet {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+
+        engine
+            .send(RuntimeCommand::CreatePersona(PersonaCreate {
+                id: "stylish".to_string(),
+                name: "有型".to_string(),
+                template: None,
+            }))
+            .expect("create persona");
+        engine
+            .send(RuntimeCommand::SelectPersona("stylish".to_string()))
+            .expect("select persona");
+        for _ in 0..200 {
+            if engine.text(RuntimeTextField::PersonaId) == "stylish" {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        engine.stop();
+
+        let saved = AppConfig::load(&paths.config_file).expect("saved config");
+        assert_eq!(
+            saved.persona_by_pet.get("test_fixture_v2"),
+            Some(&"stylish".to_string()),
+            "the chosen speaking style must be bound to the current pet"
+        );
+
+        // Restart: the pet's binding wins over any stale activePersona.
+        let mut config = AppConfig::load(&paths.config_file).expect("config");
+        config.active_persona = Some("default".to_string());
+        config
+            .save(&paths.config_file)
+            .expect("stale active persona");
+        let mut engine = RuntimeEngine::spawn(Some(home.path().to_path_buf()), || {}).unwrap();
+        let mut restored = false;
+        for _ in 0..200 {
+            if engine.text(RuntimeTextField::PersonaId) == "stylish" {
+                restored = true;
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert!(restored, "the pet binding must be used after a restart");
         engine.stop();
     }
 

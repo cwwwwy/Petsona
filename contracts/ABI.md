@@ -54,7 +54,7 @@ engine.
 
 ABI 3 keeps the existing struct layout. Text fields `12–16` expose the current
 persona, persona list, non-secret DeepSeek configuration, current-persona
-memory projection and a pending pet-import conflict. Command kinds `23–41`
+memory projection and a pending pet-import conflict. Command kinds `23–42`
 cover DeepSeek/memory/greeting-configuration updates, fact operations (add / edit /
 scoped clear), persona CRUD/import/export, memory export/import and clearing an
 import conflict. `value` carries the memory scope for the scoped clear

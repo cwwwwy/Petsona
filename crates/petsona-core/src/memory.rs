@@ -31,6 +31,28 @@ pub struct Fact {
     pub confidence: f32,
     pub created_at: i64,
     pub updated_at: i64,
+    /// Where this fact came from: `manual`, `conversation`, `import` or
+    /// `compressed` (REQ-P06). Older files default to `manual`.
+    #[serde(default = "default_fact_source")]
+    pub source: String,
+}
+
+fn default_fact_source() -> String {
+    FACT_SOURCE_MANUAL.to_string()
+}
+
+pub const FACT_SOURCE_MANUAL: &str = "manual";
+pub const FACT_SOURCE_CONVERSATION: &str = "conversation";
+pub const FACT_SOURCE_IMPORT: &str = "import";
+pub const FACT_SOURCE_COMPRESSED: &str = "compressed";
+
+/// True when the retention window has expired (0 days = keep forever).
+pub fn retention_expired(created_at_ms: i64, now_ms: i64, days: u32) -> bool {
+    if days == 0 {
+        return false;
+    }
+    let window_ms = i64::from(days) * 24 * 60 * 60 * 1000;
+    now_ms.saturating_sub(created_at_ms) > window_ms
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -321,6 +343,18 @@ impl PetMemory {
         value: &str,
         confidence: f32,
     ) -> Result<Fact> {
+        self.remember_fact_from(persona_id, key, value, confidence, FACT_SOURCE_MANUAL)
+    }
+
+    /// Same as [`Self::remember_fact`] but records where the fact came from.
+    pub fn remember_fact_from(
+        &self,
+        persona_id: &str,
+        key: &str,
+        value: &str,
+        confidence: f32,
+        source: &str,
+    ) -> Result<Fact> {
         let now = now_ms();
         let mut memory = self.inner.lock();
         let persona = memory.personas.entry(persona_id.to_string()).or_default();
@@ -333,6 +367,7 @@ impl PetMemory {
                 fact.value = value.to_string();
                 fact.confidence = confidence;
                 fact.updated_at = now;
+                fact.source = source.to_string();
                 fact.clone()
             }
             None => {
@@ -343,6 +378,7 @@ impl PetMemory {
                     confidence,
                     created_at: now,
                     updated_at: now,
+                    source: source.to_string(),
                 };
                 persona.facts.push(fact.clone());
                 fact
@@ -398,6 +434,89 @@ impl PetMemory {
             .sort_by_key(|fact| std::cmp::Reverse(fact.updated_at));
         self.save_locked(&memory)?;
         Ok(Some(updated))
+    }
+
+    /// Drop events older than the retention window (REQ-P05). Returns how many
+    /// events were removed; `days == 0` keeps everything.
+    pub fn prune_events(&self, persona_id: &str, days: u32) -> Result<usize> {
+        if days == 0 {
+            return Ok(0);
+        }
+        let now = now_ms();
+        let mut memory = self.inner.lock();
+        let Some(persona) = memory.personas.get_mut(persona_id) else {
+            return Ok(0);
+        };
+        let before = persona.events.len();
+        persona
+            .events
+            .retain(|event| !retention_expired(event.created_at, now, days));
+        let removed = before - persona.events.len();
+        if removed > 0 {
+            self.save_locked(&memory)?;
+        }
+        Ok(removed)
+    }
+
+    /// Keep the `keep` most recently updated facts; everything older is folded
+    /// into one deterministic 「画像」 fact so nothing is silently dropped
+    /// (REQ-P05). Returns how many facts were merged away.
+    pub fn compress_facts(&self, persona_id: &str, keep: usize) -> Result<usize> {
+        let mut memory = self.inner.lock();
+        let Some(persona) = memory.personas.get_mut(persona_id) else {
+            return Ok(0);
+        };
+        if persona.facts.len() <= keep.max(1) {
+            return Ok(0);
+        }
+
+        let keep = keep.max(1);
+        let mut sorted = persona.facts.clone();
+        sorted.sort_by_key(|fact| std::cmp::Reverse(fact.updated_at));
+        let (recent, old) = sorted.split_at(keep);
+        let merged = old
+            .iter()
+            .map(|fact| format!("{}：{}", fact.key, fact.value))
+            .collect::<Vec<_>>()
+            .join("；");
+
+        let profile = persona
+            .facts
+            .iter()
+            .find(|fact| fact.key == "画像" && fact.source == FACT_SOURCE_COMPRESSED)
+            .cloned();
+        let merged_count = old.len();
+        let now = now_ms();
+        let profile = match profile {
+            Some(mut profile) => {
+                profile.value = format!("{}；{}", profile.value, merged);
+                profile.updated_at = now;
+                profile
+            }
+            None => Fact {
+                id: uuid::Uuid::new_v4().to_string(),
+                key: "画像".to_string(),
+                value: merged,
+                confidence: 0.6,
+                created_at: now,
+                updated_at: now,
+                source: FACT_SOURCE_COMPRESSED.to_string(),
+            },
+        };
+
+        // The previous profile (if any) is replaced by the merged one instead of
+        // being kept next to it.
+        persona.facts = recent
+            .iter()
+            .filter(|fact| !(fact.key == "画像" && fact.source == FACT_SOURCE_COMPRESSED))
+            .cloned()
+            .collect();
+        persona.facts.push(profile);
+        persona
+            .facts
+            .sort_by_key(|fact| std::cmp::Reverse(fact.updated_at));
+        self.save_locked(&memory)?;
+        Ok(merged_count)
     }
 
     /// Remove every fact of a persona but keep its events (and vice versa with
@@ -657,6 +776,79 @@ mod tests {
             .update_fact("default", &fact.id, "咖啡", "摩卡", 0.5)
             .unwrap()
             .is_none());
+    }
+
+    #[test]
+    fn retention_prunes_only_expired_events() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("memory.json");
+        let memory = PetMemory::open(&path).unwrap();
+        memory
+            .record_event("default", EventKind::AppStart, Some("新".into()))
+            .unwrap();
+        memory
+            .record_event("default", EventKind::UserClick, Some("旧".into()))
+            .unwrap();
+
+        // Backdate the "旧" event by hand: 10 days old, retention of 3 days.
+        let mut file: MemoryFile =
+            serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        let persona = file.personas.get_mut("default").unwrap();
+        let old = now_ms() - 10 * 24 * 60 * 60 * 1000;
+        for event in persona.events.iter_mut() {
+            if event.text.as_deref() == Some("旧") {
+                event.created_at = old;
+            }
+        }
+        std::fs::write(&path, serde_json::to_string(&file).unwrap()).unwrap();
+
+        let reopened = PetMemory::open(&path).unwrap();
+        assert_eq!(reopened.prune_events("default", 3).unwrap(), 1);
+        let events = reopened.recent_events("default", 10);
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].text.as_deref(), Some("新"));
+
+        // 0 days = keep everything.
+        assert_eq!(reopened.prune_events("default", 0).unwrap(), 0);
+        assert_eq!(reopened.recent_events("default", 10).len(), 1);
+    }
+
+    #[test]
+    fn compression_folds_old_facts_into_a_profile() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("memory.json");
+        let memory = PetMemory::open(&path).unwrap();
+        for (key, value) in [("咖啡", "美式"), ("茶", "乌龙"), ("音乐", "爵士")] {
+            memory.remember_fact("default", key, value, 0.9).unwrap();
+        }
+
+        // Explicit timestamps: 咖啡 is the oldest, 音乐 the newest.
+        let now = now_ms();
+        let mut file: MemoryFile =
+            serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        let persona = file.personas.get_mut("default").unwrap();
+        for fact in persona.facts.iter_mut() {
+            fact.updated_at = match fact.key.as_str() {
+                "咖啡" => now - 3 * 24 * 60 * 60 * 1000,
+                "茶" => now - 2 * 24 * 60 * 60 * 1000,
+                _ => now - 24 * 60 * 60 * 1000,
+            };
+        }
+        std::fs::write(&path, serde_json::to_string(&file).unwrap()).unwrap();
+        let memory = PetMemory::open(&path).unwrap();
+
+        assert_eq!(memory.compress_facts("default", 2).unwrap(), 1);
+        let facts = memory.list_facts("default");
+        assert_eq!(facts.len(), 3, "2 kept + 1 profile");
+        let profile = facts.iter().find(|fact| fact.key == "画像").unwrap();
+        assert_eq!(profile.source, FACT_SOURCE_COMPRESSED);
+        assert!(profile.value.contains("咖啡：美式"), "{}", profile.value);
+        assert!(!facts.iter().any(|fact| fact.key == "咖啡"));
+
+        // Compressing again folds into the same profile instead of duplicating it.
+        assert_eq!(memory.compress_facts("default", 2).unwrap(), 1);
+        let facts = memory.list_facts("default");
+        assert_eq!(facts.iter().filter(|fact| fact.key == "画像").count(), 1);
     }
 
     #[test]

@@ -118,6 +118,7 @@ pub enum PetsonaCommandKind {
     ExportMemory = 39,
     ImportMemory = 40,
     ListModels = 41,
+    ResetPersona = 42,
 }
 
 #[repr(C)]

@@ -1,5 +1,6 @@
 //! Application configuration and paths.
 
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
@@ -70,6 +71,17 @@ pub struct MemoryConfig {
     pub enabled: bool,
     pub recent_events: usize,
     pub fact_limit: usize,
+    /// Drop events older than this many days; 0 keeps everything (REQ-P05).
+    #[serde(default)]
+    pub event_retention_days: u32,
+    /// Fold facts beyond `fact_limit` into one 「画像」 fact instead of dropping
+    /// them (REQ-P05). On by default: it replaces a silent truncation.
+    #[serde(default = "default_true")]
+    pub fact_compress: bool,
+}
+
+fn default_true() -> bool {
+    true
 }
 
 impl Default for MemoryConfig {
@@ -78,6 +90,8 @@ impl Default for MemoryConfig {
             enabled: true,
             recent_events: 5,
             fact_limit: 20,
+            event_retention_days: 0,
+            fact_compress: true,
         }
     }
 }
@@ -174,6 +188,10 @@ pub struct AppConfig {
     pub schema_version: u32,
     pub active_pet: Option<String>,
     pub active_persona: Option<String>,
+    /// One speaking style per pet (REQ-P01). A missing entry means "the built-in
+    /// persona"; `active_persona` keeps mirroring the currently loaded one.
+    #[serde(default)]
+    pub persona_by_pet: BTreeMap<String, String>,
     pub first_run: bool,
     pub window: PetWindowConfig,
     pub deepseek: DeepSeekConfig,
@@ -188,6 +206,7 @@ impl Default for AppConfig {
             schema_version: CONFIG_SCHEMA_VERSION,
             active_pet: None,
             active_persona: None,
+            persona_by_pet: BTreeMap::new(),
             first_run: true,
             window: PetWindowConfig::default(),
             deepseek: DeepSeekConfig::default(),

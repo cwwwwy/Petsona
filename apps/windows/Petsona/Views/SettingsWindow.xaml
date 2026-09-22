@@ -57,7 +57,7 @@
                         <SymbolIcon Symbol="Font" />
                     </NavigationViewItem.Icon>
                 </NavigationViewItem>
-                <NavigationViewItem Content="人格" Tag="persona">
+                <NavigationViewItem Content="说话方式" Tag="persona">
                     <NavigationViewItem.Icon>
                         <SymbolIcon Symbol="Contact" />
                     </NavigationViewItem.Icon>
@@ -231,35 +231,21 @@
                         </Border>
                     </StackPanel>
 
-                    <!-- ================================================ 人格 -->
+                    <!-- ============================================== 说话方式 -->
                     <StackPanel x:Name="PagePersona" Spacing="6" Visibility="Collapsed">
-                        <TextBlock Text="人格" Style="{StaticResource SectionHeaderStyle}" />
+                        <TextBlock Text="说话方式" Style="{StaticResource SectionHeaderStyle}" />
                         <Border Style="{StaticResource SettingsCardStyle}">
                             <StackPanel Spacing="8">
-                                <TextBlock Text="当前人格" Style="{StaticResource CardHeaderStyle}" />
-                                <TextBlock Text="人格决定语气、语言与系统提示词；记忆与 DeepSeek 连接在各自页面配置。"
+                                <TextBlock Text="这只宠物的说话方式" Style="{StaticResource CardHeaderStyle}" />
+                                <TextBlock Text="说话方式跟着宠物走：切换宠物就是切换语气与提示词。记忆、模型服务在各自页面配置。"
                                            Style="{StaticResource CardDescriptionStyle}" />
-                                <ComboBox x:Name="PersonaCombo" MinWidth="240" HorizontalAlignment="Left"
-                                          SelectionChanged="OnPersonaSelectionChanged" />
                                 <StackPanel Orientation="Horizontal" Spacing="8">
-                                    <Button Content="新建…" Click="OnCreatePersonaClick" />
-                                    <Button Content="复制…" Click="OnDuplicatePersonaClick" />
-                                    <Button Content="删除" Click="OnDeletePersonaClick" />
                                     <Button Content="导入…" Click="OnImportPersonaClick" />
                                     <Button Content="导出…" Click="OnExportPersonaClick" />
+                                    <Button Content="重置为内置" Click="OnResetPersonaClick" />
                                 </StackPanel>
-                                <TextBlock x:Name="PersonaIdBox" Style="{StaticResource CardDescriptionStyle}" />
                             </StackPanel>
                         </Border>
-
-                        <Border Style="{StaticResource SettingsCardStyle}">
-                            <StackPanel Spacing="8">
-                                <TextBlock Text="名称" Style="{StaticResource CardHeaderStyle}" />
-                                <TextBlock Text="显示在设置与菜单里的人格名字。" Style="{StaticResource CardDescriptionStyle}" />
-                                <TextBox x:Name="PersonaNameBox" />
-                            </StackPanel>
-                        </Border>
-                        <TextBlock Text="说话方式" Style="{StaticResource SectionHeaderStyle}" />
                         <Border Style="{StaticResource SettingsCardStyle}">
                             <StackPanel Spacing="8">
                                 <TextBlock Text="语气" Style="{StaticResource CardHeaderStyle}" />
@@ -327,10 +313,29 @@
                             <Grid ColumnDefinitions="*,Auto" ColumnSpacing="16">
                                 <StackPanel Grid.Column="0" Spacing="2">
                                     <TextBlock Text="事实上限" Style="{StaticResource CardHeaderStyle}" />
-                                    <TextBlock Text="长期偏好（事实）最多保留的条数。" Style="{StaticResource CardDescriptionStyle}" />
+                                    <TextBlock Text="长期偏好（事实）保留的条数；超出时旧的会并入一条「画像」。" Style="{StaticResource CardDescriptionStyle}" />
                                 </StackPanel>
                                 <NumberBox Grid.Column="1" x:Name="MemoryFactLimitBox" Minimum="1" Maximum="50"
                                            MinWidth="120" VerticalAlignment="Center" />
+                            </Grid>
+                        </Border>
+                        <Border Style="{StaticResource SettingsCardStyle}">
+                            <Grid ColumnDefinitions="*,Auto" ColumnSpacing="16">
+                                <StackPanel Grid.Column="0" Spacing="2">
+                                    <TextBlock Text="事件保留天数" Style="{StaticResource CardHeaderStyle}" />
+                                    <TextBlock Text="超过这个天数的互动事件会被清理；0 = 永久保留。" Style="{StaticResource CardDescriptionStyle}" />
+                                </StackPanel>
+                                <NumberBox Grid.Column="1" x:Name="MemoryRetentionBox" Minimum="0" Maximum="3650"
+                                           MinWidth="120" VerticalAlignment="Center" />
+                            </Grid>
+                        </Border>
+                        <Border Style="{StaticResource SettingsCardStyle}">
+                            <Grid ColumnDefinitions="*,Auto" ColumnSpacing="16">
+                                <StackPanel Grid.Column="0" Spacing="2">
+                                    <TextBlock Text="自动压缩偏好" Style="{StaticResource CardHeaderStyle}" />
+                                    <TextBlock Text="偏好超过上限时合并成一条「画像」，而不是丢弃。" Style="{StaticResource CardDescriptionStyle}" />
+                                </StackPanel>
+                                <ToggleSwitch Grid.Column="1" x:Name="MemoryCompressToggle" VerticalAlignment="Center" />
                             </Grid>
                         </Border>
 
@@ -338,7 +343,7 @@
                         <Border Style="{StaticResource SettingsCardStyle}">
                             <StackPanel Spacing="8">
                                 <TextBlock Text="长期偏好" Style="{StaticResource CardHeaderStyle}" />
-                                <TextBlock Text="明确表达过的喜好会记在这里；选中一条可以修改。删除不可撤销，导入会覆盖当前人格的偏好与事件。"
+                                <TextBlock Text="明确表达过的喜好会记在这里；选中一条可以修改。列表会标出来源（手动 / 对话 / 导入 / 压缩）。"
                                            Style="{StaticResource CardDescriptionStyle}" />
                                 <StackPanel Orientation="Horizontal" Spacing="8">
                                     <TextBox x:Name="FactKeyBox" Header="偏好名称" Width="180" />
@@ -351,7 +356,10 @@
                                 <ListView x:Name="FactsList" MaxHeight="220" SelectionChanged="OnFactSelectionChanged">
                                     <ListView.ItemTemplate>
                                         <DataTemplate>
-                                            <TextBlock Text="{Binding Label}" TextWrapping="Wrap" />
+                                            <StackPanel Spacing="2">
+                                                <TextBlock Text="{Binding Label}" TextWrapping="Wrap" />
+                                                <TextBlock Text="{Binding Meta}" Style="{StaticResource CardDescriptionStyle}" />
+                                            </StackPanel>
                                         </DataTemplate>
                                     </ListView.ItemTemplate>
                                 </ListView>
@@ -359,12 +367,14 @@
                                     <Button Content="删除选中事实" Click="OnForgetFactClick" />
                                     <Button Content="只清偏好" Click="OnClearFactsClick" />
                                     <Button Content="只清事件" Click="OnClearEventsClick" />
-                                    <Button Content="全部清空" Click="OnClearMemoryClick" />
+                                    <Button Content="清空这只宠物的记忆" Click="OnClearMemoryClick" />
                                 </StackPanel>
                                 <StackPanel Orientation="Horizontal" Spacing="8">
                                     <Button Content="导出记忆…" Click="OnExportMemoryClick" />
                                     <Button Content="导入记忆…" Click="OnImportMemoryClick" />
                                 </StackPanel>
+                                <TextBlock Text="记忆只保存在这台电脑上；只有配置了模型服务时，对话与记忆片段才会发送给该服务。"
+                                           Style="{StaticResource CardDescriptionStyle}" />
                             </StackPanel>
                         </Border>
                     </StackPanel>

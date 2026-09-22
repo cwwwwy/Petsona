@@ -70,7 +70,7 @@ MSVC 缺 `link.exe` 的 GNU 回退写在 `docs/WINDOWS_VERIFICATION.md`。
 ## 跨对话工作流（规划 → 执行 → 审查）
 
 - 计划契约：`docs/plans/<任务名>.md`；执行证据：`docs/execution/<任务名>.md`。模板分别为各目录的 `TEMPLATE.md`。
-- 任务线：macOS [native-ui-rewrite](docs/plans/native-ui-rewrite.md)（执行记录 [同名](docs/execution/native-ui-rewrite.md)）；Windows [windows-native-rewrite](docs/plans/windows-native-rewrite.md)（执行记录 [同名](docs/execution/windows-native-rewrite.md)）；跨两端 [settings-consolidation](docs/plans/settings-consolidation.md)（执行记录 [同名](docs/execution/settings-consolidation.md)）——设置项收束 + 设置页卡片化 + 空闲问候；macOS 同构部分仍待 Mac 验证。功能表 [FEATURE_PARITY.md](docs/FEATURE_PARITY.md) 只汇总状态，不覆盖计划。
+- 任务线：macOS [native-ui-rewrite](docs/plans/native-ui-rewrite.md)（执行记录 [同名](docs/execution/native-ui-rewrite.md)）；Windows [windows-native-rewrite](docs/plans/windows-native-rewrite.md)（执行记录 [同名](docs/execution/windows-native-rewrite.md)）；跨两端 [settings-consolidation](docs/plans/settings-consolidation.md) 与 [persona-memory-reshape](docs/plans/persona-memory-reshape.md)（一宠一人格 + 记忆重塑，P01–P04 已实施）（执行记录 [同名](docs/execution/settings-consolidation.md)）——设置项收束 + 设置页卡片化 + 空闲问候；macOS 同构部分仍待 Mac 验证。功能表 [FEATURE_PARITY.md](docs/FEATURE_PARITY.md) 只汇总状态，不覆盖计划。
 - 每个对话先确认角色与用户授权，读取 AGENTS、指定计划及执行记录，再用 `git status`、`git log`、`git diff` 和未跟踪文件核对基线。已有用户改动必须保留。
 - **规划**：只读调查，明确目标/非目标、逐文件增改删、约束、REQ 编号、依赖、验收矩阵、命令和完成条件。用户要求“不修改文件”时只在对话输出；授权落盘后才写指定文档，不写产品代码。
 - **执行**：先复述关键目标和验收标准，再按指定计划实施。可作计划内的局部实现选择，不得自行缩减功能、将完整交付改成骨架、跳过验收或改变架构边界。

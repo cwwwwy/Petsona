@@ -80,10 +80,20 @@ impl PetsonaRuntime {
 
         let personas = PersonaStore::new(paths.personas_dir.clone());
         personas.ensure()?;
-        let persona = config
-            .active_persona
+        // REQ-P02: the speaking style bound to the active pet wins over the
+        // last-used persona, so a restart lands on the pet's own style.
+        let bound = config
+            .active_pet
             .as_ref()
-            .and_then(|id| personas.get(id).ok().flatten())
+            .and_then(|pet| config.persona_by_pet.get(pet).cloned());
+        let persona = bound
+            .and_then(|id| personas.get(&id).ok().flatten())
+            .or_else(|| {
+                config
+                    .active_persona
+                    .as_ref()
+                    .and_then(|id| personas.get(id).ok().flatten())
+            })
             .or_else(|| {
                 personas
                     .list()
@@ -93,6 +103,21 @@ impl PetsonaRuntime {
             .unwrap_or_default();
         if config.active_persona.as_deref() != Some(persona.id.as_str()) {
             config.active_persona = Some(persona.id.clone());
+        }
+
+        // REQ-P01 migration: the first run after the upgrade binds whatever
+        // persona is active to the current pet, so existing users keep their
+        // speaking style. Other pets fall back to the built-in persona.
+        let mut migrated_binding = false;
+        if config.persona_by_pet.is_empty() {
+            if let Some(pet) = config.active_pet.clone() {
+                config.persona_by_pet.insert(pet, persona.id.clone());
+                migrated_binding = true;
+            }
+        }
+        if migrated_binding {
+            // Persist immediately: the migration must happen exactly once.
+            let _ = config.save(&paths.config_file);
         }
 
         let library = PetLibrary::discover(paths.pets_dir.clone());

@@ -127,6 +127,7 @@ pub enum RuntimeCommand {
     DeletePet(String),
     UpdatePersona(Box<PersonaPatch>),
     SavePersona,
+    ResetPersona,
     RefreshPersonas,
     CreatePersona(PersonaCreate),
     DuplicatePersona(PersonaDuplicate),

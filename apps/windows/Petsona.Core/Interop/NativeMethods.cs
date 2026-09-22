@@ -83,6 +83,7 @@ public enum PetsonaCommandKind : uint
     ExportMemory = 39,
     ImportMemory = 40,
     ListModels = 41,
+    ResetPersona = 42,
 }
 
 /// <summary>Mirrors <c>PetsonaStringView</c>: caller-owned bytes borrowed for one call.</summary>

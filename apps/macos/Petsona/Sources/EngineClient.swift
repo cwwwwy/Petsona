@@ -179,6 +179,10 @@ final class EngineClient: ObservableObject {
         sendJSONObject(kind: PETSONA_COMMAND_UPDATE_MEMORY_CONFIG, object: object)
     }
 
+    func resetPersona() {
+        send(kind: PETSONA_COMMAND_RESET_PERSONA)
+    }
+
     func listModels() {
         send(kind: PETSONA_COMMAND_LIST_MODELS)
     }
