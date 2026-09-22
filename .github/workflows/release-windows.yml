@@ -52,3 +52,16 @@ jobs:
           name: Petsona-windows-${{ runner.arch }}
           path: dist/*.zip
           if-no-files-found: error
+
+      # W-28: the workflow used to stop at the artifact upload, so there was no
+      # download page. Tags create a release; `-rc.` tags are marked prerelease.
+      - name: Create GitHub release
+        if: github.ref_type == 'tag'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $tag = $env:GITHUB_REF_NAME
+          $arguments = @("release", "create", $tag, "dist/*.zip",
+                         "--title", $tag, "--generate-notes", "--verify-tag")
+          if ($tag -match '-rc\.') { $arguments += "--prerelease" }
+          gh @arguments

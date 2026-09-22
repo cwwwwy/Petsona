@@ -85,6 +85,13 @@ internal sealed unsafe class PetWindow : IDisposable
     /// <summary>True while the user hid the pet from the tray menu.</summary>
     public bool Hidden { get; set; }
 
+    /// <summary>
+    /// While true the window stays hidden even when a frame is ready. The
+    /// controller uses it to hold the pet back until the remembered position is
+    /// applied, so it never flashes at the creation coordinates (bug 2026-09-22).
+    /// </summary>
+    public bool DeferShow { get; set; }
+
     /// <summary>The sprite window has a real frame size (not the 1x1 placeholder).</summary>
     public bool HasAppliedSize => _appliedWidth > 1 && _appliedHeight > 1;
 
@@ -145,7 +152,7 @@ internal sealed unsafe class PetWindow : IDisposable
             _appliedFrame = frame;
         }
 
-        var visible = !Hidden && snapshot.Ready != 0 && snapshot.HasPet != 0 && snapshot.PetVisible != 0 && frame is not null;
+        var visible = !Hidden && !DeferShow && snapshot.Ready != 0 && snapshot.HasPet != 0 && snapshot.PetVisible != 0 && frame is not null;
         if (visible != _appliedVisible)
         {
             _ = NativeWin32.ShowWindow(_hwnd, visible ? NativeWin32.SW_SHOWNOACTIVATE : NativeWin32.SW_HIDE);
@@ -503,6 +510,8 @@ internal sealed unsafe class PetWindow : IDisposable
                     LpfnWndProc = (nint)(delegate* unmanaged[Stdcall]<nint, uint, nint, nint, nint>)&WndProc,
                     HInstance = NativeWin32.GetModuleHandleW(null),
                     HCursor = ArrowCursor,
+                    HIcon = WindowIcon.Big,
+                    HIconSm = WindowIcon.Small,
                     LpszClassName = className,
                 };
                 if (NativeWin32.RegisterClassExW(&wndClass) == 0)

@@ -148,6 +148,23 @@ Invoke-RestMethod -Method Post -Uri http://127.0.0.1:17873/state -ContentType 'a
 
 要点：`clear` 只解除**该 source 自己**的覆盖（其他 source 的状态不受影响）；同一 body 里既带 `state` 又带 `action:"clear"` 时 **clear 优先**；`action` 匹配会去掉首尾空白且大小写不敏感；未知 `action` 不改变原逻辑（带合法 `state` 时照常推状态，否则仍 400）。自动覆盖：smoke **N25**。
 
+## R. 发布前清单（windows-v0.1.0-rc.1，2026-09-22）
+
+| # | 事项 | 状态 |
+|---|---|---|
+| R1 | 版本号规则：SemVer，唯一来源 `Cargo.toml` workspace `version`；tag `windows-v<version>`；预发布 `-rc.N` | ✅ 已定为 `0.1.0-rc.1`（`Cargo.lock` 同步） |
+| R2 | 运行时依赖：**self-contained**（`WindowsAppSDKSelfContained` + `SelfContained`）→ 解压即用，无需装 .NET / Windows App SDK | ✅ csproj 已开；本地副本构建成功（238 MB 目录，含 coreclr / WindowsAppRuntime）；自包含产物 **smoke 25/25** |
+| R3 | UNC 限制：`mt.exe` 不能读 `\\wsl.localhost\...`，因此 UNC 根会回退为 framework-dependent 并打印警告 | ✅ `verify-windows.ps1` / `package-windows.ps1` 已处理；**自包含 zip 必须在本地副本或 CI 生成** |
+| R4 | Release 通道（W-28）：tag 触发 `gh release create`，`-rc.` 自动标记 pre-release | ✅ `release-windows.yml` 新增步骤 |
+| R5 | CHANGELOG / README：0.1.0-rc.1 条目 + 安装 / 升级 / 卸载 / 隐私说明 | ✅ 已写 |
+| R6 | FFI panic 隔离（REV-05）：`catch_unwind` 已存在；新增回归测试，并修掉"panic 文案被 null-handle 错误覆盖" | ✅ `cargo test -p petsona-ffi` 4/4 |
+| R7 | 完整门禁 | ✅ `-Full`：cargo 全量 + dotnet 37/37 + 打包结构通过；native smoke 首轮 N18 FAIL（桌面鼠标干扰）→ 单独重跑 **25/25** |
+| R8 | D1/D2 release exe 无控制台、任务栏 / 资源管理器图标 | ⏳ 待人工（用自包含产物） |
+| R9 | D5 开机自启：真实注销 + 登录验证 | ⏳ 待人工 |
+| R10 | D6 干净机器（或干净 Windows 用户）：解压 → 双击 → 能用 | ⏳ 待人工（自包含产物已就绪，见交付说明路径） |
+| R11 | 首次 `workflow_dispatch` 试跑 release workflow | ⏳ 待人工（推送后） |
+| R12 | 打 tag `windows-v0.1.0-rc.1` → CI 出包 → 检查 Release（pre-release） | ⏳ 待人工（命令见执行记录） |
+
 ## D. 打包与发布
 
 | # | 操作 | 预期结果 | 状态 |

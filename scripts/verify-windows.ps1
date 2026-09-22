@@ -161,9 +161,19 @@ try {
     $env:PETSONA_FFI_DLL = $ffiDll
 
     Invoke-Step "dotnet restore (locked)" { & $dotnet restore apps/windows/Petsona.sln --locked-mode }
-    Invoke-Step "dotnet build (debug)" { & $dotnet build apps/windows/Petsona.sln -c Debug --no-restore }
+    # The Windows App SDK self-contained build shells out to mt.exe, which
+    # cannot read UNC paths (\wsl.localhost\...). Release artifacts must be
+    # built from a local checkout or CI; on a UNC root we fall back to a
+    # framework-dependent build so the gates still run.
+    $selfContainedArgs = @()
+    if ($isUncRoot) {
+        Write-Host "UNC root: building framework-dependent (mt.exe cannot read UNC); package on a local copy or CI for the self-contained release zip" -ForegroundColor Yellow
+        $selfContainedArgs = @("-p:WindowsAppSDKSelfContained=false", "-p:SelfContained=false")
+    }
+
+    Invoke-Step "dotnet build (debug)" { & $dotnet build apps/windows/Petsona.sln -c Debug --no-restore @selfContainedArgs }
     Invoke-Step "dotnet format" { & $dotnet format apps/windows/Petsona.sln --verify-no-changes --no-restore }
-    Invoke-Step "dotnet build (release)" { & $dotnet build apps/windows/Petsona.sln -c Release -p:Platform=x64 --no-restore }
+    Invoke-Step "dotnet build (release)" { & $dotnet build apps/windows/Petsona.sln -c Release -p:Platform=x64 --no-restore @selfContainedArgs }
 
     # Guard against the class of bug where the gate builds one toolchain's DLL
     # but the app output silently keeps a stale DLL from the other toolchain.

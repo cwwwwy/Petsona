@@ -218,6 +218,8 @@ internal sealed unsafe class OverlayWindow : IDisposable
                     LpfnWndProc = (nint)(delegate* unmanaged[Stdcall]<nint, uint, nint, nint, nint>)&WndProc,
                     HInstance = NativeWin32.GetModuleHandleW(null),
                     HCursor = ArrowCursor,
+                    HIcon = WindowIcon.Big,
+                    HIconSm = WindowIcon.Small,
                     LpszClassName = className,
                 };
                 if (NativeWin32.RegisterClassExW(&wndClass) == 0)

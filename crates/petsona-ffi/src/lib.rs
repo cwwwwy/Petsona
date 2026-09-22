@@ -41,10 +41,13 @@ where
     match catch_unwind(AssertUnwindSafe(f)) {
         Ok(status) => status,
         Err(_) => {
-            error::set("Rust panic crossed the FFI boundary; engine is unusable");
+            // Mark the fault first (it may set its own error), then make the
+            // panic the message the caller reads back (REV-05).
+            const PANIC_MESSAGE: &str = "Rust panic crossed the FFI boundary; engine is unusable";
             if let Ok(engine) = engine_mut(handle) {
-                engine.mark_faulted(error::get());
+                engine.mark_faulted(PANIC_MESSAGE);
             }
+            error::set(PANIC_MESSAGE);
             PetsonaStatus::Panic
         }
     }
@@ -281,6 +284,20 @@ pub extern "C" fn petsona_last_error_copy(destination: *mut u8, capacity: usize)
 mod tests {
     use super::*;
     use std::fs;
+
+    /// REV-05: a panic inside a command must never unwind across the C ABI — it
+    /// becomes `PETSONA_PANIC` plus a readable last-error, and the handle is
+    /// marked faulted so later calls report the fault instead of running on.
+    #[test]
+    fn panic_becomes_a_panic_status_instead_of_unwinding() {
+        let status = status_with_panic(std::ptr::null_mut(), || panic!("boom"));
+        assert_eq!(status, PetsonaStatus::Panic);
+        assert!(
+            error::get().contains("panic"),
+            "last error was {:?}",
+            error::get()
+        );
+    }
     use std::mem::{align_of, size_of};
     use std::time::Duration;
 

@@ -12,6 +12,9 @@ pub fn clear() {
     set("");
 }
 
+/// Reads the last error on this thread. The C API copies it with [`copy`], so
+/// this helper only exists for tests.
+#[cfg(test)]
 pub fn get() -> String {
     LAST_ERROR.with(|slot| slot.borrow().clone())
 }

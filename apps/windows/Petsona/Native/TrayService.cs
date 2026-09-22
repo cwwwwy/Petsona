@@ -103,6 +103,8 @@ internal sealed unsafe class TrayService : IDisposable
                 LpfnWndProc = (nint)(delegate* unmanaged[Stdcall]<nint, uint, nint, nint, nint>)&WndProc,
                 HInstance = hInstance,
                 HCursor = NativeWin32.LoadCursorW(0, (nint)NativeWin32.IDC_ARROW),
+                HIcon = WindowIcon.Big,
+                HIconSm = WindowIcon.Small,
                 LpszClassName = className,
             };
             _ = NativeWin32.RegisterClassExW(&wndClass);

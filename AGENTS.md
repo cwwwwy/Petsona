@@ -86,6 +86,10 @@ MSVC 缺 `link.exe` 的 GNU 回退写在 `docs/WINDOWS_VERIFICATION.md`。
 - 用户确认最终方向是共享 Rust 核心 + 原生前端：macOS SwiftUI/AppKit，Windows C#/WinUI 3/Win32；2026-09-20 确认两线并行推进（Windows 按 windows-native-rewrite 启动），Linux 不在范围。
 - Git HEAD 由 `git log` 为准（2026-09-21 最近提交：`1b2c2c1` 收口 W 矩阵、`6cdfaef` 修窗口光标）。计划与执行记录见上，文档版本不能替代 Git/工作区基线。
 - 文档布局（2026-09-21 清理）：现行清单只有 `docs/WINDOWS_VERIFICATION.md`（0/W/D/F），旧 egui 清单与旧问题跟踪在 `docs/archive/`；手动诊断脚本在 `scripts/diagnostics/`（隔离 home，不入门禁）。
+- **Windows 发布准备（2026-09-22）**：版本 `0.1.0-rc.1`（`Cargo.toml` 唯一来源，tag `windows-v*`）；发布包为 **self-contained**
+  （`WindowsAppSDKSelfContained` + `SelfContained`，解压即用，目录约 238 MB）；`mt.exe` **不能读 UNC 路径**，所以自包含产物只能在本地副本或 CI 构建，
+  UNC 下脚本自动回退 framework-dependent 并告警；release workflow 已补 `gh release create`（W-28，`-rc.` → pre-release）。
+  发布清单 §R 见 `docs/WINDOWS_VERIFICATION.md`，证据见 `docs/execution/windows-release-0.1.0-rc.1.md`。
 - Windows 线：**原生前端自动门禁 + 人工矩阵已闭合**（W1–W11 / W13 / W14 于 2026-09-21 通过，W12 多屏 / 重力 / 活动提醒 / 透明度 / 协议设置界面 / 托盘化 / 影子动画按计划 v1.1 §3.1 暂缓）；CR-W1 启动性能选 C（只记基线，不优化）、CR-W2 协议粘滞状态选 A（`action:"clear"` 已实现，smoke N25）。**剩余发布项**：D1–D6（release exe / 图标 / 打包 / tag / 干净机器 / 登录自启）、CI 首次运行、`-Full` 在桌面空闲时的干净复跑。旧入口（egui/Win32）冻结、保持可构建。
 - 当前 macOS 原生入口已从骨架推进到可构建/可测试/可协议 smoke 的实施状态，但**仍未完成完整原生验收**；剩余功能和人工项以执行记录 REV-02/04/05/07/08 及 M-01～M-06 为准。旧入口暂留作行为对照；Windows 旧验证结论不代表新原生实现已通过。
 - 2026-09-20 执行：在已有 runtime worker + ABI3 FFI、原生 SwiftUI/AppKit 宠物窗/气泡/Composer/设置/宠物库命令基础上，完成 DeepSeek 全配置、记忆管理、人格 CRUD/模板/导入导出、明确偏好提取、重复导入确认、拖放导入和固定缩放档位/状态栏菜单；Rust workspace、原生 XCTest 5/5、native smoke 6/6、Release 静态链接与 arm64 打包门禁通过，但不等于窗口视觉、IME、Keychain/LaunchAgent 真实行为、多屏、签名、公证人工通过。

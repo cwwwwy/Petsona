@@ -112,7 +112,13 @@ $env:PETSONA_FFI_DLL = $ffi
 if (-not $SkipBuild) {
     Write-Host "Building native frontend (Release x64)..." -ForegroundColor Cyan
     $project = Join-Path $root "apps\windows\Petsona\Petsona.csproj"
-    & $dotnet build $project -c Release -p:Platform=x64 --no-restore
+    $selfContainedArgs = @()
+    if ($root -match '^\\\\') {
+        Write-Warning "UNC root: mt.exe cannot read UNC paths, so this build is framework-dependent. Run the packager from a local checkout (or CI) to get the self-contained release zip."
+        $selfContainedArgs = @("-p:WindowsAppSDKSelfContained=false", "-p:SelfContained=false")
+    }
+
+    & $dotnet build $project -c Release -p:Platform=x64 --no-restore @selfContainedArgs
     if ($LASTEXITCODE -ne 0) {
         throw "dotnet build failed with exit $LASTEXITCODE"
     }

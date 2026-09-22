@@ -117,6 +117,9 @@ internal sealed unsafe class AppController : IDisposable
 
         _atlasPath = _engine.Text(PetsonaTextField.AtlasPath);
 
+        // Hold the pet back until the remembered position is applied: showing it
+        // earlier makes it flash at the creation coordinates (bug 2026-09-22).
+        _window.DeferShow = !_initialPositionApplied;
         _window.Hidden = _manuallyHidden;
         _window.Update(snapshot, _atlasPath);
         UpdateOverlays(snapshot);
@@ -127,6 +130,8 @@ internal sealed unsafe class AppController : IDisposable
         if (!_initialPositionApplied && snapshot.Ready != 0 && _window.HasAppliedSize)
         {
             ApplyInitialPosition();
+            // The next tick (≤33 ms) shows the pet, already in its final place.
+            _window.DeferShow = false;
         }
 
         if (snapshot.Ready != 0 && snapshot.HasPet == 0 && !_emptyLibraryHandled)
@@ -428,6 +433,7 @@ internal sealed unsafe class AppController : IDisposable
 
         var petRect = _window.CurrentRect();
         var handle = WinRT.Interop.WindowNative.GetWindowHandle(_composer);
+        WindowIcon.Apply(handle);
         NativeWin32.RECT composerRect;
         if (NativeWin32.GetWindowRect(handle, &composerRect) == 0)
         {
@@ -515,6 +521,7 @@ internal sealed unsafe class AppController : IDisposable
         }
 
         _settings.Activate();
+        WindowIcon.Apply(WinRT.Interop.WindowNative.GetWindowHandle(_settings));
         WindowActivation.EnsureForeground(_settings, _settings.FocusRoot);
     }
 

@@ -1,4 +1,5 @@
 using System.IO;
+using System.Reflection;
 using System.Text.Json;
 using Microsoft.UI.Dispatching;
 using Microsoft.UI.Xaml;
@@ -134,7 +135,7 @@ public sealed partial class SettingsWindow : Window
 
         ProviderCombo.ItemsSource = ProviderPresets.Select(preset => preset.Label).ToList();
 
-        AboutVersionText.Text = $"版本 {typeof(SettingsWindow).Assembly.GetName().Version?.ToString(3) ?? "0.1.0"} · 原生前端（WinUI 3 + Win32）";
+        AboutVersionText.Text = $"版本 {AppVersion()} · 原生前端（WinUI 3 + Win32）";
 
         _suppressEvents = true;
         AutostartToggle.IsOn = SystemServices.IsAutostartEnabled();
@@ -963,6 +964,27 @@ public sealed partial class SettingsWindow : Window
     private void OnOpenRepoClick(object sender, RoutedEventArgs e)
     {
         OpenFolder(RepositoryUrl);
+    }
+
+    /// <summary>
+    /// Informational version keeps the pre-release suffix (0.1.0-rc.1), which
+    /// <see cref="System.Reflection.AssemblyName.Version"/> would drop — the
+    /// settings page showed a stale number before (bug report 2026-09-22).
+    /// </summary>
+    private static string AppVersion()
+    {
+        var assembly = typeof(SettingsWindow).Assembly;
+        var informational = assembly
+            .GetCustomAttribute<System.Reflection.AssemblyInformationalVersionAttribute>()
+            ?.InformationalVersion;
+        if (!string.IsNullOrEmpty(informational))
+        {
+            // Strip the "+<commit>" build metadata when present.
+            var plus = informational.IndexOf('+');
+            return plus > 0 ? informational[..plus] : informational;
+        }
+
+        return assembly.GetName().Version?.ToString(3) ?? "0.0.0";
     }
 
     private static string DataDirectory()

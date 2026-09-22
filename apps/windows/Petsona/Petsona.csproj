@@ -13,6 +13,13 @@
     <WindowsPackageType>None</WindowsPackageType>
     <EnableMsixTooling>false</EnableMsixTooling>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <!-- Single source of truth for the version: the workspace Cargo.toml.
+         An explicit -p:Version=... (packaging script / CI tag) still wins. -->
+    <Version Condition="'$(Version)' == ''">$([System.Text.RegularExpressions.Regex]::Match($([System.IO.File]::ReadAllText('$(RepoRoot)Cargo.toml')), 'version\s*=\s*"([^"]+)"').Groups[1].Value)</Version>
+    <!-- Release ships a portable zip that must run on a clean Windows install:
+         bundle both the Windows App SDK and the .NET runtime (REQ release-prep). -->
+    <WindowsAppSDKSelfContained>true</WindowsAppSDKSelfContained>
+    <SelfContained>true</SelfContained>
   </PropertyGroup>
 
   <ItemGroup>

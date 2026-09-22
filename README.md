@@ -64,6 +64,25 @@ cargo run -p petsona-shell-macos
 Windows needs VS Build Tools ("Desktop development with C++") for the MSVC
 linker. A GNU toolchain fallback is documented in `docs/WINDOWS_VERIFICATION.md`.
 
+## Install / upgrade / uninstall (Windows)
+
+The release zip is **portable and self-contained** — it bundles the .NET runtime
+and the Windows App SDK, so no separate runtime install is required:
+
+1. Unzip anywhere (e.g. `%LOCALAPPDATA%\Petsona`).
+2. Run `Petsona.exe`. First launch opens Settings because no pet is bundled;
+   import one from `~/.codex/pets`, a folder or a `.zip`.
+3. **Upgrade**: unzip the new version over the same folder. Your data lives in
+   `%APPDATA%\Petsona` and is never touched by an upgrade.
+4. **Uninstall**: delete the unzipped folder, then optionally delete
+   `%APPDATA%\Petsona` (pets, personas, memory, logs) and remove the `Petsona`
+   value from `HKCU\Software\Microsoft\Windows\CurrentVersion\Run` if you
+   enabled autostart.
+
+Privacy: everything is stored locally. Network access only happens when you
+configure a model service (DeepSeek or a custom OpenAI-compatible endpoint) —
+then conversation text and memory snippets are sent to that service.
+
 ## Verify
 
 ```text

@@ -44,6 +44,10 @@ internal static unsafe partial class NativeWin32
     public const int HTCLIENT = 1;
     public const int IDC_ARROW = 32512;
 
+    public const uint WM_SETICON = 0x0080;
+    public const nuint ICON_SMALL = 0;
+    public const nuint ICON_BIG = 1;
+
     public const uint TPM_RETURNCMD = 0x0100;
     public const uint TPM_RIGHTBUTTON = 0x0002;
     public const uint MF_STRING = 0x0000;
@@ -266,6 +270,16 @@ internal static unsafe partial class NativeWin32
 
     [LibraryImport("user32.dll", EntryPoint = "LoadCursorW", SetLastError = true)]
     internal static partial nint LoadCursorW(nint hInstance, nint lpCursorName);
+
+    [LibraryImport("user32.dll", EntryPoint = "LoadImageW", SetLastError = true)]
+    internal static partial nint LoadImageW(nint hInstance, nint name, uint type, int cx, int cy, uint load);
+
+    [LibraryImport("user32.dll", EntryPoint = "LoadIconW", SetLastError = true)]
+    internal static partial nint LoadIconW(nint hInstance, nint name);
+
+    [LibraryImport("user32.dll", EntryPoint = "SendMessageW")]
+    internal static partial nint SendMessageW(nint hWnd, uint message, nuint wParam, nint lParam);
+
 
     [LibraryImport("user32.dll", EntryPoint = "SetCursor", SetLastError = true)]
     internal static partial nint SetCursor(nint hCursor);
