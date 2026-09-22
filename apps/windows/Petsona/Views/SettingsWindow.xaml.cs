@@ -134,6 +134,7 @@ public sealed partial class SettingsWindow : Window
         GreetingMaxCharsBox.ValueChanged += (_, _) => ScheduleApply(ApplyGreetingConfig);
 
         ProviderCombo.ItemsSource = ProviderPresets.Select(preset => preset.Label).ToList();
+        ApplyRequestedPage();
 
         AboutVersionText.Text = $"版本 {AppVersion()} · 原生前端（WinUI 3 + Win32）";
 
@@ -142,6 +143,30 @@ public sealed partial class SettingsWindow : Window
         _suppressEvents = false;
 
         Refresh();
+    }
+
+    /// <summary>
+    /// Diagnostics hook: `PETSONA_SETTINGS_PAGE=pets|appearance|persona|memory|deepseek|startup`
+    /// opens the window on that page. Used by scripts/diagnostics/settings-shots.ps1
+    /// so screenshots never depend on clicking (and therefore on the foreground).
+    /// </summary>
+    private void ApplyRequestedPage()
+    {
+        var requested = Environment.GetEnvironmentVariable("PETSONA_SETTINGS_PAGE");
+        if (string.IsNullOrWhiteSpace(requested))
+        {
+            return;
+        }
+
+        foreach (var item in RootPanel.MenuItems)
+        {
+            if (item is NavigationViewItem navItem &&
+                string.Equals(navItem.Tag as string, requested, StringComparison.OrdinalIgnoreCase))
+            {
+                RootPanel.SelectedItem = navItem;
+                return;
+            }
+        }
     }
 
     /// <summary>Give the settings surface keyboard focus once it is foreground.</summary>

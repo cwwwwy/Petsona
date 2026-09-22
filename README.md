@@ -28,13 +28,11 @@ with a Codex-compatible pet engine and an optional DeepSeek greeting.
 | `crates/petsona-ffi/` | Native frontend C ABI; ABI 3 contract and worker projection |
 | `apps/windows/` | C# / WinUI 3 + Win32 native Windows frontend (current product line) |
 | `apps/macos/` | SwiftUI + AppKit native macOS frontend (manual acceptance in progress) |
-| `crates/petsona-app/` | Legacy egui UI, frozen — deleted after the macOS line is accepted |
-| `crates/petsona-shell-windows/` | Legacy Rust/Win32 shell, frozen — kept buildable only |
-| `crates/petsona-shell-macos/` | Legacy Rust/AppKit shell, frozen — kept buildable only |
 
 Both native frontends call the shared engine through `contracts/petsona.h`. The
-old egui / shell crates stay in the workspace only until the macOS line finishes
-manual acceptance (then they are deleted, see Windows plan REQ-W15).
+old egui UI and the two legacy shells were **deleted on 2026-09-22** (Windows
+plan REQ-W15); they are only one `git checkout` away if a behaviour baseline is
+needed again.
 
 Windows state: the native frontend passed its manual acceptance matrix (W1–W14)
 and the automated gate; packaging (`scripts\package-windows.ps1`) and the release
@@ -55,10 +53,6 @@ powershell -ExecutionPolicy Bypass -File scripts\package-windows.ps1   # then ru
 # macOS (current)
 xcodegen generate --spec apps/macos/project.yml --project apps/macos
 xcodebuild -project apps/macos/Petsona.xcodeproj -scheme Petsona build
-
-# Legacy entries (frozen, kept buildable for comparison only)
-cargo run -p petsona-shell-windows
-cargo run -p petsona-shell-macos
 ```
 
 Windows needs VS Build Tools ("Desktop development with C++") for the MSVC

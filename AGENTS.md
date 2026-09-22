@@ -18,16 +18,13 @@ Petsona 是 Windows / macOS 桌宠：共享 Rust 核心与运行时，配合各�
 | `crates/petsona-runtime/` | 平台无关运行时：配置、宠物会话、实例锁、日志、问候 |
 | `crates/petsona-ffi/` | 原生前端 C ABI 雏形，稳定性与生命周期尚未验收 |
 | `apps/macos/` | SwiftUI / AppKit 原生 macOS 前端（迁移中） |
-| `crates/petsona-app/` | 旧 egui UI，完成对照后删除 |
-| `crates/petsona-shell-windows/` | 旧 Rust/Win32 外壳，完成 WinUI 对照后删除 |
-| `crates/petsona-shell-macos/` | 旧 Rust/AppKit 外壳，完成原生对照后删除 |
 | `docs/` | 平台架构、两端实机验收清单、`plans/` `execution/` 跨对话工作流文档 |
 | `docs/archive/` | 冻结的历史文档：旧 egui 入口验收清单（`WINDOWS_VERIFICATION-legacy-egui.md`）、Windows 问题跟踪（`WINDOWS_ISSUES.md`） |
 
 ## 常用命令
 
 ```powershell
-cargo run -p petsona-shell-windows        # Windows 产品入口
+dotnet build apps/windows/Petsona.sln -c Release -p:Platform=x64   # Windows 产品入口（原生前端）
 cargo build -p petsona-ffi --release
 cargo test --workspace
 cargo clippy --workspace --all-targets -- -D warnings
@@ -135,7 +132,8 @@ MSVC 缺 `link.exe` 的 GNU 回退写在 `docs/WINDOWS_VERIFICATION.md`。
 
 - 一个仓库、一个 workspace、共享 `petsona-core` / `petsona-runtime` / `petsona-ffi`；Windows 与
   macOS 各自拥有原生前端，可独立发布（tag `windows-v*` / `macos-v*`），不长期维护平台分支。
-- 最终前端不依赖 egui、eframe 或 winit。`petsona-app` 和旧 shell 只作为迁移期间的行为对照。
+- 最终前端不依赖 egui、eframe 或 winit。**旧 egui UI 与两个旧 shell 已于 2026-09-22 删除**（REQ-W15）；
+  需要行为对照时用 `git checkout <删除前 commit> -- crates/petsona-app crates/petsona-shell-windows crates/petsona-shell-macos` 取回。
 - Rust 负责业务状态、动画与平台无关几何；原生前端负责 UI 主线程、窗口、输入、托盘、菜单和渲染。
 - `contracts/petsona.h` 是跨语言边界；不跨边界传递 Rust 引用、容器或分配器所有权。
 - `PhysicalRect` 是跨混合 DPI 的唯一几何单位（物理像素）；逻辑点只在平台前端边界换算。
@@ -173,8 +171,9 @@ MSVC 缺 `link.exe` 的 GNU 回退写在 `docs/WINDOWS_VERIFICATION.md`。
 - 当前 release profile：`lto = "thin"`、`codegen-units = 1`、`strip = true`、`panic = "unwind"`。
   旧入口曾使用 abort；新 FFI 的 panic 终止处理尚有 REV-05，不能把 unwind 当作已完成的故障隔离。
 - Windows 打包产物：`dist\Petsona-windows-x64-<version>.zip`（含 exe、图标、VERSION、README）；
-  exe 图标由 `crates\petsona-shell-windows\build.rs` 调 `rc.exe` / `windres.exe` 编译
-  `packaging\windows\Petsona.rc`，不引 crate。
+  exe 图标由 `apps/windows/Petsona/Petsona.csproj` 的 `<ApplicationIcon>` 直接内嵌
+  `packaging\windows\Petsona.ico`（旧 Rust build.rs 已随旧外壳删除）；窗口/任务栏图标由
+  `Petsona.Native.WindowIcon` 从 exe 提取后 `WM_SETICON` 给各窗口。
 
 ## 坑与教训（别再重新推导）
 

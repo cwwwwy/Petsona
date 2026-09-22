@@ -3,9 +3,6 @@ resolver = "2"
 members = [
     "crates/petsona-core",
     "crates/petsona-runtime",
-    "crates/petsona-app",
-    "crates/petsona-shell-windows",
-    "crates/petsona-shell-macos",
     "crates/petsona-ffi",
 ]
 
@@ -30,21 +27,6 @@ image = { version = "0.25", default-features = false, features = ["webp", "png",
 zip = { version = "8", default-features = false, features = ["deflate"] }
 ureq = { version = "3", features = ["json"] }
 keyring = { version = "3", default-features = false, features = ["apple-native", "windows-native"] }
-eframe = { version = "0.36", default-features = false, features = ["default_fonts", "glow"] }
-egui = "0.36"
-winit = "0.30"
-tray-icon = "0.24"
-windows-sys = { version = "0.61", features = [
-    "Win32_Foundation",
-    "Win32_Graphics_Dwm",
-    "Win32_Graphics_Gdi",
-    "Win32_System_LibraryLoader",
-    "Win32_System_Registry",
-    "Win32_System_Threading",
-    "Win32_UI_Input_KeyboardAndMouse",
-    "Win32_UI_WindowsAndMessaging",
-] }
-raw-window-handle = "0.6"
 
 [profile.dev]
 opt-level = 1
