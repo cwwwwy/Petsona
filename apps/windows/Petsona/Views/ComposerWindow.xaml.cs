@@ -1,16 +1,19 @@
 using Microsoft.UI.Input;
+using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Input;
+using Petsona.Core;
+using Petsona.Native;
 using Windows.System;
 using Windows.UI.Core;
 
 namespace Petsona.Views;
 
 /// <summary>
-/// Composer input window. Enter sends, Shift+Enter inserts a newline, Esc
-/// closes and the draft survives closing. IME composition keeps Enter for
-/// candidate confirmation (the runtime never sees that key).
+/// Compact, chrome-free composer. Enter sends, Shift+Enter inserts a newline,
+/// Esc closes and the draft survives closing. IME composition keeps Enter for
+/// candidate confirmation.
 /// </summary>
 public sealed partial class ComposerWindow : Window
 {
@@ -19,7 +22,32 @@ public sealed partial class ComposerWindow : Window
     public ComposerWindow(string draft)
     {
         InitializeComponent();
-        AppWindow.Resize(new Windows.Graphics.SizeInt32(380, 190));
+
+        if (AppWindow.Presenter is OverlappedPresenter presenter)
+        {
+            presenter.SetBorderAndTitleBar(false, false);
+            presenter.IsResizable = false;
+            presenter.IsMaximizable = false;
+            presenter.IsMinimizable = false;
+        }
+
+        AppWindow.Resize(new Windows.Graphics.SizeInt32(
+            OverlayLayout.ComposerDesiredWidth,
+            OverlayLayout.ComposerHeight));
+        AppWindow.IsShownInSwitchers = false;
+
+        var handle = WinRT.Interop.WindowNative.GetWindowHandle(this);
+        NativeWin32.MakeToolWindow(handle);
+        NativeWin32.MakeBorderlessPopup(handle);
+        WindowIcon.Apply(handle);
+        Petsona.Native.WindowTheme.Apply(handle, ElementTheme.Default);
+        Petsona.Native.WindowTheme.RemoveBorder(handle);
+        Activated += (_, _) =>
+        {
+            NativeWin32.MakeBorderlessPopup(handle);
+            Petsona.Native.WindowTheme.RemoveBorder(handle);
+        };
+
         InputBox.Text = draft;
         // PreviewKeyDown tunnels ahead of the TextBox default action; a plain
         // KeyDown handler still lets WinUI insert the newline first.

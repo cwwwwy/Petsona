@@ -334,6 +334,10 @@ fn apply_command(
             runtime.show_bubble(text, ttl);
             true
         }
+        RuntimeCommand::SetBubblePaused(paused) => {
+            runtime.set_bubble_paused(paused);
+            true
+        }
         RuntimeCommand::ClearBubble => {
             runtime.bubble = None;
             true
@@ -1135,7 +1139,7 @@ fn tick_runtime(
     if runtime
         .bubble
         .as_ref()
-        .is_some_and(|bubble| bubble.until <= now)
+        .is_some_and(|bubble| bubble.is_expired(now))
     {
         runtime.bubble = None;
     }
@@ -1293,6 +1297,13 @@ fn publish_projection(runtime: &PetsonaRuntime, projection: &Arc<SharedProjectio
     }
     if let Some(bubble) = &runtime.bubble {
         texts.bubble = bubble.text.clone();
+        let remaining = bubble.remaining(Instant::now());
+        texts.bubble_timing = format!(
+            "{},{},{}",
+            remaining.as_millis().min(u64::MAX as u128),
+            bubble.total.as_millis().min(u64::MAX as u128),
+            bubble.generation
+        );
     }
     if !runtime.status.is_empty() {
         texts.error = runtime.status.clone();

@@ -72,6 +72,7 @@ pub enum PetsonaTextField {
     Memory = 15,
     ImportConflict = 16,
     Models = 17,
+    BubbleTiming = 18,
 }
 
 #[repr(u32)]
@@ -119,6 +120,7 @@ pub enum PetsonaCommandKind {
     ImportMemory = 40,
     ListModels = 41,
     ResetPersona = 42,
+    SetBubblePaused = 43,
 }
 
 #[repr(C)]

@@ -58,7 +58,7 @@ public static class OverlayWin {
       int w = r.Right - r.Left, hh = r.Bottom - r.Top;
       // Plain comparisons: PowerShell 5.1 compiles this with an older C# than
       // the app project, which does not understand relational patterns.
-      if (w > 320 && w < 460 && hh > 150 && hh < 260) { found = h; return false; }
+      if (w > 240 && w < 460 && hh > 36 && hh < 100) { found = h; return false; }
       return true;
     }, IntPtr.Zero);
     return found;

@@ -19,12 +19,13 @@ internal sealed unsafe class AppController : IDisposable
 {
     private const uint ActivityTtlMs = 8000;
     private const uint DragStateTtlMs = 300;
+    private const long StripHoverOpenMs = 220;
 
     private readonly EngineClient _engine;
     private readonly SpriteRenderer _renderer;
     private readonly PetWindow _window;
     private readonly OverlayWindow _bubble;
-    private readonly OverlayWindow _editButton;
+    private readonly OverlayWindow _editStrip;
     private readonly TrayService _tray;
     private readonly FrameScheduler _scheduler;
 
@@ -44,6 +45,11 @@ internal sealed unsafe class AppController : IDisposable
     private bool _disposed;
     private bool _diagnosticsComposerOpened;
     private bool _diagnosticsBubbleShown;
+    private long _stripHoverStartedAt = long.MinValue;
+    private OverlaySide? _composerSide;
+    private OverlaySide? _lastOverlaySide;
+    private long _lastBubbleGeneration = -1;
+    private long _pausedBubbleGeneration = -1;
 
     private readonly DispatcherQueue _dispatcher;
 
@@ -54,7 +60,7 @@ internal sealed unsafe class AppController : IDisposable
         _renderer = new SpriteRenderer();
         _window = new PetWindow(_renderer);
         _bubble = new OverlayWindow(isBubble: true);
-        _editButton = new OverlayWindow(isBubble: false);
+        _editStrip = new OverlayWindow(isBubble: false);
         _tray = new TrayService(dispatcher, OnTrayCommand);
         _scheduler = new FrameScheduler(dispatcher, Tick);
 
@@ -66,9 +72,11 @@ internal sealed unsafe class AppController : IDisposable
         _window.DragMoved += OnDragMoved;
         _window.DragStarted += OnDragStarted;
         _window.DragEnded += OnDragEnded;
+        _window.Moved += PositionOverlays;
         _bubble.Clicked += OpenComposer;
-        _editButton.Clicked += OpenComposer;
-
+        _bubble.HoverChanged += OnBubbleHoverChanged;
+        _editStrip.Clicked += OpenComposer;
+        _editStrip.HoverChanged += OnEditStripHoverChanged;
     }
 
     public void Start()
@@ -125,6 +133,15 @@ internal sealed unsafe class AppController : IDisposable
         _window.Hidden = _manuallyHidden;
         _window.Update(snapshot, _atlasPath);
         UpdateOverlays(snapshot);
+
+        var now = Environment.TickCount64;
+        if (_composer is null &&
+            _editStrip.IsHovered &&
+            _stripHoverStartedAt != long.MinValue &&
+            now - _stripHoverStartedAt >= StripHoverOpenMs)
+        {
+            OpenComposer();
+        }
 
         // Position after the sprite frame produced a real window size; with a
         // webp sheet the first frames decode asynchronously, so the placeholder
@@ -185,35 +202,145 @@ internal sealed unsafe class AppController : IDisposable
         if (!petListed)
         {
             _bubble.Show(false);
-            _editButton.Show(false);
+            _editStrip.Show(false);
             return;
         }
 
         var petVisible = _window.IsVisible;
-
+        var now = Environment.TickCount64;
         var rect = _window.CurrentRect();
+        var pet = NativeWin32.ToPixelRect(rect);
+        var work = NativeWin32.WorkAreaForRect(pet);
+        var side = ChooseOverlaySide(pet, work);
 
         var bubbleText = _engine.Text(PetsonaTextField.Bubble);
         if (bubbleText.Length == 0)
         {
             _bubble.Show(false);
+            _lastBubbleGeneration = -1;
+            _pausedBubbleGeneration = -1;
         }
         else
         {
-            _bubble.Render(bubbleText);
-            _bubble.MoveTo(rect.Left + ((rect.Width - _bubble.Width) / 2), rect.Top - _bubble.Height - 10);
-            _bubble.Show(true);
+            var timing = ParseBubbleTiming(_engine.Text(PetsonaTextField.BubbleTiming));
+            if (timing.Generation != _lastBubbleGeneration)
+            {
+                if (_pausedBubbleGeneration != -1)
+                {
+                    _engine.Send(PetsonaCommandKind.SetBubblePaused, value: 0);
+                    _pausedBubbleGeneration = -1;
+                }
+
+                _lastBubbleGeneration = timing.Generation;
+            }
+
+            if (_bubble.IsHovered && timing.Generation != _pausedBubbleGeneration)
+            {
+                _engine.Send(PetsonaCommandKind.SetBubblePaused, value: 1);
+                _pausedBubbleGeneration = timing.Generation;
+            }
+
+            _bubble.UpdateBubble(
+                bubbleText,
+                timing.RemainingMs,
+                timing.TotalMs,
+                timing.Generation,
+                now);
         }
 
         if (_composer is null && petVisible)
         {
-            _editButton.Render(string.Empty);
-            _editButton.MoveTo(rect.Left + ((rect.Width - _editButton.Width) / 2), rect.Bottom + 16);
-            _editButton.Show(true);
+            var vertical = side is OverlaySide.Left or OverlaySide.Right;
+            _editStrip.UpdateEditStrip(vertical, now);
+            _editStrip.Show(true);
+
+            if (_editStrip.IsHovered && _stripHoverStartedAt == long.MinValue)
+            {
+                _stripHoverStartedAt = now;
+            }
+            else if (!_editStrip.IsHovered)
+            {
+                _stripHoverStartedAt = long.MinValue;
+            }
         }
         else
         {
-            _editButton.Show(false);
+            _editStrip.Show(false);
+            _stripHoverStartedAt = long.MinValue;
+        }
+
+        PositionOverlays(pet, work, side);
+    }
+
+    private OverlaySide ChooseOverlaySide(PixelRect pet, PixelRect work)
+    {
+        if (_composer is not null && _composerSide is not null)
+        {
+            return _composerSide.Value;
+        }
+
+        var side = OverlayLayout.ChooseSide(
+            pet,
+            work,
+            OverlayLayout.ComposerDesiredWidth,
+            OverlayLayout.ComposerHeight,
+            _lastOverlaySide);
+        _lastOverlaySide = side;
+        return side;
+    }
+
+    private void PositionOverlays()
+    {
+        var pet = NativeWin32.ToPixelRect(_window.CurrentRect());
+        var work = NativeWin32.WorkAreaForRect(pet);
+        PositionOverlays(pet, work, ChooseOverlaySide(pet, work));
+    }
+
+    private void PositionOverlays(PixelRect pet, PixelRect work, OverlaySide side)
+    {
+        if (_bubble.Width > 0 && _bubble.Height > 0)
+        {
+            var bubble = OverlayLayout.PositionBubble(pet, work, _bubble.Width, _bubble.Height);
+            _bubble.MoveTo(bubble.Left, bubble.Top);
+        }
+
+        if (_composer is not null)
+        {
+            var width = _composer.AppWindow.Size.Width > 0
+                ? _composer.AppWindow.Size.Width
+                : OverlayLayout.ComposerDesiredWidth;
+            var sideWidth = side == OverlaySide.Bottom
+                ? width
+                : OverlayLayout.SidePanelWidth(pet, work, side, width);
+            if (side != OverlaySide.Bottom && sideWidth != width)
+            {
+                _composer.AppWindow.Resize(new Windows.Graphics.SizeInt32(sideWidth, OverlayLayout.ComposerHeight));
+                width = sideWidth;
+            }
+
+            var panel = OverlayLayout.PositionPanel(
+                pet,
+                work,
+                width,
+                OverlayLayout.ComposerHeight,
+                side);
+            _composer.AppWindow.Move(new Windows.Graphics.PointInt32(panel.Left, panel.Top));
+            return;
+        }
+
+        if (_editStrip.Width > 0 && _editStrip.Height > 0)
+        {
+            var vertical = _editStrip.Height > _editStrip.Width;
+            var expanded = vertical
+                ? _editStrip.Height > OverlayLayout.StripLength
+                : _editStrip.Width > OverlayLayout.StripLength;
+            var strip = OverlayLayout.PositionStrip(
+                pet,
+                work,
+                side,
+                expanded,
+                vertical);
+            _editStrip.MoveTo(strip.Left, strip.Top);
         }
     }
 
@@ -293,7 +420,14 @@ internal sealed unsafe class AppController : IDisposable
     private void SampleGaze()
     {
         var snapshot = _lastSnapshot;
-        if (snapshot.Faulted != 0 || _composer is not null || _draggingPet || _manuallyHidden ||
+        // Composer caret gaze is owned by OnComposerCaretMoved. The global
+        // cursor loop must not immediately clear the target it just set.
+        if (_composer is not null)
+        {
+            return;
+        }
+
+        if (snapshot.Faulted != 0 || _draggingPet || _manuallyHidden ||
             snapshot.Ready == 0 || snapshot.HasPet == 0 || snapshot.PetVisible == 0)
         {
             ClearGaze();
@@ -355,7 +489,7 @@ internal sealed unsafe class AppController : IDisposable
 
         _faultReported = true;
         _gazeActive = false;
-        _editButton.Show(false);
+        _editStrip.Show(false);
         var error = _engine.Text(PetsonaTextField.Error);
         var lockConflict = error.Contains("lock", StringComparison.OrdinalIgnoreCase);
         if (error.Length == 0)
@@ -372,10 +506,11 @@ internal sealed unsafe class AppController : IDisposable
         }
 
         var rect = _window.CurrentRect();
-        _bubble.Render(error);
-        _bubble.MoveTo(
-            Math.Max(8, rect.Left + ((rect.Width - _bubble.Width) / 2)),
-            Math.Max(8, rect.Top - _bubble.Height - 10));
+        var pet = NativeWin32.ToPixelRect(rect);
+        var work = NativeWin32.WorkAreaForRect(pet);
+        _bubble.UpdateBubble(error, 60_000, 60_000, -1000, Environment.TickCount64);
+        var bubble = OverlayLayout.PositionBubble(pet, work, _bubble.Width, _bubble.Height);
+        _bubble.MoveTo(bubble.Left, bubble.Top);
         _bubble.Show(true);
 
         if (lockConflict)
@@ -402,6 +537,18 @@ internal sealed unsafe class AppController : IDisposable
             return;
         }
 
+        var pet = NativeWin32.ToPixelRect(_window.CurrentRect());
+        var work = NativeWin32.WorkAreaForRect(pet);
+        _composerSide = OverlayLayout.ChooseSide(
+            pet,
+            work,
+            OverlayLayout.ComposerDesiredWidth,
+            OverlayLayout.ComposerHeight,
+            _lastOverlaySide);
+        _lastOverlaySide = _composerSide;
+        _stripHoverStartedAt = long.MinValue;
+
+        ClearGaze();
         var composer = new ComposerWindow(_draft);
         _composer = composer;
         composer.Submitted += OnComposerSubmitted;
@@ -414,35 +561,13 @@ internal sealed unsafe class AppController : IDisposable
                 _composer = null;
             }
 
+            _composerSide = null;
             ClearGaze();
+            PositionOverlays();
         };
-        PositionComposer(composer);
+        PositionOverlays(pet, work, _composerSide.Value);
         composer.Activate();
         WindowActivation.EnsureForeground(composer, composer.FocusInput);
-    }
-
-    private void PositionComposer(ComposerWindow composer)
-    {
-        var rect = _window.CurrentRect();
-        var size = composer.AppWindow.Size;
-        var width = size.Width > 0 ? size.Width : 380;
-        var height = size.Height > 0 ? size.Height : 190;
-        var x = rect.Left + ((rect.Width - width) / 2);
-        var y = rect.Bottom + 24;
-
-        NativeWin32.RECT work;
-        if (NativeWin32.SystemParametersInfoW(NativeWin32.SPI_GETWORKAREA, 0, &work, 0) != 0)
-        {
-            if (y + height > work.Bottom)
-            {
-                y = rect.Top - height - 24;
-            }
-
-            x = Math.Clamp(x, work.Left, Math.Max(work.Left, work.Right - width));
-            y = Math.Clamp(y, work.Top, Math.Max(work.Top, work.Bottom - height));
-        }
-
-        composer.AppWindow.Move(new Windows.Graphics.PointInt32(x, y));
     }
 
     private void OnComposerSubmitted(string text)
@@ -477,6 +602,39 @@ internal sealed unsafe class AppController : IDisposable
         _gazeActive = true;
     }
 
+    private void OnBubbleHoverChanged(bool hovered)
+    {
+        if (hovered)
+        {
+            return;
+        }
+
+        if (_pausedBubbleGeneration != -1 && !_faultReported)
+        {
+            _engine.Send(PetsonaCommandKind.SetBubblePaused, value: 0);
+            _pausedBubbleGeneration = -1;
+        }
+    }
+
+    private void OnEditStripHoverChanged(bool hovered)
+    {
+        _stripHoverStartedAt = hovered ? Environment.TickCount64 : long.MinValue;
+    }
+
+    private static (long RemainingMs, long TotalMs, long Generation) ParseBubbleTiming(string text)
+    {
+        var parts = text.Split(',');
+        if (parts.Length != 3 ||
+            !long.TryParse(parts[0], NumberStyles.Integer, CultureInfo.InvariantCulture, out var remaining) ||
+            !long.TryParse(parts[1], NumberStyles.Integer, CultureInfo.InvariantCulture, out var total) ||
+            !long.TryParse(parts[2], NumberStyles.Integer, CultureInfo.InvariantCulture, out var generation))
+        {
+            return (0, 0, -1);
+        }
+
+        return (Math.Max(0, remaining), Math.Max(0, total), generation);
+    }
+
     private void ApplyInitialPosition()
     {
         _initialPositionApplied = true;
@@ -486,14 +644,11 @@ internal sealed unsafe class AppController : IDisposable
             return;
         }
 
-        NativeWin32.RECT work;
-        if (NativeWin32.SystemParametersInfoW(NativeWin32.SPI_GETWORKAREA, 0, &work, 0) != 0)
-        {
-            var rect = _window.CurrentRect();
-            _window.MoveTo(
-                work.Right - rect.Width - 40,
-                work.Bottom - rect.Height - 40);
-        }
+        var rect = _window.CurrentRect();
+        var work = NativeWin32.WorkAreaForRect(NativeWin32.ToPixelRect(rect));
+        _window.MoveTo(
+            work.Right - rect.Width - 40,
+            work.Bottom - rect.Height - 40);
     }
 
     private void OnClicked()
@@ -630,7 +785,7 @@ internal sealed unsafe class AppController : IDisposable
         _settings?.Close();
         _composer?.Close();
         _bubble.Dispose();
-        _editButton.Dispose();
+        _editStrip.Dispose();
         _tray.Dispose();
         _window.Dispose();
         _renderer.Dispose();

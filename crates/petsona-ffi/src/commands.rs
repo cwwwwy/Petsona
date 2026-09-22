@@ -119,6 +119,9 @@ pub fn convert(command: &PetsonaCommand) -> Result<RuntimeCommand, (PetsonaStatu
             };
             Ok(RuntimeCommand::ShowBubble { text, ttl })
         }
+        x if x == PetsonaCommandKind::SetBubblePaused as u32 => {
+            Ok(RuntimeCommand::SetBubblePaused(command.value >= 0.5))
+        }
         x if x == PetsonaCommandKind::ClearBubble as u32 => Ok(RuntimeCommand::ClearBubble),
         x if x == PetsonaCommandKind::RefreshPets as u32 => Ok(RuntimeCommand::RefreshPets),
         x if x == PetsonaCommandKind::ScanCodexPets as u32 => Ok(RuntimeCommand::ScanCodexPets),

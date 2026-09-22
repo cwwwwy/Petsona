@@ -205,6 +205,8 @@ public static class PetsonaSmokeNative {
         return new IntPtr((high << 16) | (low & 0xFFFF));
     }
     [DllImport("user32.dll")] public static extern bool GetCursorPos(out POINT point);
+    [DllImport("user32.dll")] public static extern IntPtr MonitorFromWindow(IntPtr hwnd, uint flags);
+    [DllImport("user32.dll")] public static extern bool GetMonitorInfo(IntPtr monitor, ref MONITORINFO info);
     [DllImport("user32.dll")] public static extern bool SetProcessDpiAwarenessContext(IntPtr value);
     [DllImport("user32.dll")] public static extern bool SetProcessDPIAware();
 
@@ -225,6 +227,18 @@ public static class PetsonaSmokeNative {
     }
     [StructLayout(LayoutKind.Sequential)] public struct RECT { public int Left; public int Top; public int Right; public int Bottom; }
     [StructLayout(LayoutKind.Sequential)] public struct POINT { public int X; public int Y; }
+    [StructLayout(LayoutKind.Sequential)] public struct MONITORINFO {
+        public uint cbSize; public RECT monitor; public RECT work; public uint flags;
+    }
+    public static RECT WorkAreaForWindow(IntPtr hwnd) {
+        var monitor = MonitorFromWindow(hwnd, 2);
+        var info = new MONITORINFO();
+        info.cbSize = (uint)Marshal.SizeOf(typeof(MONITORINFO));
+        if (monitor == IntPtr.Zero || !GetMonitorInfo(monitor, ref info)) {
+            return new RECT { Left = 0, Top = 0, Right = 1920, Bottom = 1080 };
+        }
+        return info.work;
+    }
     [DllImport("user32.dll", CharSet = CharSet.Unicode, EntryPoint = "SendMessageTimeoutW")]
     public static extern IntPtr SendMessageTimeout(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam, uint flags, uint timeout, out IntPtr result);
     [DllImport("user32.dll")] public static extern bool DestroyWindow(IntPtr hWnd);
@@ -469,7 +483,20 @@ try {
         Start-Sleep -Milliseconds 250
     }
 
-    Add-Result "N5" "edit button overlay is visible" ($overlays.Count -ge 1) ("count=" + $overlays.Count)
+    $editStrip = [IntPtr]::Zero
+    foreach ($overlay in $overlays) {
+        $overlayRect = New-Object "PetsonaSmokeNative+RECT"
+        [void][PetsonaSmokeNative]::GetWindowRect($overlay, [ref]$overlayRect)
+        $overlayWidth = $overlayRect.Right - $overlayRect.Left
+        $overlayHeight = $overlayRect.Bottom - $overlayRect.Top
+        $horizontal = $overlayWidth -ge 30 -and $overlayWidth -le 90 -and $overlayHeight -ge 4 -and $overlayHeight -le 12
+        $vertical = $overlayHeight -ge 30 -and $overlayHeight -le 90 -and $overlayWidth -ge 4 -and $overlayWidth -le 12
+        if ($horizontal -or $vertical) {
+            $editStrip = $overlay
+            break
+        }
+    }
+    Add-Result "N5" "edit strip overlay is visible" ($editStrip -ne [IntPtr]::Zero) ("count=" + $overlays.Count)
 
     $trayWindow = [PetsonaSmokeNative]::ByClassForPid("PetsonaTrayWindow", [uint32]$process.Id)
     $trayWindows = if ($trayWindow -ne [IntPtr]::Zero) { @($trayWindow) } else { @() }
@@ -507,34 +534,16 @@ try {
     }
 
     Write-Section "composer focus"
-    $editButton = [IntPtr]::Zero
-    $deadline = (Get-Date).AddSeconds(3)
-    while ((Get-Date) -lt $deadline -and $editButton -eq [IntPtr]::Zero) {
-        foreach ($overlay in @([PetsonaSmokeNative]::VisibleByClassAndPid("PetsonaOverlayWindow", [uint32]$process.Id))) {
-            $overlayRect = New-Object "PetsonaSmokeNative+RECT"
-            [void][PetsonaSmokeNative]::GetWindowRect($overlay, [ref]$overlayRect)
-            $overlayWidth = $overlayRect.Right - $overlayRect.Left
-            $overlayHeight = $overlayRect.Bottom - $overlayRect.Top
-            if ($overlayWidth -ge 36 -and $overlayWidth -le 44 -and
-                $overlayHeight -ge 36 -and $overlayHeight -le 44 -and
-                $overlayRect.Top -ge ($petRect.Bottom - 4)) {
-                $editButton = $overlay
-                break
-            }
-        }
-        if ($editButton -eq [IntPtr]::Zero) { Start-Sleep -Milliseconds 100 }
-    }
-
-    if ($editButton -ne [IntPtr]::Zero) {
+    if ($editStrip -ne [IntPtr]::Zero) {
         $buttonRect = New-Object "PetsonaSmokeNative+RECT"
-        [void][PetsonaSmokeNative]::GetWindowRect($editButton, [ref]$buttonRect)
+        [void][PetsonaSmokeNative]::GetWindowRect($editStrip, [ref]$buttonRect)
         $buttonX = [int](($buttonRect.Left + $buttonRect.Right) / 2)
         $buttonY = [int](($buttonRect.Top + $buttonRect.Bottom) / 2)
         [void][PetsonaSmokeNative]::SetCursorPos($buttonX, $buttonY)
-        Start-Sleep -Milliseconds 250
-        [PetsonaSmokeNative]::mouse_event(0x02, 0, 0, 0, [UIntPtr]::Zero)
-        Start-Sleep -Milliseconds 80
-        [PetsonaSmokeNative]::mouse_event(0x04, 0, 0, 0, [UIntPtr]::Zero)
+        # The strip opens after a deliberate 220 ms dwell. This also covers
+        # the side-anchored default placement (the fixture starts near the
+        # bottom-right work-area corner).
+        Start-Sleep -Milliseconds 700
 
         $composer = [IntPtr]::Zero
         $deadline = (Get-Date).AddSeconds(6)
@@ -542,6 +551,43 @@ try {
             $composer = [PetsonaSmokeNative]::VisibleByClassForPid("WinUIDesktopWin32WindowClass", [uint32]$process.Id)
             if ($composer -ne [IntPtr]::Zero) { break }
             Start-Sleep -Milliseconds 150
+        }
+
+        if ($composer -eq [IntPtr]::Zero) {
+            # Fallback for a lost hover message on a very busy desktop:
+            # re-read the (possibly expanded) strip rectangle and click its
+            # current centre so a resize cannot leave a stale probe point.
+            $retryStrip = [IntPtr]::Zero
+            foreach ($overlay in @([PetsonaSmokeNative]::VisibleByClassAndPid("PetsonaOverlayWindow", [uint32]$process.Id))) {
+                $retryRect = New-Object "PetsonaSmokeNative+RECT"
+                [void][PetsonaSmokeNative]::GetWindowRect($overlay, [ref]$retryRect)
+                $retryWidth = $retryRect.Right - $retryRect.Left
+                $retryHeight = $retryRect.Bottom - $retryRect.Top
+                if (($retryWidth -ge 4 -and $retryWidth -le 12 -and $retryHeight -ge 30 -and $retryHeight -le 90) -or
+                    ($retryHeight -ge 4 -and $retryHeight -le 12 -and $retryWidth -ge 30 -and $retryWidth -le 90)) {
+                    $retryStrip = $overlay
+                    break
+                }
+            }
+
+            if ($retryStrip -ne [IntPtr]::Zero) {
+                $retryRect = New-Object "PetsonaSmokeNative+RECT"
+                [void][PetsonaSmokeNative]::GetWindowRect($retryStrip, [ref]$retryRect)
+                $retryX = [int](($retryRect.Left + $retryRect.Right) / 2)
+                $retryY = [int](($retryRect.Top + $retryRect.Bottom) / 2)
+                [void][PetsonaSmokeNative]::SetCursorPos($retryX, $retryY)
+                Start-Sleep -Milliseconds 450
+                [PetsonaSmokeNative]::mouse_event(0x02, 0, 0, 0, [UIntPtr]::Zero)
+                Start-Sleep -Milliseconds 80
+                [PetsonaSmokeNative]::mouse_event(0x04, 0, 0, 0, [UIntPtr]::Zero)
+            }
+
+            $deadline = (Get-Date).AddSeconds(4)
+            while ((Get-Date) -lt $deadline) {
+                $composer = [PetsonaSmokeNative]::VisibleByClassForPid("WinUIDesktopWin32WindowClass", [uint32]$process.Id)
+                if ($composer -ne [IntPtr]::Zero) { break }
+                Start-Sleep -Milliseconds 150
+            }
         }
 
         if ($composer -ne [IntPtr]::Zero) {
@@ -578,7 +624,7 @@ try {
         }
     }
     else {
-        Add-Skip "N18" "composer opens with focus" "edit button not found"
+        Add-Skip "N18" "composer opens with focus" "edit strip not found"
     }
 
     Write-Section "idle animation"
@@ -856,6 +902,70 @@ try {
         $overlayOk = -not ($overlayResults | Where-Object { $_ -ne 1 })
         Add-Result "N24" "overlay windows own the cursor" $overlayOk `
             ("count=" + $overlayResults.Count + " results=" + ($overlayResults -join ",") + " control=" + $controlResult)
+    }
+
+    Write-Section "work area boundary"
+    $boundaryRect = New-Object "PetsonaSmokeNative+RECT"
+    [void][PetsonaSmokeNative]::GetWindowRect($petWindows[0], [ref]$boundaryRect)
+    $boundaryPoint = Find-OpaquePoint $petWindows[0] $boundaryRect.Left $boundaryRect.Top `
+        ($boundaryRect.Right - $boundaryRect.Left) ($boundaryRect.Bottom - $boundaryRect.Top)
+    $workRect = [PetsonaSmokeNative]::WorkAreaForWindow($petWindows[0])
+    if ($boundaryPoint.Count -lt 2) {
+        Add-Skip "N26" "pet stays inside the monitor work area" "no clickable pet point found"
+        Add-Skip "N27" "strip moves to the side near the taskbar" "no clickable pet point found"
+    }
+    else {
+        $edgeX = [int]$boundaryPoint[0]
+        $edgeY = [int]$boundaryPoint[1]
+        [void][PetsonaSmokeNative]::SetCursorPos($edgeX, $edgeY)
+        Start-Sleep -Milliseconds 500
+        [PetsonaSmokeNative]::mouse_event(0x02, 0, 0, 0, [UIntPtr]::Zero)
+        Start-Sleep -Milliseconds 120
+        $targetX = [Math]::Max($workRect.Left + 1, $workRect.Right - 2)
+        $targetY = [Math]::Max($workRect.Top + 1, $workRect.Bottom - 2)
+        for ($step = 0; $step -lt 12; $step++) {
+            $edgeX = [int]($edgeX + (($targetX - $edgeX) * 0.45))
+            $edgeY = [int]($edgeY + (($targetY - $edgeY) * 0.45))
+            [void][PetsonaSmokeNative]::SetCursorPos($edgeX, $edgeY)
+            Start-Sleep -Milliseconds 55
+        }
+        [void][PetsonaSmokeNative]::SetCursorPos($targetX, $targetY)
+        Start-Sleep -Milliseconds 120
+        [PetsonaSmokeNative]::mouse_event(0x04, 0, 0, 0, [UIntPtr]::Zero)
+        Start-Sleep -Milliseconds 700
+
+        $clampedRect = New-Object "PetsonaSmokeNative+RECT"
+        [void][PetsonaSmokeNative]::GetWindowRect($petWindows[0], [ref]$clampedRect)
+        $insideWorkArea = $clampedRect.Left -ge $workRect.Left -and
+            $clampedRect.Top -ge $workRect.Top -and
+            $clampedRect.Right -le $workRect.Right -and
+            $clampedRect.Bottom -le $workRect.Bottom
+        Add-Result "N26" "pet stays inside the monitor work area" $insideWorkArea `
+            ("pet={0},{1},{2},{3} work={4},{5},{6},{7}" -f $clampedRect.Left, $clampedRect.Top, $clampedRect.Right, $clampedRect.Bottom, $workRect.Left, $workRect.Top, $workRect.Right, $workRect.Bottom)
+
+        $edgeStrip = [IntPtr]::Zero
+        foreach ($overlay in @([PetsonaSmokeNative]::VisibleByClassAndPid("PetsonaOverlayWindow", [uint32]$process.Id))) {
+            $overlayRect = New-Object "PetsonaSmokeNative+RECT"
+            [void][PetsonaSmokeNative]::GetWindowRect($overlay, [ref]$overlayRect)
+            $overlayWidth = $overlayRect.Right - $overlayRect.Left
+            $overlayHeight = $overlayRect.Bottom - $overlayRect.Top
+            if (($overlayWidth -ge 4 -and $overlayWidth -le 12 -and $overlayHeight -ge 30 -and $overlayHeight -le 90) -or
+                ($overlayHeight -ge 4 -and $overlayHeight -le 12 -and $overlayWidth -ge 30 -and $overlayWidth -le 90)) {
+                $edgeStrip = $overlay
+                break
+            }
+        }
+
+        if ($edgeStrip -eq [IntPtr]::Zero) {
+            Add-Skip "N27" "strip moves to the side near the taskbar" "strip overlay not found"
+        }
+        else {
+            $stripRect = New-Object "PetsonaSmokeNative+RECT"
+            [void][PetsonaSmokeNative]::GetWindowRect($edgeStrip, [ref]$stripRect)
+            $vertical = ($stripRect.Right - $stripRect.Left) -le 12 -and ($stripRect.Bottom - $stripRect.Top) -ge 30
+            Add-Result "N27" "strip moves to the side near the taskbar" $vertical `
+                ("strip={0},{1},{2},{3}" -f $stripRect.Left, $stripRect.Top, $stripRect.Right, $stripRect.Bottom)
+        }
     }
 
     Write-Section "single instance"

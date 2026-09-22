@@ -1,5 +1,6 @@
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
+using Petsona.Core;
 using Petsona.Core.Interop;
 using Petsona.Rendering;
 
@@ -121,6 +122,9 @@ internal sealed unsafe class PetWindow : IDisposable
     /// </summary>
     public event Action? DragMoved;
 
+    /// <summary>Raised after any programmatic or drag move, including clamping.</summary>
+    public event Action? Moved;
+
     /// <summary>Applies one runtime snapshot; blits only when the frame changes.</summary>
     public void Update(PetsonaSnapshot snapshot, string atlasPath)
     {
@@ -139,11 +143,13 @@ internal sealed unsafe class PetWindow : IDisposable
                 // Scale anchor: bottom center, matching the macOS controller.
                 var rect = CurrentRect();
                 var centerX = rect.Left + (rect.Width / 2);
-                var newLeft = centerX - (frame.Width / 2);
-                var newTop = rect.Bottom - frame.Height;
+                var desired = OverlayLayout.ClampToWorkArea(
+                    PixelRect.FromBounds(centerX - (frame.Width / 2), rect.Bottom - frame.Height, frame.Width, frame.Height),
+                    NativeWin32.WorkAreaForRect(NativeWin32.ToPixelRect(rect)));
                 NativeWin32.SetWindowPos(
-                    _hwnd, 0, newLeft, newTop, frame.Width, frame.Height,
+                    _hwnd, 0, desired.Left, desired.Top, frame.Width, frame.Height,
                     NativeWin32.SWP_NOACTIVATE | SwpNoZorder);
+                Moved?.Invoke();
             }
 
             Blit(frame);
@@ -178,9 +184,13 @@ internal sealed unsafe class PetWindow : IDisposable
 
     public void MoveTo(int x, int y)
     {
+        var rect = CurrentRect();
+        var desired = PixelRect.FromBounds(x, y, rect.Width, rect.Height);
+        var clamped = NativeWin32.ClampToWorkArea(desired);
         NativeWin32.SetWindowPos(
-            _hwnd, 0, x, y, 0, 0,
+            _hwnd, 0, clamped.Left, clamped.Top, 0, 0,
             NativeWin32.SWP_NOSIZE | NativeWin32.SWP_NOACTIVATE | SwpNoZorder);
+        Moved?.Invoke();
     }
 
     public NativeWin32.RECT CurrentRect()
@@ -340,9 +350,17 @@ internal sealed unsafe class PetWindow : IDisposable
             return;
         }
 
+        var desired = PixelRect.FromBounds(
+            _dragStartWindow.X + dx,
+            _dragStartWindow.Y + dy,
+            CurrentRect().Width,
+            CurrentRect().Height);
+        var work = NativeWin32.WorkAreaForPoint(cursor);
+        var clamped = OverlayLayout.ClampToWorkArea(desired, work);
         NativeWin32.SetWindowPos(
-            _hwnd, 0, _dragStartWindow.X + dx, _dragStartWindow.Y + dy, 0, 0,
+            _hwnd, 0, clamped.Left, clamped.Top, 0, 0,
             NativeWin32.SWP_NOSIZE | NativeWin32.SWP_NOACTIVATE | SwpNoZorder);
+        Moved?.Invoke();
         DragMoved?.Invoke();
 
         // Direction comes from the latest movement, not the total offset from

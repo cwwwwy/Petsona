@@ -5,7 +5,7 @@ namespace Petsona.Native;
 /// <summary>Presents premultiplied BGRA pixels on a layered window.</summary>
 internal static unsafe class LayeredPresenter
 {
-    public static void Present(nint hwnd, byte[] pixels, int width, int height)
+    public static void Present(nint hwnd, byte[] pixels, int width, int height, byte opacity = 255)
     {
         var screenDc = NativeWin32.GetDC(0);
         var memDc = NativeWin32.CreateCompatibleDC(screenDc);
@@ -40,7 +40,7 @@ internal static unsafe class LayeredPresenter
             {
                 BlendOp = 0,
                 BlendFlags = 0,
-                SourceConstantAlpha = 255,
+                SourceConstantAlpha = opacity,
                 AlphaFormat = 1,
             };
             _ = NativeWin32.UpdateLayeredWindow(hwnd, screenDc, null, &size, memDc, &source, 0, &blend, NativeWin32.ULW_ALPHA);

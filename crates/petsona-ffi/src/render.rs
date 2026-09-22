@@ -96,6 +96,10 @@ pub fn text_field(field: u32) -> Option<(PetsonaTextField, RuntimeTextField)> {
         x if x == PetsonaTextField::Models as u32 => {
             (PetsonaTextField::Models, RuntimeTextField::Models)
         }
+        x if x == PetsonaTextField::BubbleTiming as u32 => (
+            PetsonaTextField::BubbleTiming,
+            RuntimeTextField::BubbleTiming,
+        ),
         _ => return None,
     };
     Some(field)

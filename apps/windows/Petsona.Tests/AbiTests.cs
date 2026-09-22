@@ -37,10 +37,12 @@ public sealed class AbiTests
     {
         Assert.Equal(0, (int)PetsonaTextField.State);
         Assert.Equal(16, (int)PetsonaTextField.ImportConflict);
+        Assert.Equal(18, (int)PetsonaTextField.BubbleTiming);
         Assert.Equal(1u, (uint)PetsonaCommandKind.SetVisibility);
         Assert.Equal(10u, (uint)PetsonaCommandKind.SetAlwaysOnTop);
         Assert.Equal(20u, (uint)PetsonaCommandKind.SetGazeTarget);
         Assert.Equal(35u, (uint)PetsonaCommandKind.ClearImportConflict);
+        Assert.Equal(43u, (uint)PetsonaCommandKind.SetBubblePaused);
         Assert.Equal(0, (int)PetsonaStatus.Ok);
         Assert.Equal(7, (int)PetsonaStatus.Stopped);
     }

@@ -12,7 +12,12 @@ namespace Petsona.Native;
 /// mode (polish 3.4). `PETSONA_BUBBLE_SNAPSHOT=<path>` writes the rendered
 /// bitmap to disk — a layered window cannot be captured with PrintWindow.
 /// </summary>
-internal readonly record struct BubblePalette(Color Fill, Color Border, Color Text)
+internal readonly record struct BubblePalette(
+    Color Fill,
+    Color Border,
+    Color Text,
+    Color Accent,
+    Color ProgressTrack)
 {
     internal static BubblePalette Current()
     {
@@ -27,11 +32,15 @@ internal readonly record struct BubblePalette(Color Fill, Color Border, Color Te
             ? new BubblePalette(
                 Color.FromArgb(242, 43, 43, 43),
                 Color.FromArgb(70, 255, 255, 255),
-                Color.FromArgb(240, 240, 240))
+                Color.FromArgb(240, 240, 240),
+                Color.FromArgb(0, 153, 255),
+                Color.FromArgb(70, 255, 255, 255))
             : new BubblePalette(
                 Color.FromArgb(242, 255, 255, 255),
                 Color.FromArgb(70, 0, 0, 0),
-                Color.FromArgb(32, 32, 32));
+                Color.FromArgb(32, 32, 32),
+                Color.FromArgb(0, 120, 212),
+                Color.FromArgb(45, 0, 0, 0));
     }
 
     /// <summary>Diagnostics: dump the freshly rendered bubble for review.</summary>

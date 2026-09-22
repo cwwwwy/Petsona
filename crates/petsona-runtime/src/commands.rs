@@ -111,6 +111,7 @@ pub enum RuntimeCommand {
         text: String,
         ttl: Duration,
     },
+    SetBubblePaused(bool),
     ClearBubble,
     RefreshPets,
     ScanCodexPets,

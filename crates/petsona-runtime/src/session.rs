@@ -21,7 +21,31 @@ pub struct ConversationTurn {
 #[derive(Debug, Clone)]
 pub struct Bubble {
     pub text: String,
+    pub total: Duration,
     pub until: Instant,
+    pub paused_remaining: Option<Duration>,
+    pub generation: u64,
+}
+
+impl Bubble {
+    pub fn remaining(&self, now: Instant) -> Duration {
+        self.paused_remaining
+            .unwrap_or_else(|| self.until.saturating_duration_since(now))
+    }
+
+    pub fn is_expired(&self, now: Instant) -> bool {
+        self.paused_remaining.is_none() && now >= self.until
+    }
+
+    pub fn set_paused(&mut self, paused: bool, now: Instant) {
+        if paused {
+            if self.paused_remaining.is_none() {
+                self.paused_remaining = Some(self.until.saturating_duration_since(now));
+            }
+        } else if let Some(remaining) = self.paused_remaining.take() {
+            self.until = now.checked_add(remaining).unwrap_or(now);
+        }
+    }
 }
 
 /// Platform-neutral runtime state shared by all UI shells.
@@ -41,6 +65,7 @@ pub struct PetsonaRuntime {
     pub state_server_port: u16,
     pub last_health_at: Instant,
     pub bubble: Option<Bubble>,
+    pub next_bubble_generation: u64,
     pub pet_visible: bool,
     pub status: String,
     pub walk_direction: f32,
@@ -164,6 +189,7 @@ impl PetsonaRuntime {
             state_server_port: 0,
             last_health_at: now,
             bubble: None,
+            next_bubble_generation: 1,
             pet_visible: true,
             status: String::new(),
             walk_direction: 1.0,
@@ -328,10 +354,22 @@ impl PetsonaRuntime {
     }
 
     pub fn show_bubble(&mut self, text: String, ttl: Duration) {
+        let now = Instant::now();
+        let generation = self.next_bubble_generation;
+        self.next_bubble_generation = self.next_bubble_generation.saturating_add(1);
         self.bubble = Some(Bubble {
             text,
-            until: Instant::now().checked_add(ttl).unwrap_or_else(Instant::now),
+            total: ttl,
+            until: now.checked_add(ttl).unwrap_or(now),
+            paused_remaining: None,
+            generation,
         });
+    }
+
+    pub fn set_bubble_paused(&mut self, paused: bool) {
+        if let Some(bubble) = &mut self.bubble {
+            bubble.set_paused(paused, Instant::now());
+        }
     }
 
     pub fn save_config(&self) -> Result<()> {
@@ -345,5 +383,38 @@ impl PetsonaRuntime {
             .as_ref()
             .and_then(|id| self.pets.iter().find(|pet| &pet.id == id).cloned())
             .or_else(|| self.pets.first().cloned())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Bubble;
+    use std::time::{Duration, Instant};
+
+    #[test]
+    fn bubble_pause_preserves_remaining_time() {
+        let now = Instant::now();
+        let mut bubble = Bubble {
+            text: "hello".to_string(),
+            total: Duration::from_secs(10),
+            until: now + Duration::from_secs(10),
+            paused_remaining: None,
+            generation: 1,
+        };
+
+        bubble.set_paused(true, now + Duration::from_secs(4));
+        assert_eq!(
+            bubble.remaining(now + Duration::from_secs(3)),
+            Duration::from_secs(6)
+        );
+        assert!(!bubble.is_expired(now + Duration::from_secs(30)));
+
+        bubble.set_paused(false, now + Duration::from_secs(30));
+        assert_eq!(
+            bubble.remaining(now + Duration::from_secs(30)),
+            Duration::from_secs(6)
+        );
+        assert!(!bubble.is_expired(now + Duration::from_secs(35)));
+        assert!(bubble.is_expired(now + Duration::from_secs(36)));
     }
 }

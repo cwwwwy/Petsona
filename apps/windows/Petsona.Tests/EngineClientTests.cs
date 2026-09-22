@@ -37,9 +37,39 @@ public sealed class EngineClientTests
             client.Send(PetsonaCommandKind.ShowBubble, ttlMilliseconds: 5_000, text: "隔离测试"));
 
         Assert.Equal("隔离测试", WaitForText(client, PetsonaTextField.Bubble, "隔离测试"));
+        Assert.False(string.IsNullOrWhiteSpace(client.Text(PetsonaTextField.BubbleTiming)));
         Assert.Equal(1.5f, client.Snapshot().Scale, 3);
 
         Assert.Equal(PetsonaStatus.Ok, client.Send(PetsonaCommandKind.ClearBubble));
+        Assert.Equal(string.Empty, WaitForText(client, PetsonaTextField.Bubble, string.Empty));
+    }
+
+    [Fact]
+    public void BubblePauseSurvivesPastTheOriginalDeadline()
+    {
+        using var home = new IsolatedHome();
+        using var client = new EngineClient(home.Path);
+        WaitUntilReady(client);
+
+        Assert.Equal(
+            PetsonaStatus.Ok,
+            client.Send(PetsonaCommandKind.ShowBubble, ttlMilliseconds: 500, text: "暂停测试"));
+        Assert.Equal("暂停测试", WaitForText(client, PetsonaTextField.Bubble, "暂停测试"));
+
+        Assert.Equal(
+            PetsonaStatus.Ok,
+            client.Send(PetsonaCommandKind.SetBubblePaused, value: 1));
+        var deadline = DateTime.UtcNow.AddMilliseconds(750);
+        while (DateTime.UtcNow < deadline)
+        {
+            client.Tick();
+            Thread.Sleep(20);
+        }
+
+        Assert.Equal("暂停测试", client.Text(PetsonaTextField.Bubble));
+        Assert.Equal(
+            PetsonaStatus.Ok,
+            client.Send(PetsonaCommandKind.SetBubblePaused, value: 0));
         Assert.Equal(string.Empty, WaitForText(client, PetsonaTextField.Bubble, string.Empty));
     }
 

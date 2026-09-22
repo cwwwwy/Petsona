@@ -14,6 +14,21 @@ internal static class WindowTheme
 {
     private const uint DwmwaUseImmersiveDarkMode = 20;
     private const uint DwmwaUseImmersiveDarkModeBefore20H1 = 19;
+    private const uint DwmwaBorderColor = 34;
+
+    internal static void RemoveBorder(nint hwnd)
+    {
+        if (hwnd == 0)
+        {
+            return;
+        }
+
+        unsafe
+        {
+            var none = unchecked((int)0xFFFFFFFE);
+            _ = NativeWin32.DwmSetWindowAttribute(hwnd, DwmwaBorderColor, &none, sizeof(int));
+        }
+    }
 
     internal static void Apply(nint hwnd, ElementTheme theme)
     {

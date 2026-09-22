@@ -52,9 +52,11 @@ engine.
 
 ## Current extension values
 
-ABI 3 keeps the existing struct layout. Text fields `12–16` expose the current
+ABI 3 keeps the existing struct layout. Text fields `12–18` expose the current
 persona, persona list, non-secret DeepSeek configuration, current-persona
-memory projection and a pending pet-import conflict. Command kinds `23–42`
+memory projection, a pending pet-import conflict, model ids and bubble timing.
+Bubble timing is `remainingMs,totalMs,generation`; command kind 43 pauses/resumes
+the current bubble for pointer hover. Command kinds `23–42`
 cover DeepSeek/memory/greeting-configuration updates, fact operations (add / edit /
 scoped clear), persona CRUD/import/export, memory export/import and clearing an
 import conflict. `value` carries the memory scope for the scoped clear

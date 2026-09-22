@@ -37,6 +37,7 @@ public enum PetsonaTextField
     Memory = 15,
     ImportConflict = 16,
     Models = 17,
+    BubbleTiming = 18,
 }
 
 /// <summary>Mirrors <c>PetsonaCommandKind</c> in <c>contracts/petsona.h</c> (ABI 3).</summary>
@@ -84,6 +85,7 @@ public enum PetsonaCommandKind : uint
     ImportMemory = 40,
     ListModels = 41,
     ResetPersona = 42,
+    SetBubblePaused = 43,
 }
 
 /// <summary>Mirrors <c>PetsonaStringView</c>: caller-owned bytes borrowed for one call.</summary>

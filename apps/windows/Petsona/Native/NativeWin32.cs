@@ -1,4 +1,5 @@
 using System.Runtime.InteropServices;
+using Petsona.Core;
 
 namespace Petsona.Native;
 
@@ -6,9 +7,17 @@ namespace Petsona.Native;
 internal static unsafe partial class NativeWin32
 {
     public const uint WS_POPUP = 0x80000000;
+    public const uint WS_CAPTION = 0x00C00000;
+    public const uint WS_THICKFRAME = 0x00040000;
+    public const uint WS_BORDER = 0x00800000;
+    public const uint WS_DLGFRAME = 0x00400000;
+    public const uint WS_SYSMENU = 0x00080000;
+    public const uint WS_MINIMIZEBOX = 0x00020000;
+    public const uint WS_MAXIMIZEBOX = 0x00010000;
     public const uint WS_EX_LAYERED = 0x00080000;
     public const uint WS_EX_TRANSPARENT = 0x00000020;
     public const uint WS_EX_TOOLWINDOW = 0x00000080;
+    public const uint WS_EX_APPWINDOW = 0x00040000;
     public const uint WS_EX_TOPMOST = 0x00000008;
     public const uint WS_EX_NOACTIVATE = 0x08000000;
 
@@ -20,6 +29,7 @@ internal static unsafe partial class NativeWin32
     public const uint SWP_NOACTIVATE = 0x0010;
     public const uint SWP_SHOWWINDOW = 0x0040;
     public const uint SWP_HIDEWINDOW = 0x0080;
+    public const uint SWP_FRAMECHANGED = 0x0020;
 
     public const uint ULW_ALPHA = 0x02;
     public const int SW_HIDE = 0;
@@ -33,6 +43,7 @@ internal static unsafe partial class NativeWin32
     public const uint WM_TIMER = 0x0113;
     public const uint WM_NCHITTEST = 0x0084;
     public const uint WM_MOUSEMOVE = 0x0200;
+    public const uint WM_MOUSELEAVE = 0x02A3;
     public const uint WM_LBUTTONDOWN = 0x0201;
     public const uint WM_LBUTTONUP = 0x0202;
     public const uint WM_RBUTTONUP = 0x0205;
@@ -69,7 +80,10 @@ internal static unsafe partial class NativeWin32
 
     public const int GWLP_USERDATA = -21;
     public const int GWL_EXSTYLE = -20;
+    public const int GWL_STYLE = -16;
     public const uint SPI_GETWORKAREA = 0x0030;
+    public const uint MonitorDefaultToNearest = 2;
+    public const uint TME_LEAVE = 0x00000002;
 
     [StructLayout(LayoutKind.Sequential)]
     public struct POINT
@@ -88,6 +102,24 @@ internal static unsafe partial class NativeWin32
 
         public readonly int Width => Right - Left;
         public readonly int Height => Bottom - Top;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct TRACKMOUSEEVENT
+    {
+        public uint CbSize;
+        public uint DwFlags;
+        public nint HwndTrack;
+        public uint DwHoverTime;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct MONITORINFO
+    {
+        public uint CbSize;
+        public RECT RcMonitor;
+        public RECT RcWork;
+        public uint DwFlags;
     }
 
     [StructLayout(LayoutKind.Sequential)]
@@ -229,6 +261,18 @@ internal static unsafe partial class NativeWin32
     [LibraryImport("user32.dll", EntryPoint = "GetCursorPos")]
     internal static partial int GetCursorPos(POINT* lpPoint);
 
+    [LibraryImport("user32.dll", EntryPoint = "TrackMouseEvent", SetLastError = true)]
+    internal static partial int TrackMouseEvent(TRACKMOUSEEVENT* eventTrack);
+
+    [LibraryImport("user32.dll", EntryPoint = "MonitorFromPoint")]
+    internal static partial nint MonitorFromPoint(POINT point, uint flags);
+
+    [LibraryImport("user32.dll", EntryPoint = "MonitorFromWindow")]
+    internal static partial nint MonitorFromWindow(nint hWnd, uint flags);
+
+    [LibraryImport("user32.dll", EntryPoint = "GetMonitorInfoW")]
+    internal static partial int GetMonitorInfoW(nint monitor, MONITORINFO* info);
+
     [LibraryImport("user32.dll", EntryPoint = "GetDpiForWindow")]
     internal static partial uint GetDpiForWindow(nint hWnd);
 
@@ -343,4 +387,86 @@ internal static unsafe partial class NativeWin32
 
     [LibraryImport("gdi32.dll", EntryPoint = "CreateDIBSection", SetLastError = true)]
     internal static partial nint CreateDIBSection(nint hdc, BITMAPINFO* pbmi, uint usage, void** ppvBits, nint hSection, uint offset);
+
+    internal static PixelRect ToPixelRect(RECT rect)
+    {
+        return new PixelRect(rect.Left, rect.Top, rect.Right, rect.Bottom);
+    }
+
+    internal static RECT ToRect(PixelRect rect)
+    {
+        return new RECT { Left = rect.Left, Top = rect.Top, Right = rect.Right, Bottom = rect.Bottom };
+    }
+
+    internal static PixelRect WorkAreaForPoint(POINT point)
+    {
+        var monitor = MonitorFromPoint(point, MonitorDefaultToNearest);
+        var info = new MONITORINFO { CbSize = (uint)sizeof(MONITORINFO) };
+        if (monitor == 0 || GetMonitorInfoW(monitor, &info) == 0)
+        {
+            return new PixelRect(0, 0, 1920, 1080);
+        }
+
+        return ToPixelRect(info.RcWork);
+    }
+
+    internal static PixelRect WorkAreaForWindow(nint hwnd)
+    {
+        var monitor = MonitorFromWindow(hwnd, MonitorDefaultToNearest);
+        var info = new MONITORINFO { CbSize = (uint)sizeof(MONITORINFO) };
+        if (monitor == 0 || GetMonitorInfoW(monitor, &info) == 0)
+        {
+            return WorkAreaForPoint(new POINT { X = 0, Y = 0 });
+        }
+
+        return ToPixelRect(info.RcWork);
+    }
+
+    internal static PixelRect WorkAreaForRect(PixelRect rect)
+    {
+        var center = new POINT
+        {
+            X = rect.Left + (rect.Width / 2),
+            Y = rect.Top + (rect.Height / 2),
+        };
+        return WorkAreaForPoint(center);
+    }
+
+    internal static PixelRect ClampToWorkArea(PixelRect rect, PixelRect? workArea = null)
+    {
+        var work = workArea ?? WorkAreaForRect(rect);
+        return OverlayLayout.ClampToWorkArea(rect, work);
+    }
+
+    internal static void MakeBorderlessPopup(nint hwnd)
+    {
+        if (hwnd == 0)
+        {
+            return;
+        }
+
+        var style = GetWindowLongPtrW(hwnd, GWL_STYLE).ToInt64();
+        style &= ~((long)WS_CAPTION | WS_THICKFRAME | WS_BORDER | WS_DLGFRAME | WS_SYSMENU | WS_MINIMIZEBOX | WS_MAXIMIZEBOX);
+        style |= WS_POPUP;
+        _ = SetWindowLongPtrW(hwnd, GWL_STYLE, new nint(style));
+        _ = SetWindowPos(
+            hwnd, 0, 0, 0, 0, 0,
+            SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_FRAMECHANGED);
+    }
+
+    internal static void MakeToolWindow(nint hwnd)
+    {
+        if (hwnd == 0)
+        {
+            return;
+        }
+
+        var style = GetWindowLongPtrW(hwnd, GWL_EXSTYLE).ToInt64();
+        style |= WS_EX_TOOLWINDOW;
+        style &= ~(long)WS_EX_APPWINDOW;
+        _ = SetWindowLongPtrW(hwnd, GWL_EXSTYLE, new nint(style));
+        _ = SetWindowPos(
+            hwnd, 0, 0, 0, 0, 0,
+            SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_FRAMECHANGED);
+    }
 }
