@@ -2,7 +2,7 @@
 
 契约：[计划 v1.0](plans/native-ui-rewrite.md)；事实与证据：[执行记录](execution/native-ui-rewrite.md)。
 此表仅汇总当前原生实现，不以旧 egui 测试或计划中的类名作为已实现证据。
-Windows 原生线：自动门禁 + 人工矩阵已闭合（W1–W11 / W13 / W14 于 2026-09-21 通过，W12 按计划 v1.1 §3.1 暂缓），发布项 D1–D6 与 CI 首跑仍待做；macOS 原生线：自动门禁绿，人工项（M-01～M-06）仍待闭合。
+Windows 原生线：自动门禁 + 人工矩阵已闭合（W1–W11 / W13 / W14 于 2026-09-21 通过，W12 按计划 v1.1 §3.1 暂缓），发布项 D1–D6 与 CI 首跑仍待做；macOS 原生线：自动门禁绿，第一批 Windows 对齐代码已接入，但人工项（M-01～M-06）仍待闭合。
 
 | 功能 | REQ | macOS 当前实现 | 自动/人工验证 | 缺口 / 审查项 |
 |---|---|---|---|---|
@@ -15,11 +15,11 @@ Windows 原生线：自动门禁 + 人工矩阵已闭合（W1–W11 / W13 / W14 
 | 单双击与拖动 | 08/09 | 原生区分单击/双击跳跃/拖动运行姿势并保存位置；输入入口为编辑按钮或气泡 | E-15 编译；人工待 M-02/M-03 | 原生事件肉眼验收尚未完成 |
 | 缩放、位置、多屏、重力 | 09 | 原生固定缩放档位 0.5–2.0，设置与状态栏菜单共用；物理像素位置命令已接；重力/多屏延期 | runtime scale normalization、E-18；档位与保存待人工 | 连续缩放已移除；多屏/重力属于延期范围 |
 | 自动活动/立即活动 | 09 | 原生菜单仍为基础立即 running；配置命令已接 worker | 自动尚未覆盖；人工未做 | auto-walk scheduler 与原生菜单完整接入待补 |
-| 气泡/影子/编辑按钮 | 10 | 原生 BubblePanel 点击打开 Composer；宠物下方编辑按钮打开 Composer；气泡不再内置回复按钮 | E-15 编译；视觉待 M-04 | 影子到编辑动画属于延期范围 |
-| 对话输入/IME/草稿 | 10/11 | 原生 NSTextView、Enter/Shift+Enter、Esc、草稿保留、后台 DeepSeek/fallback | E-15 XCTest worker 命令；IME/网络人工待 M-04 | caret 方向已接，候选确认和撤销需人工 |
-| 设置、人格、记忆、DeepSeek | 11 | 原生设置支持 DeepSeek 全配置/Keychain、人格 CRUD/模板/导入导出、记忆配置/事实/事件清理；对话显式偏好自动入记忆并参与提示 | runtime projection/command tests、原生 EngineClient 往返测试；M-01/M-04 待人工 | 网络真实回复、IME 和长时间资源验收仍待；自动偏好只接受明确第一人称表达 |
+| 气泡/影子/编辑按钮 | 10 | 原生 BubblePanel 支持 150ms 淡入、剩余时间进度条、悬停暂停；宠物下方编辑入口按工作区下方/左右侧挂定位并在悬停后展开；点击气泡/编辑入口打开 Composer；气泡不内置回复按钮 | E-30a；布局/XCTest 自动通过；视觉待 M-04 | 影子到编辑动画仍属于延期范围；触控板悬停与边缘观感待人工 |
+| 对话输入/IME/草稿 | 10/11 | 原生 NSTextView、Enter/Shift+Enter、Esc、草稿保留、后台 DeepSeek/fallback；Composer 可在下方或左右侧挂跟随宠物 | E-15 / E-30a；IME/网络人工待 M-04 | caret 方向已接，候选确认和撤销需人工 |
+| 设置、人格、记忆、DeepSeek | 11 | 原生设置六页顺序与 Windows 一致；使用统一卡片和自适应左右控件行；支持 DeepSeek 全配置/Keychain、宠物人格风格、记忆配置/事实/事件清理 | E-32 Release 编译；人工 M-01/M-04 待完成 | 720/900/1000px 窗口下侧边栏和控件排布需实机确认；模型网络、Keychain、IME 与记忆细节仍待人工 |
 | 托盘与菜单 | 12 | 原生 NSStatusItem 菜单含设置、宠物选择、固定缩放档位、显示隐藏、立即活动和退出；当前宠物有状态标识 | E-18；菜单交互待人工 | 宠物图标托盘化属于延期范围 |
-| Keychain/LaunchAgent | 04/12 | Rust worker 已有 Keychain API/保存命令；旧 LaunchAgent 模板保留 | E-18 模板检查；原生设置接入待人工 | 原生 LaunchAgent 开关和 Keychain UI 待补 |
+| Keychain/LaunchAgent | 04/12 | macOS 原生设置已接入 Keychain/LaunchAgent；启动凭据存在性检查异步回写，不阻塞状态服务 | E-31b；真实 Keychain/登录自启待人工 | 两端凭据/自启实现保持平台差异；真实登录行为仍待验收 |
 | 单实例/日志/退出 | 12/13 | worker 持有 InstanceLock，日志在 worker，FFI destroy join | E-14/E-17/E-18 | fault 注入、资源增长、5分钟 CPU 待 M-05/M-06 |
 | FFI/线程/故障 | 01/02 | ABI 3 薄转换 + worker、ready/faulted、panic terminal 状态 | E-13/E-14/E-15 layout/lifecycle | panic 注入与跨语言 fault UI 待补 |
 | 调度与性能 | 13 | 空库 worker 秒级 deadline；动画按 deadline 调度；原生 timer 使用快照 deadline | E-14/E-18 | Activity Monitor / 5分钟 CPU 待 M-06 |

@@ -170,7 +170,9 @@ PETSONA_TEST_RESULT="$(find "$PETSONA_NATIVE_TEST_DATA/Logs/Test" -maxdepth 1 -t
 if command -v xcrun >/dev/null 2>&1; then
   xcrun xcresulttool get test-results summary --path "$PETSONA_TEST_RESULT" > "$PETSONA_NATIVE_TEST_DATA/test-summary.json"
   grep -q '"result" : "Passed"' "$PETSONA_NATIVE_TEST_DATA/test-summary.json" || fail '原生 XCTest 结果不是 Passed'
-  pass '原生 XCTest 14 项通过（摘要已保存）'
+  PETSONA_XCTEST_COUNT="$(sed -n 's/.*"totalTestCount" : \([0-9][0-9]*\).*/\1/p' "$PETSONA_NATIVE_TEST_DATA/test-summary.json" | head -n 1)"
+  [[ "$PETSONA_XCTEST_COUNT" =~ ^[0-9]+$ ]] || fail '无法读取原生 XCTest 用例数'
+  pass "原生 XCTest ${PETSONA_XCTEST_COUNT} 项通过（摘要已保存）"
 fi
 
 if [[ "$PETSONA_GATES_ONLY" == "1" ]]; then
@@ -225,7 +227,13 @@ pass 'app bundle、可执行文件和图标存在'
 [[ -f "$PETSONA_ACCEPTANCE_DIR/README.txt" ]] || fail '整体文件夹验收包缺少启动说明'
 grep -F '"stateServer":{"enabled":false,"port":17873}' "$PETSONA_ACCEPTANCE_DIR/acceptance-data/config.json" >/dev/null || fail '验收包初始状态服务未隔离'
 grep -F 'PETSONA_AUTOSTART_PLIST_DIR' "$PETSONA_ACCEPTANCE_DIR/README.txt" >/dev/null || fail '验收包未说明自启项隔离'
+grep -F 'PETSONA_OPEN_SETTINGS_ON_LAUNCH=1' "$PETSONA_ACCEPTANCE_DIR/README.txt" >/dev/null || fail '验收包未要求首次启动显示设置窗口'
 grep -F '不要在本包中保存或清除 API Key' "$PETSONA_ACCEPTANCE_DIR/README.txt" >/dev/null || fail '验收包未说明钥匙串边界'
+grep -F '不要直接双击 Petsona.app' "$PETSONA_ACCEPTANCE_DIR/README.txt" >/dev/null || fail '验收包未提示 Finder 启动不会继承隔离 home'
+grep -F '重复运行此命令会复用已运行的验收实例' "$PETSONA_ACCEPTANCE_DIR/README.txt" >/dev/null || fail '验收包未说明如何重新聚焦现有实例'
+if grep -F ' -n "$PWD/Petsona.app"' "$PETSONA_ACCEPTANCE_DIR/README.txt" >/dev/null; then
+  fail '验收包启动命令仍会强制创建第二个实例'
+fi
 [[ -f "$PETSONA_ACCEPTANCE_ZIP" ]] || fail '整体文件夹验收包 zip 未生成'
 codesign --verify --deep --strict "$PETSONA_ACCEPTANCE_DIR/Petsona.app" >/dev/null || fail '整体文件夹验收包的 app 签名结构无效'
 

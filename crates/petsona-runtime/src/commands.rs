@@ -153,6 +153,14 @@ pub enum RuntimeCommand {
     ExportMemory(PathBuf),
     ImportMemory(PathBuf),
     SaveDeepSeekKey(String),
+    /// Result of the asynchronous OS credential-presence probe. Startup must
+    /// not block the worker on a locked or unavailable system keychain; the
+    /// request id prevents older probes from replacing a newer configuration.
+    KeyPresenceResult {
+        provider: String,
+        request_id: u64,
+        present: bool,
+    },
     ListModels,
     ModelsResult(Result<Vec<String>, String>),
     SendConversation(String),

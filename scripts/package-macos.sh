@@ -97,8 +97,12 @@ Petsona macOS 隔离验收包
 - Petsona.app：当前 macOS 原生应用
 - acceptance-data：独立配置、宠物库、日志和实例锁；重复打包会保留此目录
 
+首次启动前请从菜单栏退出日常运行的 Petsona，避免 LaunchServices 复用日常实例。
 从 Terminal 启动（将路径替换为本目录的实际位置）：
-cd "/path/to/$ACCEPTANCE_NAME" && open --env "PETSONA_HOME=\$PWD/acceptance-data" --env "PETSONA_AUTOSTART_PLIST_DIR=\$PWD/acceptance-data/LaunchAgents" -n "\$PWD/Petsona.app"
+cd "/path/to/$ACCEPTANCE_NAME" && open --env "PETSONA_HOME=\$PWD/acceptance-data" --env "PETSONA_AUTOSTART_PLIST_DIR=\$PWD/acceptance-data/LaunchAgents" --env "PETSONA_OPEN_SETTINGS_ON_LAUNCH=1" "\$PWD/Petsona.app"
+重复运行此命令会复用已运行的验收实例，并重新打开、聚焦设置窗口；不要添加 -n。
+
+不要直接双击 Petsona.app：Finder 启动不会自动继承上面的 PETSONA_HOME，可能使用日常数据目录。
 
 隔离边界：
 - 初始配置关闭状态服务，预留端口 17873；宠物库为空，不会自动导入 Codex 宠物。

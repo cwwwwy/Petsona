@@ -371,3 +371,74 @@ E-07 的 xcresult 摘要在上一只读审查中因 TestReport 临时写入权�
 | E-29d | 打包 app 独立启动 smoke | `PETSONA_NATIVE_APP=dist/Petsona-macos-arm64-acceptance/Petsona.app PETSONA_SMOKE_STATE_PORT=17972 PETSONA_SMOKE_HOOK_PORT=17973 bash scripts/macos-smoke.sh` | exit 1；直接执行时 AppKit `Abort trap: 6`。随后同一 smoke 对原始 `.scratch/macos-native-gates/Build/Products/Release/Petsona.app` 也 exit 1；`open` 对两种 bundle 均返回 `kLSNoExecutableErr`。完整门禁在稍早时点 build app smoke 曾 exit 0（7/7），当前自动化终端重复启动不稳定；原因未确认，**不能宣称人工验收包 GUI 启动已通过** |
 
 结果：整体文件夹和清洁 zip 的自动结构验收通过；交付路径 `dist/Petsona-macos-arm64-acceptance/` 已生成。用户实际 Finder/Terminal 会话启动仍待确认；钥匙串和真实登录自启也不由本包隔离。
+
+### 8.22 macOS 对齐 Windows 第一批：浮层契约与暂缓设置收束（2026-09-23）
+
+- 用户要求开始双端对齐。本批次限定在 macOS 原生前端与既有 Windows W30–W32 契约：不改共享 ABI，不解冻多屏/Retina/Spaces、重力、自动活动提醒、透明度、真实签名/公证等范围。
+- `OverlayPanels.swift` 新增可测试的 `MacOverlayLayout`：按工作区下方空间选择 bottom/left/right，保留当前侧向滞后，统一 Composer 宽度、边距、夹取与编辑入口位置；编辑入口由固定圆形按钮改为带铅笔图标的圆角条，按 220ms 逐步展开，靠近底部不足时侧挂并纵向展开。Composer 复用同一侧向规则，拖动宠物时持续重新定位。
+- `BubblePanel` 接入 runtime 已有 `bubble_timing` 与 `SetBubblePaused`：新气泡 150ms 淡入，绘制剩余时间进度条，鼠标悬停暂停、离开恢复；不改变消息文本或 TTL 语义。
+- macOS 设置页移除当前计划明确暂缓的“启用活动提醒”和“重力”控件，避免 UI 暗示这两个行为已在两端交付；状态协议底层字段保留，便于后续解冻时双端同批实现。
+- 新增 XCTest 覆盖 bubble timing 解析/进度夹取、下方空间不足时的侧向选择、Composer 夹取和编辑条展开后不越工作区；已有浮层生命周期测试迁移到新 API。
+
+| 证据 ID | 目标 | 命令 | 结果 |
+|---|---|---|---|
+| E-30a | 第一批对齐后的完整 macOS 门禁 | `bash scripts/verify-macos-all.sh > .scratch/alignment-macos-gate.log 2>&1`（允许 loopback） | exit 0；core 71、FFI 4、runtime 14、XCTest 14/14、native smoke 7/7、静态链接/arm64/整体验收包结构通过；日志 `.scratch/alignment-macos-gate.log` |
+| E-30b | 浮层/布局针对性 XCTest | `xcodebuild -quiet -project apps/macos/Petsona.xcodeproj -scheme Petsona -configuration Debug -destination 'platform=macOS,arch=arm64' -derivedDataPath .scratch/alignment-tests -only-testing:PetsonaTests/NativeLifecycleTests CODE_SIGNING_ALLOWED=NO test` | exit 0；NativeLifecycleTests 通过，包含新增 timing/layout/展开用例 |
+| E-30c | 语法/空白检查 | `git diff --check` | exit 0 |
+| E-30d | 最新整体验收包 smoke | 首次 `PETSONA_NATIVE_APP=dist/Petsona-macos-arm64-acceptance/Petsona.app ... bash scripts/macos-smoke.sh`；随后使用端口 17982/17983、`PETSONA_SMOKE_KEEP_ARTIFACTS=1` 重试 | 首次 exit 7（进程保持运行但端口探测未及时连上）；重试 exit 0，7/7 通过，保留临时证据目录 `/var/folders/0s/fg9sn3ms3cl0nm4rykprvf8h0000gn/T/petsona-native-smoke.cCAObR` |
+
+本批次仍需人工确认：气泡进度条和淡入观感、触控板悬停后编辑条 220ms 展开、靠近屏幕底部/左右边缘的侧挂、Composer 跟随与中文 IME。Windows 实机未因本批次 macOS-only UI 改动而需要回归；下一批再处理设置响应式收纳与 Mac 独立验收包启动问题。
+
+### 8.23 macOS 对齐 Windows 第二批：设置卡片化与启动凭据隔离（2026-09-23）
+
+- macOS `SettingsView` 从 `Form + Section` 的隐式行布局改为可滚动内容 + 统一卡片/行组件：内容最小宽度 560、最大宽度 1000，侧边栏与窗口使用明确布局令牌；模型、人格、记忆、行为、启动页的控件统一为左侧说明/右侧控件，避免 `HStack` 在窄窗口中互相挤压。导航顺序对齐 Windows：宠物库 → 外观与交互 → 人格 → 记忆 → 模型服务 → 系统。
+- 清理 macOS 已不再显示的人格列表、新建/复制/删除人格辅助状态与弹窗；保留当前宠物人格风格的导入、导出、重置和即时编辑。
+- 验收过程中发现实际启动阻塞根因：runtime worker 在发布 `stateServer` 之前同步读取 macOS Keychain，Security.framework 在当前用户环境中长时间阻塞，造成进程存活但 `/health` 不监听。已改为先加载、启动状态服务和发布 ready，再异步执行凭据存在性探针，通过 `KeyPresenceResult` 回写且按 provider 防止旧结果覆盖新配置；环境变量凭据仍立即生效。
+
+| 证据 ID | 目标 | 命令 | 结果 |
+|---|---|---|---|
+| E-31a | 设置卡片化 SwiftUI 编译与布局契约 | `xcodebuild -quiet -project apps/macos/Petsona.xcodeproj -scheme Petsona -configuration Debug -destination 'platform=macOS,arch=arm64' -derivedDataPath .scratch/settings-alignment-tests -only-testing:PetsonaTests/NativeLifecycleTests CODE_SIGNING_ALLOWED=NO test` | exit 0；14 项 NativeLifecycleTests 通过，包含六页顺序与设置布局宽度契约 |
+| E-31b | 异步 Keychain 启动后的完整 macOS 门禁 | `bash scripts/verify-macos-all.sh > .scratch/settings-alignment-macos-gate.log 2>&1`（允许 loopback） | exit 0；core 71、FFI 4、runtime 14、XCTest 14/14、native smoke 7/7、隔离宿主/端口/打包结构全部通过；日志 `.scratch/settings-alignment-macos-gate.log` |
+| E-31c | 启动阻塞根因探针 | 隔离 home + Release app + `sample` 主线程/worker 栈 | 主线程正常运行 AppKit timer；runtime worker 阻塞于 `SecKeychainFindGenericPassword`。修复后同类 smoke 不再阻塞 |
+| E-31d | 刷新后的整体验收包 smoke | `PETSONA_NATIVE_APP=dist/Petsona-macos-arm64-acceptance/Petsona.app PETSONA_SMOKE_STATE_PORT=17934 PETSONA_SMOKE_HOOK_PORT=17935 bash scripts/macos-smoke.sh` | exit 0；7/7，应用进程、`/health`、`/pets`、状态 TTL、第二实例和安全退出通过 |
+
+本批次仍需人工确认：设置页 800/1000/更宽窗口的实际视觉、窄窗口侧边栏收纳、六页逐页控件对齐、模型/记忆/人格即时操作。Keychain 异步化属于共享 runtime 行为变更，Windows 需在实体机补 `verify-windows.ps1 -Full` 回归后才可发布 Windows。
+
+### 8.24 macOS 设置页响应式布局收尾（2026-09-23）
+
+- 用户要求继续设置页对齐，并减少耗时的自动测试。本批次将 `settingsRow` 改为按可用宽度选择左右布局或上下布局：控制区保持紧凑，标签/说明保留最小宽度；设置卡片统一 padding；窗口最小宽度 720、内容区宽度 480–1000、侧栏宽 160–240。模型、人格、行为、问候、记忆编辑等固定宽控件在空间不足时转为上下排布，避免重叠和压扁。
+- 宠物条目拆为信息行 + 操作行；记忆手动事实编辑改为可换行布局；导航顺序固定为宠物库 → 外观与交互 → 人格 → 记忆 → 模型服务 → 系统。清理旧人格新建/复制/删除投影和弹窗（Windows 当前界面已不提供这些操作）。
+- **自动测试策略**：按用户要求，本轮布局收尾只运行一次 Release 编译和打包脚本，不重跑完整 Rust/XCTest/smoke 套件；异步 Keychain 修复的最近一次完整门禁记录为 E-31b。最终布局的人工视觉验收尚未完成。
+
+| 证据 ID | 目标 | 命令 | 结果 |
+|---|---|---|---|
+| E-32a | 设置布局最终 Release 编译 | `xcodebuild -quiet -project apps/macos/Petsona.xcodeproj -scheme Petsona -configuration Release -arch arm64 -derivedDataPath .scratch/macos-native-gates CODE_SIGNING_ALLOWED=NO build` | exit 0；本轮自适应卡片/行布局编译通过 |
+| E-32b | 刷新本机整体验收包 | `PETSONA_SKIP_BUILD=1 PETSONA_NATIVE_DERIVED_DATA=.scratch/macos-native-gates bash scripts/package-macos.sh dist` | exit 0；刷新 `.app`、固定 `acceptance-data/` 和干净 archive |
+| E-32c | 补丁格式 | `git diff --check` | exit 0 |
+
+本轮验收包路径仍为 `dist/Petsona-macos-arm64-acceptance/`。用户需重点查看 720/900/1000px 窗口下的侧栏收纳、卡片边界、模型页 API Key/模型控件、记忆输入区，以及中文 IME。按用户“减少自动测试”的要求，最终设置布局仅做 Release 编译和打包，未重跑完整门禁；完成布局后的整体验收包启动和 GUI 视觉仍待人工确认。打包 README 明确提示不要双击 `.app`，以免丢失 `PETSONA_HOME`。
+
+#### 验收进程误用日常数据目录（2026-09-23）
+
+- 排查状态端口 smoke 失败时，通过 `lsof` 发现 PID 76165 的验收包 `Petsona` 进程打开了日常目录 `~/Library/Application Support/Petsona/logs/petsona.log` 和 `petsona.lock`，说明这次启动没有继承验收包的 `PETSONA_HOME`。为释放该残留实例，已终止 PID 76165；无法确认该进程由先前探针还是用户手动启动。
+- 只读元数据检查显示 `config.json` mtime 为 2026-09-23 02:00:57、大小 1082 bytes；`petsona.log` mtime 为 01:59:30、大小 52318 bytes；未读取 config 内容，也没有覆盖或恢复它（无启动前备份）。普通使用前用户应自行确认该配置仍符合预期。
+
+### 8.25 代码审查追修与验收窗口复聚焦（2026-09-23）
+
+- **REQ-10 / B7 / B9：编辑入口**：删除 AppDelegate 中“悬停 220ms 自动打开 Composer”的轮询；悬停仍负责 220ms 展开，只有 `EditStripView.mouseUp` 触发打开。Composer 获得焦点的行为仅在明确点击/气泡点击时发生。悬停期间不激活 Petsona 的实机检查仍待用户确认。
+- **REQ-10：气泡淡入**：改用 `BubblePanel.update` 按实际经过时间推进 smoothstep alpha，16ms 重绘只更新进度，不再将 alpha 直接设为 1；加入可注入时间的生命周期回归测试，覆盖 0 / 75 / 150ms。
+- **REQ-10 / B9：窄工作区布局**：侧挂 Composer 宽度上限改为该侧实际剩余空间，不再强制至少 280pt；720pt 工作区 / 200pt 宠物测试确认宽度收为 240pt、保持宠物间距且处于工作区内。
+- **REQ-11 / S16：异步凭据探针**：每次启动、配置变更或保存/清除密钥都会分配递增请求序号；回写必须同时匹配 provider 和最新序号，同一 provider 下延迟返回的旧探针会被忽略。Rust 回归测试覆盖乱序与 provider 不匹配。
+- **设置标题布局**：保留 AppKit 原生窗口标题“Petsona 设置”；移除 sidebar/detail 两个 SwiftUI navigation title，在内容滚动区显示当前页标题；删除会超过窄 detail 列的固定内容最小宽度，让既有 `ViewThatFits` 在 720pt 窗口选择纵向控件布局。实际 720/900/1000pt 窗口视觉仍待人工确认。
+- **验收启动与聚焦**：验收 README/清单命令移除 `open -n`，增加仅验收包使用的 `PETSONA_OPEN_SETTINGS_ON_LAUNCH=1`，因此首次启动即使本地库已有宠物也打开设置；首次启动前仍需退出日常 Petsona以确保隔离 home。重复 `open` 复用隔离实例，并由 `applicationShouldHandleReopen` 重新显示、聚焦设置窗口。菜单栏应用的真实 LaunchServices 聚焦行为仍待实机确认。
+
+| 证据 ID | 目标 | 命令 | 结果 |
+|---|---|---|---|
+| E-33a | 初次合并门禁（沙箱受限） | `bash scripts/verify-macos-all.sh` | exit 101；cargo fmt/clippy 通过；core 的 5 个状态协议用例因沙箱拒绝绑定 `127.0.0.1:0` 失败，未进入后续阶段。判定为执行权限限制，不作为代码失败结论，保留记录。 |
+| E-33b | 完整 macOS 门禁（macOS 27.0 / arm64，允许本机回环） | `bash scripts/verify-macos-all.sh` | exit 0；fmt、clippy、Release FFI/app build 通过；core 71、FFI 4、runtime 15；原生 XCTest 19/19；native smoke 7/7；验收包/zip、README 启动命令、签名结构、第二实例退出与用户数据隔离检查通过。XCTest 摘要 `.scratch/macos-native-tests/test-summary.json`；验收包 `dist/Petsona-macos-arm64-acceptance/`。 |
+| E-33c | XCTest 数量显示与脚本静态检查 | `bash -n scripts/package-macos.sh scripts/verify-macos-all.sh && git diff --check`；从 E-33b 的 `test-summary.json` 读取 `totalTestCount` | exit 0；实际 19 项通过。门禁原先固定打印“14 项”但 XCTest 结果为 19，已改为从 xcresult 动态读取用例数；未为该纯显示调整重跑整套测试。 |
+| E-33d | 首次刷新交付用验收包 | `PETSONA_SKIP_BUILD=1 PETSONA_NATIVE_DERIVED_DATA=.scratch/macos-native-gates bash scripts/package-macos.sh dist` | exit 0；更新 `dist/Petsona-macos-arm64-acceptance/` 与 zip，README 启动命令移除 `-n`，原 `acceptance-data/` 目录仍保留。 |
+| E-33e | 启动标记最终完整门禁（macOS 27.0 / arm64，允许本机回环） | `bash scripts/verify-macos-all.sh` | exit 0；core 71、FFI 4、runtime 15、XCTest 20/20、native smoke 7/7；Release build、验收 README 启动契约、隔离 home、签名和 zip 结构均通过。摘要 `.scratch/macos-native-tests/test-summary.json`；最终实际验收包由 E-33f 刷新。 |
+| E-33f | 刷新带启动聚焦标记的最终验收包 | `PETSONA_SKIP_BUILD=1 PETSONA_NATIVE_DERIVED_DATA=.scratch/macos-native-gates bash scripts/package-macos.sh dist` | exit 0；最终实际验收包与 zip 已更新；README 含 `PETSONA_OPEN_SETTINGS_ON_LAUNCH=1`、不带 `-n`，既有验收数据目录保留。 |
+
+**尚未完成**：A4 / B8 / B9 人工确认（重复启动后设置窗聚焦、720/900/1000pt 设置页标题/侧栏/内容对齐、编辑条悬停不抢焦点而点击才打开、短工作区 Composer 不遮挡宠物、气泡淡入观感）。执行记录不能代替上述桌面验收。

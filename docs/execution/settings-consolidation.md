@@ -121,6 +121,11 @@
 - **settings-consolidation 的功能项 S01–S17 全部实施完毕**（S11–S16 于本轮系列完成，S17 侧边栏图标 / 响应式在此前完成）。
 - 仍待办（非功能项）：macOS 自动门禁已于 2026-09-22 通过（E-28d）；Windows W22/W23 与 macOS 设置页人工验收、`FEATURE_PARITY.md` 收尾、Windows 发布项 D1–D6 与 CI 首跑仍待办。
 
+### macOS 设置页最新对齐状态（2026-09-23）
+
+- 早期条目中“macOS 未编译 / 待 Mac 门禁”是历史快照。当前 `SettingsView` 已使用 ScrollView + 卡片 + 自适应控件行，六页顺序与 Windows 一致；旧人格 CRUD 状态已清理。异步 Keychain 启动修复和完整门禁见 E-31，最终设置 Release 编译见 E-32。
+- 当前剩余是人工视觉/交互验收：720/900/1000px 窗口的卡片对齐、侧边栏收纳、即时生效、模型失败提示、记忆编辑、Keychain 和 LaunchAgent。另需在 Windows 实体机回归共享 runtime 的异步凭据探针。
+
 ## 下一批（用户 2026-09-21 提出的设置页微调，已在计划 v1.1 落盘）
 
 1. 宠物页：合并「导入文件夹 / 导入 zip」为单个「导入…」；「扫描 Codex 宠物」移入 Codex 分区。
@@ -142,3 +147,7 @@
 - P2 凭据状态：新增注入式 SecretStore 测试覆盖有 Key / 无 Key；runtime 无 Key 时投影 `keyConfigured=false`，主动问候直接使用固定本地问候；Mac 状态文案覆盖“未配置”。
 - P3 设置文案：Mac / Windows 高级提示词说明删除已移除的“语言设置”描述。
 - `verify-windows.ps1 -Full` 未在 Mac 环境复跑；共享 runtime 的 no-key 问候分支需 Windows 门禁验证后才可认定双端回归完成。
+
+### macOS 设置标题层级复核（2026-09-23）
+
+- 代码审查指出原生 `NSWindow` 标题与 SwiftUI sidebar/detail 两个 `navigationTitle` 叠加，并由固定内容最小宽度挤压窄窗口。已保留原生窗口标题，将当前页标题移入内容滚动区，并移除内容强制最小宽度。完整实现与门禁证据见 [`native-ui-rewrite` 执行记录 8.25 / E-33b](native-ui-rewrite.md)；720/900/1000pt 实际窗口布局仍待人工确认。

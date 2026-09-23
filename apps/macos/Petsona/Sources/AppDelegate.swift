@@ -8,6 +8,14 @@ private final class SettingsWindow: NSWindow {
     override var canBecomeMain: Bool { true }
 }
 
+enum SettingsLaunchPolicy {
+    static let acceptanceEnvironmentKey = "PETSONA_OPEN_SETTINGS_ON_LAUNCH"
+
+    static func shouldPresentSettings(acceptanceLaunchRequested: Bool, hasPet: Bool) -> Bool {
+        acceptanceLaunchRequested || !hasPet
+    }
+}
+
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     #if DEBUG
@@ -18,6 +26,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusItem: NSStatusItem!
     private var petWindow: PetWindowController!
     private var settingsWindow: NSWindow?
+    private var openSettingsOnLaunch = false
     private var tickTimer: Timer?
     private var didPresentEmptyLibrary = false
     private var bubblePanel: BubblePanel!
@@ -32,6 +41,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let gazeStabilizer = GazeStabilizer()
     private var draggingPet = false
     private var lastDragRefreshTime = 0.0
+    private var composerSide: OverlaySide?
+    private var lastOverlaySide: OverlaySide?
+    private var activeBubbleGeneration: Int64 = -1
+    private var pausedBubbleGeneration: Int64 = -1
 
     override init() {
         #if DEBUG
@@ -105,6 +118,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if testHostHome != nil { return }
         #endif
 
+        openSettingsOnLaunch = ProcessInfo.processInfo.environment[
+            SettingsLaunchPolicy.acceptanceEnvironmentKey
+        ] == "1"
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         statusItem.button?.title = "🐾"
         statusItem.menu = makeMenu()
@@ -132,6 +148,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         bubblePanel = BubblePanel()
         bubblePanel.onReply = { [weak self] in self?.openComposer() }
+        bubblePanel.onHoverChanged = { [weak self] hovered in
+            self?.setBubblePaused(hovered)
+        }
         editPanel = EditButtonPanel()
         editPanel.onOpen = { [weak self] in self?.openComposer() }
         composerPanel = ComposerPanel()
@@ -141,6 +160,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         composerPanel.onClose = { [weak self] in
             self?.conversationDraft = self?.composerPanel.draft() ?? ""
+            self?.composerSide = nil
             self?.engine.clearGaze()
         }
         composerPanel.onCaret = { [weak self] point in
@@ -150,6 +170,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                                       dy: petFrame.midY - point.y)
         }
         scheduleTick()
+    }
+
+    func applicationShouldHandleReopen(_ sender: NSApplication,
+                                       hasVisibleWindows flag: Bool) -> Bool {
+        openSettings()
+        return true
     }
 
     func applicationWillTerminate(_ notification: Notification) {
@@ -189,7 +215,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
         if engine.snapshot.ready != 0,
-           engine.snapshot.has_pet == 0,
+           SettingsLaunchPolicy.shouldPresentSettings(
+               acceptanceLaunchRequested: openSettingsOnLaunch,
+               hasPet: engine.snapshot.has_pet != 0
+           ),
            !didPresentEmptyLibrary {
             didPresentEmptyLibrary = true
             openSettings()
@@ -197,8 +226,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let pointerPollMilliseconds: UInt32 = engine.snapshot.has_pet == 0
             ? 1_000
             : (globalGazeActive ? 16 : 33)
+        let overlayPollMilliseconds: UInt32 = (bubblePanel?.needsRefresh == true || editPanel?.needsRefresh == true)
+            ? 16
+            : 1_000
         let next = max(0.016,
-                      min(Double(max(min(nextMilliseconds, pointerPollMilliseconds), 16)) / 1000.0,
+                      min(Double(max(min(nextMilliseconds,
+                                          min(pointerPollMilliseconds, overlayPollMilliseconds)), 16)) / 1000.0,
                           60.0))
         tickTimer = Timer.scheduledTimer(withTimeInterval: next,
                                          repeats: false) { [weak self] _ in
@@ -224,7 +257,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                                         defer: false)
             window.title = "Petsona 设置"
             window.contentView = hosting
-            window.minSize = NSSize(width: 820, height: 600)
+            window.minSize = NSSize(width: SettingsLayout.windowMinWidth,
+                                    height: SettingsLayout.windowMinHeight)
             window.collectionBehavior = [.moveToActiveSpace]
             window.center()
             window.isReleasedWhenClosed = false
@@ -402,18 +436,95 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             openSettings()
             return
         }
-        composerPanel.show(near: petWindow.screenFrame(), draft: conversationDraft)
+        let petFrame = petWindow.screenFrame()
+        let workFrame = workArea(for: petFrame)
+        composerSide = MacOverlayLayout.chooseSide(pet: petFrame,
+                                                   work: workFrame,
+                                                   current: lastOverlaySide)
+        lastOverlaySide = composerSide
+        composerPanel.show(near: petFrame,
+                           workFrame: workFrame,
+                           side: composerSide ?? .bottom,
+                           draft: conversationDraft)
     }
 
     private func updateOverlays() {
+        let petFrame = petWindow.screenFrame()
+        let workFrame = workArea(for: petFrame)
         guard engine.snapshot.pet_visible != 0, engine.snapshot.has_pet != 0 else {
-            bubblePanel.update(text: "", petFrame: petWindow.screenFrame())
-            editPanel.update(petFrame: petWindow.screenFrame(), visible: false)
+            bubblePanel.update(text: "", timing: nil, petFrame: petFrame, workFrame: workFrame)
+            editPanel.hide()
             return
         }
-        bubblePanel.update(text: engine.text(PETSONA_TEXT_BUBBLE),
-                           petFrame: petWindow.screenFrame())
-        editPanel.update(petFrame: petWindow.screenFrame(), visible: !composerPanel.isVisible)
+
+        let bubbleText = engine.text(PETSONA_TEXT_BUBBLE)
+        if bubbleText.isEmpty {
+            if pausedBubbleGeneration != -1 {
+                engine.send(kind: PETSONA_COMMAND_SET_BUBBLE_PAUSED, value: 0)
+            }
+            activeBubbleGeneration = -1
+            pausedBubbleGeneration = -1
+            bubblePanel.update(text: "", timing: nil, petFrame: petFrame, workFrame: workFrame)
+        } else {
+            let timing = BubbleTiming.parse(engine.text(PETSONA_TEXT_BUBBLE_TIMING))
+            if let timing, timing.generation != activeBubbleGeneration {
+                if pausedBubbleGeneration != -1 {
+                    engine.send(kind: PETSONA_COMMAND_SET_BUBBLE_PAUSED, value: 0)
+                    pausedBubbleGeneration = -1
+                }
+                activeBubbleGeneration = timing.generation
+            }
+            bubblePanel.update(text: bubbleText,
+                               timing: timing,
+                               petFrame: petFrame,
+                               workFrame: workFrame)
+            if bubblePanel.isHovered {
+                setBubblePaused(true)
+            }
+        }
+
+        if composerPanel.isVisible {
+            if composerSide == nil {
+                composerSide = MacOverlayLayout.chooseSide(pet: petFrame,
+                                                           work: workFrame,
+                                                           current: lastOverlaySide)
+            }
+            composerPanel.updatePosition(near: petFrame,
+                                         workFrame: workFrame,
+                                         side: composerSide ?? .bottom)
+            editPanel.hide()
+        } else {
+            let side = MacOverlayLayout.chooseSide(pet: petFrame,
+                                                   work: workFrame,
+                                                   current: lastOverlaySide)
+            lastOverlaySide = side
+            editPanel.update(petFrame: petFrame,
+                             workFrame: workFrame,
+                             side: side,
+                             now: CACurrentMediaTime())
+        }
+    }
+
+    private func setBubblePaused(_ paused: Bool) {
+        guard activeBubbleGeneration != -1 else { return }
+        if paused {
+            guard pausedBubbleGeneration != activeBubbleGeneration else { return }
+            engine.send(kind: PETSONA_COMMAND_SET_BUBBLE_PAUSED, value: 1)
+            pausedBubbleGeneration = activeBubbleGeneration
+        } else if pausedBubbleGeneration != -1 {
+            engine.send(kind: PETSONA_COMMAND_SET_BUBBLE_PAUSED, value: 0)
+            pausedBubbleGeneration = -1
+        }
+    }
+
+    private func workArea(for petFrame: NSRect) -> NSRect {
+        let center = NSPoint(x: petFrame.midX, y: petFrame.midY)
+        if let screen = NSScreen.screens.first(where: { $0.frame.contains(center) }) {
+            return screen.visibleFrame
+        }
+        return NSScreen.main?.visibleFrame
+            ?? NSScreen.screens.first?.visibleFrame
+            ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
     }
 
     private func updateGlobalGaze() {

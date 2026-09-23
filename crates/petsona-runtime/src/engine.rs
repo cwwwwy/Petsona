@@ -91,7 +91,7 @@ impl RuntimeEngine {
     ) -> Result<Self>
     where
         F: Fn() + Send + Sync + 'static,
-        K: Fn(&DeepSeekConfig) -> bool + Send + Sync + 'static,
+        K: Fn(&DeepSeekConfig) -> bool + Clone + Send + Sync + 'static,
     {
         let (command_tx, command_rx) = mpsc::channel();
         let projection = Arc::new(SharedProjection {
@@ -189,9 +189,9 @@ fn run_worker<K>(
     external_wake: Arc<dyn Fn() + Send + Sync>,
     key_presence: K,
 ) where
-    K: Fn(&DeepSeekConfig) -> bool + Send + Sync + 'static,
+    K: Fn(&DeepSeekConfig) -> bool + Clone + Send + Sync + 'static,
 {
-    let result = load_runtime(home, &command_tx, &external_wake, &key_presence);
+    let result = load_runtime(home, &command_tx, &external_wake);
     let (mut runtime, _instance_lock) = match result {
         Ok(value) => value,
         Err(error) => {
@@ -199,6 +199,15 @@ fn run_worker<K>(
             return;
         }
     };
+
+    let mut key_presence_request_id = 0;
+    let request_id = next_key_presence_request_id(&mut key_presence_request_id);
+    schedule_key_presence_check(
+        &runtime.config.deepseek,
+        &command_tx,
+        &key_presence,
+        request_id,
+    );
 
     let mut revision = 1u64;
     tick_runtime(&mut runtime, &command_tx, &projection, &mut revision);
@@ -208,7 +217,13 @@ fn run_worker<K>(
         match command_rx.recv_timeout(wait) {
             Ok(RuntimeCommand::Stop) => break,
             Ok(command) => {
-                if apply_command(command, &mut runtime, &command_tx, &key_presence) {
+                if apply_command(
+                    command,
+                    &mut runtime,
+                    &command_tx,
+                    &key_presence,
+                    &mut key_presence_request_id,
+                ) {
                     tick_runtime(&mut runtime, &command_tx, &projection, &mut revision);
                 }
             }
@@ -220,15 +235,11 @@ fn run_worker<K>(
     }
 }
 
-fn load_runtime<K>(
+fn load_runtime(
     home: Option<PathBuf>,
     command_tx: &Sender<RuntimeCommand>,
     external_wake: &Arc<dyn Fn() + Send + Sync>,
-    key_presence: &K,
-) -> Result<(PetsonaRuntime, InstanceLock)>
-where
-    K: Fn(&DeepSeekConfig) -> bool,
-{
+) -> Result<(PetsonaRuntime, InstanceLock)> {
     let paths = home.map(AppPaths::resolve).unwrap_or_default();
     paths
         .ensure()
@@ -239,7 +250,7 @@ where
         .context("cannot acquire the Petsona data-directory lock")?;
     let config = AppConfig::load(&paths.config_file).context("cannot load Petsona config")?;
     let mut runtime = PetsonaRuntime::load(paths, config).context("cannot load Petsona runtime")?;
-    runtime.key_configured = key_presence(&runtime.config.deepseek);
+    runtime.key_configured = env_key_present(&runtime.config.deepseek);
     // REQ-P05: honour the retention window on every start.
     let retention = runtime.config.memory.event_retention_days;
     let _ = runtime.memory.prune_events(&runtime.persona.id, retention);
@@ -252,14 +263,59 @@ where
     Ok((runtime, instance_lock))
 }
 
+fn env_key_present(config: &DeepSeekConfig) -> bool {
+    std::env::var(&config.api_key_env)
+        .map(|key| !key.trim().is_empty())
+        .unwrap_or(false)
+}
+
+fn schedule_key_presence_check<K>(
+    config: &DeepSeekConfig,
+    command_tx: &Sender<RuntimeCommand>,
+    key_presence: &K,
+    request_id: u64,
+) where
+    K: Fn(&DeepSeekConfig) -> bool + Clone + Send + Sync + 'static,
+{
+    let config = config.clone();
+    let provider = config.provider.clone();
+    let command_tx = command_tx.clone();
+    let key_presence = key_presence.clone();
+    let _ = thread::Builder::new()
+        .name("petsona-key-presence".to_string())
+        .spawn(move || {
+            let present = key_presence(&config);
+            let _ = command_tx.send(RuntimeCommand::KeyPresenceResult {
+                provider,
+                request_id,
+                present,
+            });
+        });
+}
+
+fn next_key_presence_request_id(current: &mut u64) -> u64 {
+    *current = current.wrapping_add(1).max(1);
+    *current
+}
+
+fn key_presence_result_is_current(
+    configured_provider: &str,
+    latest_request_id: u64,
+    result_provider: &str,
+    result_request_id: u64,
+) -> bool {
+    configured_provider == result_provider && latest_request_id == result_request_id
+}
+
 fn apply_command<K>(
     command: RuntimeCommand,
     runtime: &mut PetsonaRuntime,
     command_tx: &Sender<RuntimeCommand>,
     key_presence: &K,
+    key_presence_request_id: &mut u64,
 ) -> bool
 where
-    K: Fn(&DeepSeekConfig) -> bool,
+    K: Fn(&DeepSeekConfig) -> bool + Clone + Send + Sync + 'static,
 {
     match command {
         RuntimeCommand::Wake | RuntimeCommand::Tick => true,
@@ -644,7 +700,14 @@ where
         }
         RuntimeCommand::UpdateDeepSeekConfig(config) => {
             runtime.config.deepseek = sanitize_deepseek_config(config);
-            runtime.key_configured = key_presence(&runtime.config.deepseek);
+            runtime.key_configured = env_key_present(&runtime.config.deepseek);
+            let request_id = next_key_presence_request_id(key_presence_request_id);
+            schedule_key_presence_check(
+                &runtime.config.deepseek,
+                command_tx,
+                key_presence,
+                request_id,
+            );
             match runtime.save_config() {
                 Ok(()) => runtime.status = "DeepSeek 配置已保存".to_string(),
                 Err(error) => runtime.status = format!("保存 DeepSeek 配置失败：{error}"),
@@ -781,7 +844,29 @@ where
                 }
                 Err(error) => runtime.status = format!("保存密钥失败：{error}"),
             }
-            runtime.key_configured = key_presence(&runtime.config.deepseek);
+            runtime.key_configured = env_key_present(&runtime.config.deepseek);
+            let request_id = next_key_presence_request_id(key_presence_request_id);
+            schedule_key_presence_check(
+                &runtime.config.deepseek,
+                command_tx,
+                key_presence,
+                request_id,
+            );
+            true
+        }
+        RuntimeCommand::KeyPresenceResult {
+            provider,
+            request_id,
+            present,
+        } => {
+            if key_presence_result_is_current(
+                &runtime.config.deepseek.provider,
+                *key_presence_request_id,
+                &provider,
+                request_id,
+            ) {
+                runtime.key_configured = present;
+            }
             true
         }
         RuntimeCommand::ListModels => {
@@ -1384,6 +1469,15 @@ mod tests {
         config.deepseek.api_key_env = TEST_API_KEY_ENV.to_string();
         config.save(&paths.config_file).expect("isolated config");
         home
+    }
+
+    #[test]
+    fn stale_key_presence_result_is_ignored_even_for_the_same_provider() {
+        assert!(!key_presence_result_is_current(
+            "deepseek", 2, "deepseek", 1
+        ));
+        assert!(key_presence_result_is_current("deepseek", 2, "deepseek", 2));
+        assert!(!key_presence_result_is_current("custom", 2, "deepseek", 2));
     }
 
     /// Same isolated home plus the self-authored V2 fixture pet, used by the
@@ -2034,7 +2128,14 @@ mod tests {
             &result,
             RuntimeCommand::GreetingResult(Err(message)) if message.contains("未配置模型密钥")
         ));
-        assert!(apply_command(result, &mut runtime, &command_tx, &|_| false));
+        let mut key_presence_request_id = 0;
+        assert!(apply_command(
+            result,
+            &mut runtime,
+            &command_tx,
+            &|_| false,
+            &mut key_presence_request_id,
+        ));
         assert_eq!(
             runtime.bubble.as_ref().map(|bubble| bubble.text.as_str()),
             Some("本地固定问候")

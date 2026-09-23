@@ -36,13 +36,6 @@ private struct CodexPetChoice: Decodable, Identifiable {
     let v2: Bool
 }
 
-private struct PersonaChoice: Decodable, Identifiable {
-    let id: String
-    let name: String
-    let description: String?
-    let builtin: Bool
-}
-
 private struct PersonaTraitsProjection: Decodable {
     var tone = ""
     var verbosity = "normal"
@@ -208,9 +201,9 @@ private struct ImportConflictProjection: Decodable {
 enum SettingsSection: String, CaseIterable, Identifiable {
     case library
     case behavior
-    case deepSeek
     case persona
     case memory
+    case deepSeek
     case startup
 
     var id: String { rawValue }
@@ -230,33 +223,35 @@ enum SettingsSection: String, CaseIterable, Identifiable {
         switch self {
         case .library: return "pawprint.fill"
         case .behavior: return "slider.horizontal.3"
-        case .deepSeek: return "sparkles"
         case .persona: return "person.crop.circle"
         case .memory: return "clock.arrow.circlepath"
-        case .startup: return "power"
+        case .deepSeek: return "globe"
+        case .startup: return "gearshape"
         }
     }
+}
+
+enum SettingsLayout {
+    static let windowMinWidth: CGFloat = 720
+    static let windowMinHeight: CGFloat = 600
+    static let contentMaxWidth: CGFloat = 1000
+    static let sidebarMinWidth: CGFloat = 160
+    static let sidebarIdealWidth: CGFloat = 200
+    static let sidebarMaxWidth: CGFloat = 240
+    static let cardPadding: CGFloat = 16
+    static let rowGap: CGFloat = 16
+    static let rowLabelMinWidth: CGFloat = 220
 }
 
 struct SettingsView: View {
     @ObservedObject var engine: EngineClient
 
-    private let personaTemplates = [
-        ("", "空白人格"),
-        ("genki", "元气助手"),
-        ("snark", "毒舌吐槽"),
-        ("advisor", "沉稳顾问"),
-    ]
-
     @State private var scale = 1.0
     @State private var clickThrough = true
-    @State private var autoWalk = true
-    @State private var gravity = false
     @State private var alwaysOnTop = true
     @State private var showingCodexPets = false
     @State private var dropTargeted = false
 
-    @State private var personaID = "default"
     @State private var personaName = ""
     @State private var personaTone = ""
     @State private var personaTonePreset = ""
@@ -264,7 +259,6 @@ struct SettingsView: View {
     @State private var personaEmoji = false
     @State private var greeting = ""
     @State private var systemPrompt = ""
-    @State private var showingNewPersona = false
 
     @State private var deepSeekProvider = "deepseek"
     @State private var deepSeekBaseURL = "https://api.deepseek.com/v1"
@@ -302,7 +296,6 @@ struct SettingsView: View {
 
     private var pets: [PetChoice] { decode(PETSONA_TEXT_PETS, as: [PetChoice].self) ?? [] }
     private var codexPets: [CodexPetChoice] { decode(PETSONA_TEXT_CODEX_PETS, as: [CodexPetChoice].self) ?? [] }
-    private var personas: [PersonaChoice] { decode(PETSONA_TEXT_PERSONAS, as: [PersonaChoice].self) ?? [] }
     private var currentPersona: PersonaProjection {
         decode(PETSONA_TEXT_PERSONA, as: PersonaProjection.self) ?? PersonaProjection()
     }
@@ -333,12 +326,15 @@ struct SettingsView: View {
                     .tag(section)
             }
             .listStyle(.sidebar)
-            .navigationTitle("Petsona 设置")
-            .navigationSplitViewColumnWidth(min: 180, ideal: 210, max: 260)
+            .navigationSplitViewColumnWidth(min: SettingsLayout.sidebarMinWidth,
+                                             ideal: SettingsLayout.sidebarIdealWidth,
+                                             max: SettingsLayout.sidebarMaxWidth)
         } detail: {
             settingsDetail
         }
-        .frame(minWidth: 920, minHeight: 680)
+        .navigationSplitViewStyle(.balanced)
+        .frame(minWidth: SettingsLayout.windowMinWidth,
+               minHeight: SettingsLayout.windowMinHeight)
         .onAppear { reloadForm() }
     }
 
@@ -363,28 +359,97 @@ struct SettingsView: View {
     @ViewBuilder
     private func settingsForm<Content: View>(title: String,
                                                @ViewBuilder content: () -> Content) -> some View {
-        Form {
-            content()
-            if !engine.errorMessage.isEmpty {
-                Section("错误") {
-                    Text(engine.errorMessage).foregroundStyle(.red)
+        ScrollView {
+            VStack(alignment: .leading, spacing: 16) {
+                Text(title)
+                    .font(.title2.weight(.semibold))
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                content()
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                if !engine.errorMessage.isEmpty {
+                    settingsCard("错误") {
+                        Text(engine.errorMessage).foregroundStyle(.red)
+                    }
+                }
+                if !engine.statusMessage.isEmpty {
+                    settingsCard("状态") {
+                        Text(engine.statusMessage)
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                    }
                 }
             }
-            if !engine.statusMessage.isEmpty {
-                Section {
-                    Text(engine.statusMessage)
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
-                }
+            .frame(maxWidth: SettingsLayout.contentMaxWidth, alignment: .leading)
+            .padding(24)
+            .frame(maxWidth: .infinity, alignment: .topLeading)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .background(Color(nsColor: .windowBackgroundColor))
+    }
+
+    @ViewBuilder
+    private func settingsCard<Content: View>(_ title: String,
+                                              @ViewBuilder content: () -> Content) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text(title)
+                .font(.headline)
+            content()
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(SettingsLayout.cardPadding)
+        .background(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(Color(nsColor: .controlBackgroundColor))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .stroke(Color.secondary.opacity(0.18))
+        )
+    }
+
+    @ViewBuilder
+    private func settingsRow<Control: View>(
+        _ title: String,
+        description: String? = nil,
+        @ViewBuilder control: () -> Control
+    ) -> some View {
+        let label = VStack(alignment: .leading, spacing: 3) {
+            Text(title).fontWeight(.semibold)
+            if let description {
+                Text(description)
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
         }
-        .formStyle(.grouped)
-        .navigationTitle(title)
-        .padding(.vertical, 8)
+
+        ViewThatFits(in: .horizontal) {
+            HStack(alignment: .top, spacing: SettingsLayout.rowGap) {
+                label
+                    .frame(minWidth: SettingsLayout.rowLabelMinWidth,
+                           maxWidth: .infinity,
+                           alignment: .leading)
+                Spacer(minLength: 0)
+                control()
+                    .fixedSize(horizontal: true, vertical: false)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+
+            VStack(alignment: .leading, spacing: 8) {
+                label.frame(maxWidth: .infinity, alignment: .leading)
+                HStack {
+                    Spacer(minLength: 0)
+                    control()
+                }
+                .frame(maxWidth: .infinity)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private var petLibrarySection: some View {
-        Section("宠物库") {
+        settingsCard("宠物库") {
             if engine.snapshot.has_pet == 0 {
                 Text("本地库为空。请选择一个 Codex 宠物包或文件夹导入。")
                     .foregroundStyle(.secondary)
@@ -450,32 +515,43 @@ struct SettingsView: View {
                 }
             }
             ForEach(pets) { pet in
-                HStack {
-                    if let spritesheet = pet.spritesheet,
-                       let cellWidth = pet.cellWidth,
-                       let cellHeight = pet.cellHeight {
-                        CodexPreview(path: spritesheet,
-                                     cellWidth: cellWidth,
-                                     cellHeight: cellHeight,
-                                     columns: 8)
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack(spacing: 12) {
+                        if let spritesheet = pet.spritesheet,
+                           let cellWidth = pet.cellWidth,
+                           let cellHeight = pet.cellHeight {
+                            CodexPreview(path: spritesheet,
+                                         cellWidth: cellWidth,
+                                         cellHeight: cellHeight,
+                                         columns: 8)
+                        } else {
+                            Color.clear.frame(width: 48, height: 48)
+                        }
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text(pet.name)
+                            Text(pet.id).font(.caption).foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                        if pet.v2 { Text("V2").foregroundStyle(.secondary) }
                     }
-                    Text(pet.name)
-                    if pet.v2 { Text("V2").foregroundStyle(.secondary) }
-                    Spacer()
-                    if engine.text(PETSONA_TEXT_PET_ID) == pet.id {
-                        Text("当前").foregroundStyle(.secondary)
-                    } else {
-                        Button("切换") { engine.selectPet(pet.id) }
+                    HStack(spacing: 8) {
+                        Spacer()
+                        if engine.text(PETSONA_TEXT_PET_ID) == pet.id {
+                            Text("当前").foregroundStyle(.secondary)
+                        } else {
+                            Button("切换") { engine.selectPet(pet.id) }
+                        }
+                        Button("导出") { exportPet(pet.id) }
+                        Button("删除") { deletePet(pet.id) }
                     }
-                    Button("导出") { exportPet(pet.id) }
-                    Button("删除") { deletePet(pet.id) }
                 }
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
     }
 
     private var personaSection: some View {
-        Section("这只宠物的人格") {
+        settingsCard("这只宠物的人格") {
             HStack {
                 Button("导入…") { importPersona() }
                 Button("导出…") { exportPersona(engine.text(PETSONA_TEXT_PERSONA_ID)) }
@@ -490,81 +566,115 @@ struct SettingsView: View {
                     }
                 }
             }
-            TextField("语气", text: $personaTone)
-            Picker("语气预设", selection: $personaTonePreset) {
-                Text("自定义…").tag("")
-                ForEach(TonePreset.all) { preset in
-                    Text(preset.label).tag(preset.tone)
+            settingsRow("语气", description: "直接描述宠物希望采用的说话方式。") {
+                TextField("例如：毒舌但温柔", text: $personaTone)
+                    .textFieldStyle(.roundedBorder)
+                    .frame(minWidth: 220, maxWidth: 360)
+            }
+            settingsRow("语气预设", description: "预设会同时调整回答的长短。") {
+                Picker("语气预设", selection: $personaTonePreset) {
+                    Text("自定义…").tag("")
+                    ForEach(TonePreset.all) { preset in
+                        Text(preset.label).tag(preset.tone)
+                    }
+                }
+                .frame(width: 220)
+                .onChange(of: personaTonePreset) { tone in
+                    guard !tone.isEmpty else { return }
+                    personaTone = tone
+                    personaVerbosity = TonePreset.all.first { $0.tone == tone }?.verbosity ?? "normal"
                 }
             }
-            .onChange(of: personaTonePreset) { tone in
-                guard !tone.isEmpty else { return }
-                personaTone = tone
-                personaVerbosity = TonePreset.all.first { $0.tone == tone }?.verbosity ?? "normal"
+            settingsRow("允许 emoji", description: "关闭时会要求模型不要使用 emoji。") {
+                Toggle("", isOn: $personaEmoji)
+                    .labelsHidden()
+                    .toggleStyle(.switch)
             }
-            Toggle("允许 emoji", isOn: $personaEmoji)
-            DisclosureGroup("高级（系统提示词）") {
-                TextEditor(text: $systemPrompt).frame(minHeight: 120)
-                Text("语气 / emoji 会由上面的设置自动追加，不需要在这里重复。")
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
+            DisclosureGroup {
+                VStack(alignment: .leading, spacing: 8) {
+                    TextEditor(text: $systemPrompt)
+                        .frame(minHeight: 120)
+                        .frame(maxWidth: .infinity)
+                        .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color.secondary.opacity(0.25)))
+                    Text("语气 / emoji 会由上面的设置自动追加，不需要在这里重复。")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                }
+            } label: {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("高级").font(.headline)
+                    Text("系统提示词：模型的核心指令。")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                }
             }
         }
         .onChange(of: personaSignature) { value in
             guard value != loadedPersonaSignature else { return }
             scheduleApply(savePersona)
         }
-        .sheet(isPresented: $showingNewPersona) {
-            NewPersonaView(templates: personaTemplates) { id, name, template in
-                engine.createPersona(id: id, name: name, template: template)
-                showingNewPersona = false
-                reloadLater()
-            }
-            .frame(width: 360, height: 220)
-            .padding()
-        }
     }
 
     @ViewBuilder
     private var deepSeekSection: some View {
-        Section("模型服务") {
-            Picker("服务商", selection: $deepSeekProvider) {
-                Text("DeepSeek").tag("deepseek")
-                Text("自定义").tag("custom")
-            }
-            .onChange(of: deepSeekProvider) { provider in
-                if provider != "custom" {
-                    deepSeekBaseURL = "https://api.deepseek.com/v1"
+        settingsCard("模型服务") {
+            settingsRow("服务商", description: "选择 DeepSeek 或其他 OpenAI 兼容端点。") {
+                Picker("服务商", selection: $deepSeekProvider) {
+                    Text("DeepSeek").tag("deepseek")
+                    Text("自定义").tag("custom")
                 }
-                scheduleApply(saveDeepSeekConfig)
+                .frame(width: 220)
+                .onChange(of: deepSeekProvider) { provider in
+                    if provider != "custom" {
+                        deepSeekBaseURL = "https://api.deepseek.com/v1"
+                    }
+                    scheduleApply(saveDeepSeekConfig)
+                }
             }
-            TextField("Base URL", text: $deepSeekBaseURL)
-                .disabled(deepSeekProvider != "custom")
-            SecureField("API Key（可选）", text: $deepSeekKey)
-            HStack {
-                Button("保存密钥") {
-                    do {
-                        try KeychainService.saveDeepSeekKey(deepSeekKey, provider: deepSeekProvider)
-                        deepSeekKey = ""
-                        engine.reportError("")
-                    } catch {
-                        engine.reportError(error.localizedDescription)
+            settingsRow("Base URL", description: deepSeekProvider == "custom" ? "自定义 OpenAI 兼容端点。" : "DeepSeek 的固定地址。") {
+                TextField("Base URL", text: $deepSeekBaseURL)
+                    .textFieldStyle(.roundedBorder)
+                    .frame(minWidth: 280, maxWidth: 420)
+                    .disabled(deepSeekProvider != "custom")
+            }
+            settingsRow("API Key", description: "密钥只保存到 macOS Keychain，不会进入配置快照。") {
+                VStack(alignment: .trailing, spacing: 8) {
+                    SecureField("可选；输入新密钥可覆盖", text: $deepSeekKey)
+                        .textFieldStyle(.roundedBorder)
+                        .frame(minWidth: 240, maxWidth: 320)
+                    HStack {
+                        Button("保存密钥") {
+                            do {
+                                try KeychainService.saveDeepSeekKey(deepSeekKey, provider: deepSeekProvider)
+                                deepSeekKey = ""
+                                engine.reportError("")
+                            } catch {
+                                engine.reportError(error.localizedDescription)
+                            }
+                        }
+                        Button("清除密钥") {
+                            do { try KeychainService.deleteDeepSeekKey(provider: deepSeekProvider) }
+                            catch { engine.reportError(error.localizedDescription) }
+                        }
+                        .disabled(!deepSeek.keyConfigured)
+                        Text(deepSeek.credentialStatusLabel)
+                            .foregroundStyle(.secondary)
                     }
                 }
-                Button("清除密钥") {
-                    do { try KeychainService.deleteDeepSeekKey(provider: deepSeekProvider) }
-                    catch { engine.reportError(error.localizedDescription) }
-                }
-                .disabled(!deepSeek.keyConfigured)
-                Text(deepSeek.credentialStatusLabel)
-                    .foregroundStyle(.secondary)
             }
-            TextField("模型", text: $deepSeekModel)
-            HStack {
-                Button("拉取模型列表") { engine.listModels() }
-                if !availableModels.isEmpty {
-                    Picker("选择模型", selection: $deepSeekModel) {
-                        ForEach(availableModels, id: \.self) { Text($0).tag($0) }
+            settingsRow("模型", description: "可以手动填写，也可以从服务商拉取列表。") {
+                VStack(alignment: .trailing, spacing: 8) {
+                    TextField("模型名称", text: $deepSeekModel)
+                        .textFieldStyle(.roundedBorder)
+                        .frame(minWidth: 240, maxWidth: 320)
+                    HStack {
+                        Button("拉取模型列表") { engine.listModels() }
+                        if !availableModels.isEmpty {
+                            Picker("选择模型", selection: $deepSeekModel) {
+                                ForEach(availableModels, id: \.self) { Text($0).tag($0) }
+                            }
+                            .frame(width: 220)
+                        }
                     }
                 }
             }
@@ -573,21 +683,38 @@ struct SettingsView: View {
             }
         }
 
-        Section("高级") {
-            TextField("API Key 环境变量", text: $deepSeekAPIKeyEnv)
-            Stepper("超时：\(deepSeekTimeout) 秒", value: $deepSeekTimeout, in: 5...120)
-            Stepper("最大 token：\(deepSeekMaxTokens)", value: $deepSeekMaxTokens, in: 16...4000, step: 16)
-            HStack {
-                Text("温度")
-                Slider(value: $deepSeekTemperature, in: 0...2, step: 0.1)
-                Text(String(format: "%.1f", deepSeekTemperature)).frame(width: 40)
+        settingsCard("高级") {
+            settingsRow("API Key 环境变量", description: "优先使用该环境变量；为空时默认 DEEPSEEK_API_KEY。") {
+                TextField("环境变量名", text: $deepSeekAPIKeyEnv)
+                    .textFieldStyle(.roundedBorder)
+                    .frame(width: 240)
+            }
+            settingsRow("超时", description: "单次请求的最长等待时间。") {
+                Stepper("\(deepSeekTimeout) 秒", value: $deepSeekTimeout, in: 5...120)
+                    .frame(width: 160, alignment: .trailing)
+            }
+            settingsRow("最大 token", description: "对话回复的长度上限。") {
+                Stepper("\(deepSeekMaxTokens)", value: $deepSeekMaxTokens, in: 16...4000, step: 16)
+                    .frame(width: 160, alignment: .trailing)
+            }
+            settingsRow("温度", description: "越高越随机；0.7 左右比较自然。") {
+                HStack {
+                    Slider(value: $deepSeekTemperature, in: 0...2, step: 0.1)
+                        .frame(width: 220)
+                    Text(String(format: "%.1f", deepSeekTemperature))
+                        .frame(width: 40, alignment: .trailing)
+                }
             }
             if deepSeekProvider == "custom" {
                 Text("自定义端点不会收到 DeepSeek 专有的 thinking 字段。")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
             } else {
-                Toggle("关闭思考模式（短回复更快）", isOn: $deepSeekThinkingDisabled)
+                settingsRow("思考模式", description: "关闭思考链以缩短短回复的延迟。") {
+                    Toggle("", isOn: $deepSeekThinkingDisabled)
+                        .labelsHidden()
+                        .toggleStyle(.switch)
+                }
             }
         }
         .onChange(of: deepSeekSignature) { value in
@@ -598,52 +725,64 @@ struct SettingsView: View {
     }
 
     private var memorySection: some View {
-        Section("记忆与用户偏好") {
-            Toggle("启用记忆", isOn: $memoryEnabled)
-            Stepper("保留最近事件：\(memoryRecentEvents)", value: $memoryRecentEvents, in: 1...100)
-            Stepper("最多偏好：\(memoryFactLimit)", value: $memoryFactLimit, in: 1...50)
-            Stepper("事件保留：\(memoryRetentionDays) 天（0 = 永久）", value: $memoryRetentionDays, in: 0...3650)
-            Toggle("自动压缩偏好（超出上限合并为「画像」）", isOn: $memoryCompress)
+        settingsCard("记忆与用户偏好") {
+            settingsRow("启用记忆", description: "关闭后不再记录事件，也不会把已有记忆发送给模型。") {
+                Toggle("", isOn: $memoryEnabled).labelsHidden().toggleStyle(.switch)
+            }
+            settingsRow("保留最近事件", description: "参与上下文的最近互动数量。") {
+                Stepper("\(memoryRecentEvents)", value: $memoryRecentEvents, in: 1...100)
+                    .frame(width: 150, alignment: .trailing)
+            }
+            settingsRow("最多偏好", description: "超过上限时，旧偏好可合并为一条画像。") {
+                Stepper("\(memoryFactLimit)", value: $memoryFactLimit, in: 1...50)
+                    .frame(width: 150, alignment: .trailing)
+            }
+            settingsRow("事件保留", description: "0 表示永久保留。") {
+                Stepper("\(memoryRetentionDays) 天", value: $memoryRetentionDays, in: 0...3650)
+                    .frame(width: 180, alignment: .trailing)
+            }
+            settingsRow("自动压缩偏好", description: "超出上限时合并为一条画像，而不是直接丢弃。") {
+                Toggle("", isOn: $memoryCompress).labelsHidden().toggleStyle(.switch)
+            }
             Divider()
             Text("对话中的“我喜欢… / 我不喜欢… / 请叫我…”等明确表达会自动记录，并用于后续回复。")
                 .font(.footnote)
                 .foregroundStyle(.secondary)
-            HStack {
-                TextField("偏好名称", text: $factKey)
-                TextField("偏好内容", text: $factValue)
-                Button(editingFactID.isEmpty ? "添加" : "更新") {
-                    guard !factKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-                          !factValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
-                    if editingFactID.isEmpty {
-                        engine.rememberFact(key: factKey, value: factValue)
-                    } else {
-                        engine.updateMemoryFact(id: editingFactID, key: factKey, value: factValue)
-                    }
-                    resetFactEditor()
+            ViewThatFits(in: .horizontal) {
+                HStack(alignment: .bottom, spacing: 8) {
+                    memoryFactFields
+                    memoryFactActions
                 }
-                if !editingFactID.isEmpty {
-                    Button("取消编辑") { resetFactEditor() }
+                VStack(alignment: .leading, spacing: 8) {
+                    memoryFactFields
+                    HStack {
+                        Spacer(minLength: 0)
+                        memoryFactActions
+                    }
                 }
             }
             ForEach(memory.facts) { fact in
-                HStack {
-                    VStack(alignment: .leading) {
-                        Text("\(fact.key)：\(fact.value)")
-                        Text("来源：\(fact.sourceLabel)")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                    Spacer()
-                    Button("编辑") {
-                        editingFactID = fact.id
-                        factKey = fact.key
-                        factValue = fact.value
-                    }
-                    Button("删除") {
-                        engine.forgetFact(fact.id)
-                        if editingFactID == fact.id { resetFactEditor() }
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack {
+                        VStack(alignment: .leading) {
+                            Text("\(fact.key)：\(fact.value)")
+                            Text("来源：\(fact.sourceLabel)")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                        Button("编辑") {
+                            editingFactID = fact.id
+                            factKey = fact.key
+                            factValue = fact.value
+                        }
+                        Button("删除") {
+                            engine.forgetFact(fact.id)
+                            if editingFactID == fact.id { resetFactEditor() }
+                        }
                     }
                 }
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
             if !memory.events.isEmpty {
                 DisclosureGroup("最近互动（\(memory.events.count)）") {
@@ -675,38 +814,56 @@ struct SettingsView: View {
 
     @ViewBuilder
     private var behaviorSection: some View {
-        Section("行为") {
-            HStack {
-                Slider(value: $scale, in: 0.5...2.0, step: 0.25)
-                Text(scaleLabel(scale)).frame(width: 96, alignment: .trailing)
+        settingsCard("窗口与交互") {
+            settingsRow("缩放", description: "固定档位 50%–200%，与状态栏菜单保持一致。") {
+                HStack {
+                    Slider(value: $scale, in: 0.5...2.0, step: 0.25)
+                        .frame(width: 220)
+                    Text(scaleLabel(scale)).frame(width: 56, alignment: .trailing)
+                }
+                .onChange(of: scale) { value in
+                    engine.send(kind: PETSONA_COMMAND_SET_SCALE, value: value)
+                }
             }
-            .onChange(of: scale) { value in
-                engine.send(kind: PETSONA_COMMAND_SET_SCALE, value: value)
+            settingsRow("像素级点击穿透", description: "透明像素的点击落到桌面；宠物像素仍可交互。") {
+                Toggle("", isOn: $clickThrough)
+                    .labelsHidden()
+                    .toggleStyle(.switch)
+                    .onChange(of: clickThrough) { value in
+                        engine.send(kind: PETSONA_COMMAND_SET_CLICK_THROUGH, value: value ? 1 : 0)
+                    }
             }
-            Toggle("像素级点击穿透", isOn: $clickThrough)
-                .onChange(of: clickThrough) { value in
-                    engine.send(kind: PETSONA_COMMAND_SET_CLICK_THROUGH, value: value ? 1 : 0)
+            settingsRow("始终置顶", description: "控制宠物窗口是否保持在普通窗口上方。") {
+                Toggle("", isOn: $alwaysOnTop)
+                    .labelsHidden()
+                    .toggleStyle(.switch)
+                    .onChange(of: alwaysOnTop) { value in
+                        engine.send(kind: PETSONA_COMMAND_SET_ALWAYS_ON_TOP, value: value ? 1 : 0)
+                    }
                 }
-            Toggle("启用活动提醒", isOn: $autoWalk)
-                .onChange(of: autoWalk) { value in
-                    engine.send(kind: PETSONA_COMMAND_SET_AUTO_WALK, value: value ? 1 : 0)
-                }
-            Toggle("重力", isOn: $gravity)
-                .onChange(of: gravity) { value in
-                    engine.send(kind: PETSONA_COMMAND_SET_GRAVITY, value: value ? 1 : 0)
-                }
-            Toggle("始终置顶", isOn: $alwaysOnTop)
-                .onChange(of: alwaysOnTop) { value in
-                    engine.send(kind: PETSONA_COMMAND_SET_ALWAYS_ON_TOP, value: value ? 1 : 0)
-                }
-        }
+            }
 
-        Section("空闲问候") {
-            Toggle("让宠物主动打招呼", isOn: $greetingEnabled)
-            TextField("固定问候文案（无 Key 时使用；留空按时间自动选）", text: $greeting)
-            Stepper("空闲 \(greetingIdleMinutes) 分钟后触发", value: $greetingIdleMinutes, in: 1...1440)
-            Stepper("两次问候至少间隔 \(greetingCooldownMinutes) 分钟", value: $greetingCooldownMinutes, in: 0...1440)
-            Stepper("问候最长 \(greetingMaxChars) 字", value: $greetingMaxChars, in: 1...200)
+        settingsCard("空闲问候") {
+            settingsRow("启用空闲问候", description: "长时间没有操作后显示一句短问候。") {
+                Toggle("", isOn: $greetingEnabled).labelsHidden().toggleStyle(.switch)
+            }
+            settingsRow("固定问候文案", description: "无 Key 时使用；留空则按时间自动选择。") {
+                TextField("问候文案", text: $greeting)
+                    .textFieldStyle(.roundedBorder)
+                    .frame(minWidth: 240, maxWidth: 360)
+            }
+            settingsRow("空闲时长", description: "连续多久没有点击、拖动或输入后触发。") {
+                Stepper("\(greetingIdleMinutes) 分钟", value: $greetingIdleMinutes, in: 1...1440)
+                    .frame(width: 180, alignment: .trailing)
+            }
+            settingsRow("问候冷却", description: "两次问候之间的最短间隔；0 表示不限制。") {
+                Stepper("\(greetingCooldownMinutes) 分钟", value: $greetingCooldownMinutes, in: 0...1440)
+                    .frame(width: 180, alignment: .trailing)
+            }
+            settingsRow("问候最大字数", description: "模型回复超过该长度会被截断。") {
+                Stepper("\(greetingMaxChars) 字", value: $greetingMaxChars, in: 1...200)
+                    .frame(width: 160, alignment: .trailing)
+            }
             Text("没有配置 DeepSeek 时使用人格里的固定问候；问候会显示为气泡并记入记忆。")
                 .font(.footnote)
                 .foregroundStyle(.secondary)
@@ -716,7 +873,7 @@ struct SettingsView: View {
             scheduleApply(saveGreetingConfig)
         }
 
-        Section("测试") {
+        settingsCard("测试") {
             Button("测试问候") {
                 engine.send(kind: PETSONA_COMMAND_SHOW_BUBBLE,
                             ttlMilliseconds: 5_000,
@@ -727,24 +884,29 @@ struct SettingsView: View {
 
     @ViewBuilder
     private var startupSection: some View {
-        Section("启动") {
-            Toggle("登录时启动 Petsona", isOn: $autostart)
-                .onChange(of: autostart) { value in
-                    do {
-                        try LaunchAgentService.setEnabled(value)
-                    } catch {
-                        autostart = LaunchAgentService.isEnabled
-                        engine.reportError("自启设置失败：\(error.localizedDescription)")
+        settingsCard("启动") {
+            settingsRow("登录时启动 Petsona", description: "通过 macOS LaunchAgent 在登录后启动。") {
+                Toggle("", isOn: $autostart)
+                    .labelsHidden()
+                    .toggleStyle(.switch)
+                    .onChange(of: autostart) { value in
+                        do {
+                            try LaunchAgentService.setEnabled(value)
+                        } catch {
+                            autostart = LaunchAgentService.isEnabled
+                            engine.reportError("自启设置失败：\(error.localizedDescription)")
+                        }
                     }
-                }
+            }
         }
 
-        Section("数据") {
-            Button("打开数据目录") { openDataDirectory() }
-            Text(dataDirectoryPath).font(.footnote).foregroundStyle(.secondary)
+        settingsCard("数据") {
+            settingsRow("数据目录", description: dataDirectoryPath) {
+                Button("打开") { openDataDirectory() }
+            }
         }
 
-        Section("关于") {
+        settingsCard("关于") {
             Text("Petsona \(appVersion)").font(.headline)
             Text("本地优先的桌宠：宠物、人格与记忆保存在你自己的机器上，只有配置了 DeepSeek 才会发起网络请求。")
                 .font(.footnote)
@@ -777,13 +939,10 @@ struct SettingsView: View {
     private func reloadForm() {
         scale = Double(engine.snapshot.scale)
         clickThrough = engine.snapshot.click_through != 0
-        autoWalk = engine.snapshot.auto_walk != 0
-        gravity = engine.snapshot.gravity_enabled != 0
         alwaysOnTop = engine.snapshot.always_on_top != 0
         autostart = LaunchAgentService.isEnabled
 
         let persona = currentPersona
-        personaID = persona.id
         personaName = persona.name
         personaTone = persona.traits.tone
         personaVerbosity = persona.traits.verbosity
@@ -911,6 +1070,35 @@ struct SettingsView: View {
         factValue = ""
     }
 
+    private var memoryFactFields: some View {
+        HStack(spacing: 8) {
+            TextField("偏好名称", text: $factKey)
+                .textFieldStyle(.roundedBorder)
+                .frame(minWidth: 120)
+            TextField("偏好内容", text: $factValue)
+                .textFieldStyle(.roundedBorder)
+                .frame(minWidth: 140)
+        }
+    }
+
+    private var memoryFactActions: some View {
+        HStack(spacing: 8) {
+            Button(editingFactID.isEmpty ? "添加" : "更新") {
+                guard !factKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                      !factValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+                if editingFactID.isEmpty {
+                    engine.rememberFact(key: factKey, value: factValue)
+                } else {
+                    engine.updateMemoryFact(id: editingFactID, key: factKey, value: factValue)
+                }
+                resetFactEditor()
+            }
+            if !editingFactID.isEmpty {
+                Button("取消编辑") { resetFactEditor() }
+            }
+        }
+    }
+
     private func exportMemory() {
         let panel = NSSavePanel()
         panel.nameFieldStringValue = "petsona-memory.json"
@@ -977,24 +1165,6 @@ struct SettingsView: View {
         if alert.runModal() == .alertFirstButtonReturn { engine.deletePet(id) }
     }
 
-    private func duplicateCurrentPersona() {
-        let baseID = personaID.isEmpty ? "default" : personaID
-        engine.duplicatePersona(sourceID: baseID, id: baseID + "-copy", name: personaName + " 副本")
-        reloadLater()
-    }
-
-    private func deletePersona(_ id: String) {
-        let alert = NSAlert()
-        alert.messageText = "删除人格？"
-        alert.informativeText = "删除后当前人格会回到默认人格。"
-        alert.addButton(withTitle: "删除")
-        alert.addButton(withTitle: "取消")
-        if alert.runModal() == .alertFirstButtonReturn {
-            engine.deletePersona(id)
-            reloadLater()
-        }
-    }
-
     private func exportPersona(_ id: String) {
         let panel = NSSavePanel()
         panel.nameFieldStringValue = "\(id).json"
@@ -1018,38 +1188,6 @@ struct SettingsView: View {
         return String(format: "%.0f%%", (value * 100).rounded())
     }
 
-}
-
-private struct NewPersonaView: View {
-    let templates: [(String, String)]
-    let onCreate: (String, String, String?) -> Void
-    @Environment(\.dismiss) private var dismiss
-    @State private var id = ""
-    @State private var name = ""
-    @State private var template = ""
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("新建人格").font(.headline)
-            TextField("ID（英文、数字或短横线）", text: $id)
-            TextField("名称", text: $name)
-            Picker("模板", selection: $template) {
-                ForEach(Array(templates.enumerated()), id: \.offset) { item in
-                    Text(item.element.1).tag(item.element.0)
-                }
-            }
-            HStack {
-                Spacer()
-                Button("取消") { dismiss() }
-                Button("创建") {
-                    onCreate(id.trimmingCharacters(in: .whitespacesAndNewlines),
-                             name.trimmingCharacters(in: .whitespacesAndNewlines),
-                             template.isEmpty ? nil : template)
-                }
-                .keyboardShortcut(.defaultAction)
-            }
-        }
-    }
 }
 
 private struct CodexPreview: View {
