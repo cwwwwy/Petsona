@@ -4,6 +4,12 @@ All notable changes to Petsona are documented here. Release tags are
 `windows-v<version>` / `macos-v<version>`; the version comes from the workspace
 `version` in `Cargo.toml`.
 
+## [Unreleased]
+
+### Changed
+
+- macOS now requires macOS 26 or later. The settings window uses a unified native titlebar and sidebar, and its six panes use native grouped forms.
+
 ## [0.1.0-rc.1] - 2026-09-22 (Windows pre-release)
 
 First public Windows build. Portable zip, **self-contained** (bundles the .NET

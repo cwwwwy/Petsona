@@ -14,7 +14,8 @@ CI 只能证明“能编译”，不能证明“能用”；**真实结论以本
 
 ## 已知状态（2026-09-23）
 
-- ⚠️ 2026-09-23 已生成整体验收包 `dist/Petsona-macos-arm64-acceptance/`（应用 + 固定 `acceptance-data/`）及干净初始数据 zip；目录、签名结构、重打包保留数据、zip 解压与正式包排除检查通过。早先一次独立启动出现 AppKit `Abort trap: 6` / `open` 返回 `kLSNoExecutableErr`；随后最新验收包直接 smoke 重试通过 7/7（E-30d）。因此协议级启动已通过，但 Finder/`open` 启动观感、窗口视觉和真实 GUI 交互仍需人工确认。执行证据见 [macOS 执行记录](execution/native-ui-rewrite.md) 8.21、8.22。
+- ✅ 2026-09-23 设置窗口原生化已接入：minimum macOS 26；AppKit 全尺寸透明标题栏 + unified toolbar；系统 sidebar tracking separator 与 `NavigationSplitView` 同步；六页使用 grouped Form/Section，详情区禁用顶部滚动边缘模糊；页面选择会持久化，记忆清理显示确认。门禁与打包最低版本检查见 `native-ui-rewrite` E-34。当前机器 macOS 27；720/900/1000pt、浅/深色、降低透明度/增强对比度和真实键盘/焦点仍需人工验收。
+- ⚠️ 2026-09-23 最终 `dist/Petsona-macos-arm64-acceptance/` 已刷新为 minimum macOS 26 的构建；E-34i 实际验收包协议 smoke 7/7。隔离包 `open --env` 仍返回 `kLSNoExecutableErr`，直接 executable 退出 134，自动化环境没能取得 GUI 截图；标题栏与表单外观仍需用户桌面实机确认。执行证据见 [macOS 执行记录](execution/native-ui-rewrite.md) 8.26。
 - ✅ 2026-09-23 第一批 Windows 对齐代码已接入：气泡 150ms 淡入、剩余时间进度条、悬停暂停/恢复；编辑入口固定为可点击圆角条并支持 220ms 横向/纵向展开、工作区边缘侧挂；Composer 可按下方/左侧/右侧空间跟随宠物；计划暂缓的活动提醒/重力开关不再显示在 macOS 设置页。自动验证见执行记录 8.22；气泡观感、触控板悬停、边缘侧挂和 IME 仍需人工复验。
 - ✅ 2026-09-23 第二批设置对齐已接入：六页顺序、统一卡片/右侧控件列、自适应横排/竖排控件、720px 最小窗口和遗留人格 CRUD 状态清理；启动凭据检查改为异步，不再阻塞状态协议。Release 编译通过；最终布局视觉仍待人工复验。
 - ✅ 2026-09-23 代码审查追修自动部分已接入：验收启动改为复用实例并通过 reopen 回调重新聚焦设置；验收专用环境标记确保首次启动无论宠物库是否为空都打开设置。设置页改用单一原生标题栏 + 内容区页标题、移除强制内容最小宽度；悬停只展开编辑入口；凭据探针按请求序号丢弃过时结果；气泡淡入按帧推进；Composer 宽度受侧边可用空间限制。最终完整门禁 core 71、FFI 4、runtime 15、XCTest 20/20、smoke 7/7 通过；窗口焦点、布局与悬停仍需人工验收。
@@ -57,7 +58,7 @@ cd "dist/Petsona-macos-$(uname -m)-acceptance" && open --env "PETSONA_HOME=$PWD/
 | A1 | 启动 | 宠物窗口出现、无边框、透明背景、置顶 | 待实测 |
 | A2 | 看菜单栏 | 出现 Petsona 托盘图标 | 待实测 |
 | A3 | 点击托盘图标 | macOS 原生菜单：打开设置 / 选择宠物（V2 有勾选）/ 显示隐藏 / 退出 | 代码完成；实机已通过一次，可复测 |
-| A4 | 打开设置 | 能打开、滚动；页面顺序为宠物库 / 外观与交互 / 人格 / 记忆 / 模型服务 / 系统；原生标题栏、侧边栏和内容区标题不重复/错位；在约 720、900、1000px 宽度检查侧边栏与自适应卡片，控件不得挤压、错位；缩放档位、穿透、DeepSeek、人格、记忆可操作 | Release 编译通过；窗口视觉/交互待人工 |
+| A4 | 打开设置 | 能打开、滚动；页面顺序为宠物库 / 外观与交互 / 人格 / 记忆 / 模型服务 / 系统；全尺寸统一标题栏与侧边栏分界连续，页面标题更新且无重复遮挡；在约 720、900、1000pt 检查控件排布，并在浅/深色、降低透明度、增强对比度下确认可读；侧边栏可显隐、重启后恢复上次页面；缩放档位、穿透、DeepSeek、人格、记忆可操作 | E-34 自动门禁通过；macOS 27 窗口视觉/交互待人工；macOS 26 实机待验 |
 | A5 | 切换宠物 | 本地库 + 原生导入 / 切换可用；切换后动画与窗口更新 | native worker/UI 已接；人工待实测 |
 | A6 | 导入 / 导出 | 文件面板或拖放导入；Codex 可预览；重复 ID 明确确认覆盖；保存面板导出；删除有确认 | native worker/UI 已接；人工待实测 |
 | A7 | 状态协议 POST | `waiting`/`failed`/`review`/`running` 切换动画；message 显示气泡；TTL 回 base | 待实测 |
@@ -114,6 +115,7 @@ curl -XPOST http://127.0.0.1:17872/state \
 - [x] `scripts/sign-macos.sh`、`scripts/notarize-macos.sh` 流程就绪（ad-hoc 签名验证过）
 - [x] `.github/workflows/release-macos.yml` tag / 手动触发运行完整原生门禁、对最终 dist 包 smoke，并以 `unsigned` 标记产物
 - [x] Release workflow 禁止生成并上传本机验收数据包，只上传常规应用包
+- [x] macOS `.app` 的 `LSMinimumSystemVersion` 为 26.0；打包和完整门禁检查此值
 - [ ] 真实 Developer ID 签名 + 公证 + 目标 Mac 实机验证
 
 > 当前发布工作流故意只生成并上传未签名产物；没有 Developer ID 证书和
@@ -139,7 +141,7 @@ bash scripts/verify-macos-all.sh --gates-only  # 只跑 fmt / clippy / test / re
 ```
 
 入口脚本 = workspace Rust 门禁 + 原生 XCTest + 原生 `macos-smoke.sh` +
-打包结构检查（可执行文件、图标、Bundle ID、`LSUIElement`、Retina 字段、LaunchAgent 模板）。
+打包结构检查（可执行文件、图标、Bundle ID、最低 macOS 26.0、`LSUIElement`、Retina 字段、LaunchAgent 模板）。
 smoke 覆盖协议 / TTL、设置、（有可枚举显示器时）Key Window、缩放锚点、位置保存、低频指针、idle 重绘、CPU 趋势、
 LaunchAgent plist 开关（使用临时目录，不触碰用户真实登录项）、V2 注视生命周期
 （`turning → holding → returning → idle`）。

@@ -1,4 +1,5 @@
 import AppKit
+import SwiftUI
 import XCTest
 @testable import Petsona
 
@@ -17,6 +18,43 @@ final class NativeLifecycleTests: XCTestCase {
         XCTAssertEqual(SettingsLayout.contentMaxWidth, 1000)
         XCTAssertEqual(SettingsLayout.sidebarMinWidth, 160)
         XCTAssertEqual(SettingsLayout.windowMinWidth, 720)
+    }
+
+    func testSettingsWindowUsesUnifiedTitlebarAndTracksCurrentPane() throws {
+        let suiteName = "com.petsona.settings-window-tests.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let navigation = SettingsNavigationState(defaults: defaults)
+        let window = SettingsWindow(contentRect: NSRect(x: 0, y: 0, width: 960, height: 700),
+                                   navigationState: navigation)
+        defer { window.close() }
+
+        XCTAssertTrue(window.styleMask.contains(.fullSizeContentView))
+        XCTAssertTrue(window.titlebarAppearsTransparent)
+        XCTAssertEqual(window.toolbarStyle, .unified)
+        XCTAssertEqual(window.titlebarSeparatorStyle, .none)
+        XCTAssertFalse(window.toolbar?.allowsUserCustomization ?? true)
+
+        navigation.selection = .memory
+        XCTAssertEqual(window.title, SettingsSection.memory.windowTitle)
+    }
+
+    func testSettingsNavigationRestoresPaneAndTogglesSidebar() throws {
+        let suiteName = "com.petsona.settings-navigation-tests.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        let firstSession = SettingsNavigationState(defaults: defaults)
+        firstSession.selection = .deepSeek
+        XCTAssertEqual(defaults.string(forKey: SettingsNavigationState.lastSectionDefaultsKey), "deepSeek")
+
+        let restoredSession = SettingsNavigationState(defaults: defaults)
+        XCTAssertEqual(restoredSession.selection, .deepSeek)
+        XCTAssertEqual(restoredSession.columnVisibility, .all)
+        restoredSession.toggleSidebar()
+        XCTAssertEqual(restoredSession.columnVisibility, .detailOnly)
+        restoredSession.toggleSidebar()
+        XCTAssertEqual(restoredSession.columnVisibility, .all)
     }
 
     func testAcceptanceLaunchOpensSettingsWithOrWithoutImportedPets() {

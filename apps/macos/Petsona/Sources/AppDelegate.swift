@@ -3,9 +3,61 @@ import AppKit
 import SwiftUI
 
 @MainActor
-private final class SettingsWindow: NSWindow {
+final class SettingsWindow: NSWindow {
+    private let navigationState: SettingsNavigationState
+    private let settingsToolbarDelegate = SettingsToolbarDelegate()
+
+    init(contentRect: NSRect, navigationState: SettingsNavigationState) {
+        self.navigationState = navigationState
+        super.init(contentRect: contentRect,
+                   styleMask: [.titled, .closable, .resizable, .fullSizeContentView],
+                   backing: .buffered,
+                   defer: false)
+
+        title = navigationState.selection.windowTitle
+        titleVisibility = .visible
+        titlebarAppearsTransparent = true
+        titlebarSeparatorStyle = .none
+        toolbarStyle = .unified
+        minSize = NSSize(width: SettingsLayout.windowMinWidth,
+                         height: SettingsLayout.windowMinHeight)
+        collectionBehavior = [.moveToActiveSpace]
+        isReleasedWhenClosed = false
+
+        let toolbar = NSToolbar(identifier: "com.petsona.settings")
+        toolbar.delegate = settingsToolbarDelegate
+        toolbar.allowsUserCustomization = false
+        toolbar.autosavesConfiguration = false
+        toolbar.displayMode = .iconOnly
+        self.toolbar = toolbar
+
+        navigationState.onSelectionChange = { [weak self] section in
+            self?.title = section.windowTitle
+        }
+    }
+
     override var canBecomeKey: Bool { true }
     override var canBecomeMain: Bool { true }
+
+    @objc func toggleSidebar(_ sender: Any?) {
+        navigationState.toggleSidebar()
+    }
+}
+
+@MainActor
+private final class SettingsToolbarDelegate: NSObject, NSToolbarDelegate {
+    private let itemIdentifiers: [NSToolbarItem.Identifier] = [
+        .toggleSidebar,
+        .sidebarTrackingSeparator,
+    ]
+
+    func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
+        itemIdentifiers
+    }
+
+    func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
+        itemIdentifiers
+    }
 }
 
 enum SettingsLaunchPolicy {
@@ -249,19 +301,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func openSettings() {
         if settingsWindow == nil {
-            let root = SettingsView(engine: engine)
+            let navigation = SettingsNavigationState()
+            let root = SettingsView(engine: engine, navigation: navigation)
             let hosting = NSHostingView(rootView: root)
             let window = SettingsWindow(contentRect: NSRect(x: 0, y: 0, width: 960, height: 700),
-                                        styleMask: [.titled, .closable, .resizable],
-                                        backing: .buffered,
-                                        defer: false)
-            window.title = "Petsona 设置"
+                                        navigationState: navigation)
             window.contentView = hosting
-            window.minSize = NSSize(width: SettingsLayout.windowMinWidth,
-                                    height: SettingsLayout.windowMinHeight)
-            window.collectionBehavior = [.moveToActiveSpace]
             window.center()
-            window.isReleasedWhenClosed = false
             settingsWindow = window
         }
         NSApp.activate(ignoringOtherApps: true)

@@ -442,3 +442,25 @@ E-07 的 xcresult 摘要在上一只读审查中因 TestReport 临时写入权�
 | E-33f | 刷新带启动聚焦标记的最终验收包 | `PETSONA_SKIP_BUILD=1 PETSONA_NATIVE_DERIVED_DATA=.scratch/macos-native-gates bash scripts/package-macos.sh dist` | exit 0；最终实际验收包与 zip 已更新；README 含 `PETSONA_OPEN_SETTINGS_ON_LAUNCH=1`、不带 `-n`，既有验收数据目录保留。 |
 
 **尚未完成**：A4 / B8 / B9 人工确认（重复启动后设置窗聚焦、720/900/1000pt 设置页标题/侧栏/内容对齐、编辑条悬停不抢焦点而点击才打开、短工作区 Composer 不遮挡宠物、气泡淡入观感）。执行记录不能代替上述桌面验收。
+
+### 8.26 macOS 设置窗原生化与 macOS 26 最低版本（2026-09-23）
+
+- 用户明确确认六页整体按最新 macOS 规范重做，并将后续 macOS 包最低版本提高到 **macOS 26**；设置整体验收契约与用户决定记录在 `docs/plans/settings-consolidation.md` v1.2 / REQ-S18。
+- `SettingsWindow` 使用 `.fullSizeContentView`、透明标题栏、`.unified` toolbar 与无分隔线；NSToolbar 使用系统 sidebar toggle 和 `sidebarTrackingSeparator` 标识，让标题栏跟踪 SwiftUI `NavigationSplitView` 的实际分栏。页面标题随选中项更新；选中页持久化，上次位置恢复。`PETSONA_HOME` 隔离启动时使用独立 UserDefaults suite，不覆盖日常偏好。
+- 六页从手绘圆角卡片/`ScrollView` 重构为系统 `Form(.grouped)`、`Section` 与 `LabeledContent`；详情页隐藏顶部 scroll-edge 模糊效果；保留宠物列表与导入预览所需自定义行，拖放区改用系统 `GroupBox`，使用动态系统颜色与 SF Symbols。Toggle 有无障碍标签；记忆偏好/事件/全清及单条偏好删除均显示确认。
+- `apps/macos/project.yml` 最低系统更新为 `26.0`，由 XcodeGen 2.46.0 生成并同步 `.pbxproj`。包脚本校验 `LSMinimumSystemVersion=26.0`；完整门禁重复检查应用包的最低版本，README/CHANGELOG 说明 macOS 26 要求。
+- **基线视觉截图未能取得**：隔离数据目录 `/private/tmp/petsona-settings-baseline.MKrICa` 下使用旧包调用 `open --env ... Petsona.app` 返回 `kLSNoExecutableErr`；直接运行包内可执行文件退出 134。该自动化会话没有能启动该 bundle 的 GUI 通道，旧界面模糊条根因根据代码中 `ScrollView` 顶部自动 edge effect 判断；新界面实际截图、标题栏分界和系统外观矩阵仍待人工验收。
+
+| 证据 ID | 目标 / 主机 | 命令 | 结果 |
+|---|---|---|---|
+| E-34a | 首轮编译诊断 / macOS 27.0 arm64 | `xcodebuild -quiet -project apps/macos/Petsona.xcodeproj -scheme Petsona -configuration Debug -destination 'platform=macOS,arch=arm64' -derivedDataPath .scratch/settings-native-design-tests -only-testing:PetsonaTests/NativeLifecycleTests CODE_SIGNING_ALLOWED=NO test`（默认沙箱） | exit 133；Xcode Swift 宏插件受 `sandbox-exec` 拒绝；诊断还发现 separator identifier 不在本机 AppKit SDK 中，已依据 SDK 改用 `sidebarTrackingSeparator`。失败保留。 |
+| E-34b | 窗口/导航回归 / macOS 27.0 arm64 | `xcodebuild -quiet -project apps/macos/Petsona.xcodeproj -scheme Petsona -configuration Debug -destination 'platform=macOS,arch=arm64' -derivedDataPath .scratch/settings-native-design-tests -only-testing:PetsonaTests/NativeLifecycleTests CODE_SIGNING_ALLOWED=NO test` | exit 0；12/12。覆盖 unified titlebar 属性、分栏标题、last pane 恢复与侧栏显隐；摘要 `.scratch/settings-native-design-tests/Logs/Test/Test-Petsona-2026.09.23_21-08-41-+0800.xcresult`。
+| E-34c | 完整 macOS 门禁 / macOS 27.0 arm64 | `bash scripts/verify-macos-all.sh > .scratch/settings-native-design-gate-final.log 2>&1`（允许本机回环） | exit 0；fmt/clippy/build；core 71、FFI 4、runtime 15；XCTest 22/22；native smoke 7/7；验收包隔离、签名结构、架构和 zip 通过。 |
+| E-34d | 最低系统版本包检查 / Release arm64 | `/usr/libexec/PlistBuddy -c 'Print :LSMinimumSystemVersion' .scratch/macos-native-gates/Build/Products/Release/Petsona.app/Contents/Info.plist`；由完整门禁重跑包结构测试 | `26.0`；包脚本和完整脚本均强制校验该值；验收 README 标注 macOS 26。 |
+| E-34e | 补丁/脚本/工程 spec 检查 | `git diff --check && bash -n scripts/package-macos.sh scripts/verify-macos-all.sh && xcodegen dump --spec apps/macos/project.yml` | exit 0。 |
+| E-34f | 隔离验收包 GUI 截图启动尝试 / macOS 27.0 arm64 | 对旧包和刷新后的包运行 `open --env 'PETSONA_HOME=/private/tmp/petsona-settings-baseline.MKrICa' --env 'PETSONA_AUTOSTART_PLIST_DIR=/private/tmp/petsona-settings-baseline.MKrICa/LaunchAgents' --env 'PETSONA_OPEN_SETTINGS_ON_LAUNCH=1' '/Users/book/Desktop/Petsona/dist/Petsona-macos-arm64-acceptance/Petsona.app'`；刷新包后直接执行 `PETSONA_HOME=/private/tmp/petsona-settings-baseline.MKrICa PETSONA_AUTOSTART_PLIST_DIR=/private/tmp/petsona-settings-baseline.MKrICa/LaunchAgents PETSONA_OPEN_SETTINGS_ON_LAUNCH=1 '/Users/book/Desktop/Petsona/dist/Petsona-macos-arm64-acceptance/Petsona.app/Contents/MacOS/Petsona'` | 两次 `open` 均 exit 1 / `kLSNoExecutableErr`；刷新包 executable exit 134，无截图产生。原因未确认，不能记为 GUI 视觉通过。 |
+| E-34g | README heredoc shell 检查追修 | 首次 `bash scripts/verify-macos-all.sh` 后检查 `.scratch/settings-native-design-gate.log`，再运行最终 E-34c | 首次完整脚本 exit 0 但 package README heredoc 中的反引号触发 `PETSONA_HOME: command not found`；将变量写成纯文本、添加 README 最低系统版本说明并增加门禁 grep；最终 E-34c 全量重跑 exit 0 且无该警告。 |
+| E-34h | 刷新实际 dist 验收包 / macOS 27.0 arm64 | `PETSONA_SKIP_BUILD=1 PETSONA_NATIVE_DERIVED_DATA=.scratch/macos-native-gates bash scripts/package-macos.sh dist` | exit 0；更新 `dist/Petsona.app`、常规 zip、`dist/Petsona-macos-arm64-acceptance/` 与验收 zip；保留既有 `acceptance-data`；Info.plist 最低版本 26.0。 |
+| E-34i | 实际 dist 验收包协议 smoke / macOS 27.0 arm64 | `PETSONA_NATIVE_APP="$PWD/dist/Petsona-macos-arm64-acceptance/Petsona.app" PETSONA_SMOKE_STATE_PORT=17972 PETSONA_SMOKE_HOOK_PORT=17973 bash scripts/macos-smoke.sh`（隔离临时 home、专用端口） | exit 0；进程、`/health`、`/pets`、状态 TTL、第二实例和安全退出 7/7。此 smoke 不呈现设置 GUI。 |
+
+**仍待人工确认**：在 macOS 27 打开验收包，测 720/900/1000pt 窗宽；查看工具栏 tracking separator 与分栏是否连续、顶部模糊层是否消失、浅/深色和降低透明度/增强对比度、工具栏显隐与键盘/VoiceOver 标签、各页即时生效/危险操作确认。macOS 26 实机未在本轮可用，需另行验收最低版本运行表现。自动门禁通过不代替上述窗口验收。

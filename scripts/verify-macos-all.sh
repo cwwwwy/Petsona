@@ -219,6 +219,8 @@ PETSONA_ICON="$PETSONA_APP/Contents/Resources/Petsona.icns"
 [[ -x "$PETSONA_EXECUTABLE" ]] || fail 'app 可执行文件缺失或不可执行'
 [[ -f "$PETSONA_ICON" ]] || fail 'Petsona.icns 缺失'
 [[ -f "$PETSONA_ZIP" ]] || fail 'macOS zip 未生成'
+PETSONA_MIN_SYSTEM_VERSION="$(/usr/libexec/PlistBuddy -c 'Print :LSMinimumSystemVersion' "$PETSONA_INFO")"
+[[ "$PETSONA_MIN_SYSTEM_VERSION" == "26.0" ]] || fail "macOS 最低版本应为 26.0，实际为 $PETSONA_MIN_SYSTEM_VERSION"
 pass 'app bundle、可执行文件和图标存在'
 
 [[ -x "$PETSONA_ACCEPTANCE_DIR/Petsona.app/Contents/MacOS/Petsona" ]] || fail '整体文件夹验收包缺少可运行 app'
@@ -230,6 +232,8 @@ grep -F 'PETSONA_AUTOSTART_PLIST_DIR' "$PETSONA_ACCEPTANCE_DIR/README.txt" >/dev
 grep -F 'PETSONA_OPEN_SETTINGS_ON_LAUNCH=1' "$PETSONA_ACCEPTANCE_DIR/README.txt" >/dev/null || fail '验收包未要求首次启动显示设置窗口'
 grep -F '不要在本包中保存或清除 API Key' "$PETSONA_ACCEPTANCE_DIR/README.txt" >/dev/null || fail '验收包未说明钥匙串边界'
 grep -F '不要直接双击 Petsona.app' "$PETSONA_ACCEPTANCE_DIR/README.txt" >/dev/null || fail '验收包未提示 Finder 启动不会继承隔离 home'
+grep -F '设置页上次浏览位置保存在独立验收偏好域' "$PETSONA_ACCEPTANCE_DIR/README.txt" >/dev/null || fail '验收包未隔离设置页上次浏览位置'
+grep -F '最低系统版本：macOS 26。' "$PETSONA_ACCEPTANCE_DIR/README.txt" >/dev/null || fail '验收包 README 未说明最低 macOS 版本'
 grep -F '重复运行此命令会复用已运行的验收实例' "$PETSONA_ACCEPTANCE_DIR/README.txt" >/dev/null || fail '验收包未说明如何重新聚焦现有实例'
 if grep -F ' -n "$PWD/Petsona.app"' "$PETSONA_ACCEPTANCE_DIR/README.txt" >/dev/null; then
   fail '验收包启动命令仍会强制创建第二个实例'

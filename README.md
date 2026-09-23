@@ -37,8 +37,9 @@ needed again.
 Windows state: the native frontend passed its manual acceptance matrix (W1–W14)
 and the automated gate; packaging (`scripts\package-windows.ps1`) and the release
 workflow still need their first runs on a clean machine.
-macOS state: functional batch + gates green, but window/IME/Keychain and signing
-acceptance is still open.
+macOS state: native settings use a unified titlebar/sidebar and grouped forms;
+window, IME, Keychain, and signing acceptance remains open. **macOS 26 or later
+is required.**
 See the plans ([macOS](docs/plans/native-ui-rewrite.md),
 [Windows](docs/plans/windows-native-rewrite.md)), their
 [execution records](docs/execution/), and [collaboration rules](AGENTS.md).
@@ -50,7 +51,7 @@ See the plans ([macOS](docs/plans/native-ui-rewrite.md),
 dotnet build apps/windows/Petsona.sln -c Release -p:Platform=x64
 powershell -ExecutionPolicy Bypass -File scripts\package-windows.ps1   # then run dist\…\Petsona.exe
 
-# macOS (current)
+# macOS 26 or later
 xcodegen generate --spec apps/macos/project.yml --project apps/macos
 xcodebuild -project apps/macos/Petsona.xcodeproj -scheme Petsona build
 ```

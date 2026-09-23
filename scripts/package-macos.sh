@@ -69,6 +69,11 @@ plutil -replace CFBundleShortVersionString -string "$VERSION" "$INFO"
 plutil -replace CFBundleVersion -string "$VERSION" "$INFO"
 plutil -replace CFBundleIconFile -string "Petsona" "$INFO" 2>/dev/null || \
   plutil -insert CFBundleIconFile -string "Petsona" "$INFO"
+MINIMUM_SYSTEM_VERSION="$(/usr/libexec/PlistBuddy -c 'Print :LSMinimumSystemVersion' "$INFO")"
+[[ "$MINIMUM_SYSTEM_VERSION" == "26.0" ]] || {
+  printf 'Expected macOS 26.0 minimum, found %s\n' "$MINIMUM_SYSTEM_VERSION" >&2
+  exit 1
+}
 [[ -x "$EXECUTABLE" ]] || { printf 'Native app executable is missing\n' >&2; exit 1; }
 plutil -lint "$INFO" >/dev/null
 codesign --force --deep --sign - --timestamp=none "$APP_DIR"
@@ -106,11 +111,13 @@ cd "/path/to/$ACCEPTANCE_NAME" && open --env "PETSONA_HOME=\$PWD/acceptance-data
 
 隔离边界：
 - 初始配置关闭状态服务，预留端口 17873；宠物库为空，不会自动导入 Codex 宠物。
+- PETSONA_HOME 存在时，设置页上次浏览位置保存在独立验收偏好域，不会写入日常 Petsona 偏好。
 - LaunchAgent 测试文件重定向到 acceptance-data/LaunchAgents，不会注册真实登录自启；本包不验收登录后自启。
 - macOS 钥匙串仍使用正式服务标识 com.petsona.desktop。不要在本包中保存或清除 API Key，以免影响日常应用凭据。
 - 验收完成后可删除整个 $ACCEPTANCE_NAME 目录；其中的验收配置和导入宠物会一并移除。
 
 本地签名为 ad-hoc，不含 Developer ID，也未公证。首次打开如被 macOS 拦截，请按系统安全提示处理。
+最低系统版本：macOS 26。
 EOF
 
   ACCEPTANCE_STAGE="$(mktemp -d "${TMPDIR:-/tmp}/petsona-acceptance-package.XXXXXX")"

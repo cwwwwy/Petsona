@@ -151,3 +151,9 @@
 ### macOS 设置标题层级复核（2026-09-23）
 
 - 代码审查指出原生 `NSWindow` 标题与 SwiftUI sidebar/detail 两个 `navigationTitle` 叠加，并由固定内容最小宽度挤压窄窗口。已保留原生窗口标题，将当前页标题移入内容滚动区，并移除内容强制最小宽度。完整实现与门禁证据见 [`native-ui-rewrite` 执行记录 8.25 / E-33b](native-ui-rewrite.md)；720/900/1000pt 实际窗口布局仍待人工确认。
+
+### macOS 26 设置窗原生化（2026-09-23）
+
+- 用户确认 macOS 六页整体按最新原生规范重做，最低版本升至 26。当前 `NSWindow` 以系统 tracking separator 将标题栏与 `NavigationSplitView` 分界对齐；详情使用 grouped `Form`，隐藏顶部滚动模糊；上次查看页可恢复；清理记忆前明确确认。计划契约更新到 v1.2 / REQ-S18，minimum version 及发布说明已同步。
+- 自动门禁在 macOS 27.0 arm64 通过：XCTest 22/22，native smoke 7/7，Release `.app` 声明 `LSMinimumSystemVersion=26.0`，包结构、签名和隔离目录通过。详细失败/重跑记录见 [`native-ui-rewrite` 执行记录 8.26 / E-34](native-ui-rewrite.md)。
+- 仍待 macOS 27 GUI 人工检查：720/900/1000pt、浅/深色、辅助功能对比设置、标题栏分隔、顶部模糊、工具栏切换、即时生效和危险操作；macOS 26 实机也未在本轮提供。
