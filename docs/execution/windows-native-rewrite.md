@@ -336,3 +336,8 @@
 
 - macOS 审查追修为 runtime no-key 主动问候增加了本地固定问候的快速回退；ABI 与 C# 接口未变，Rust core/runtime Mac 测试通过（见 `native-ui-rewrite` E-27c）。
 - 本次工作环境是 Mac，未运行 Windows 原生 `verify-windows.ps1 -Full`；Windows 发布前需在实体 Windows 环境复跑门禁，确认共享 runtime 行为无回归。W12 暂缓项不在本次范围内。
+
+### W33：本地宠物双击切换（2026-09-26）
+
+- 用户要求两端本地宠物列表均为单击选择、双击切换，并保留 Codex 候选双击导入。Windows `PetList.SelectionChanged` 现在只更新导出/删除按钮状态，`DoubleTapped` 先提交当前待保存的设置再发送 `SelectPet`；宠物 ID 变化后回填该宠物人格与偏好编辑状态。人格去抖任务绑定原宠物 ID，避免托盘切换期间将旧风格写到新宠物；XAML 文案同步。对应 Mac 的原生 `List` 改动见 `settings-consolidation` v1.3 / REQ-S19。
+- Mac 主机上 `xmllint --noout apps/windows/Petsona/Views/SettingsWindow.xaml` exit 0。此环境无 `dotnet` 和 PowerShell，Windows 原生 build、`verify-windows.ps1 -Full` 均 **SKIP（平台不可用）**；W33 人工操作也按用户要求留到全部任务完成后集中验收。此前 W7 的人工通过是旧“单击切换”行为，不覆盖此次双击变更。未刷新 Windows 交付包，未执行 Git add/commit/push。

@@ -157,3 +157,11 @@
 - 用户确认 macOS 六页整体按最新原生规范重做，最低版本升至 26。当前 `NSWindow` 以系统 tracking separator 将标题栏与 `NavigationSplitView` 分界对齐；详情使用 grouped `Form`，隐藏顶部滚动模糊；上次查看页可恢复；清理记忆前明确确认。计划契约更新到 v1.2 / REQ-S18，minimum version 及发布说明已同步。
 - 自动门禁在 macOS 27.0 arm64 通过：XCTest 22/22，native smoke 7/7，Release `.app` 声明 `LSMinimumSystemVersion=26.0`，包结构、签名和隔离目录通过。详细失败/重跑记录见 [`native-ui-rewrite` 执行记录 8.26 / E-34](native-ui-rewrite.md)。
 - 仍待 macOS 27 GUI 人工检查：720/900/1000pt、浅/深色、辅助功能对比设置、标题栏分隔、顶部模糊、工具栏切换、即时生效和危险操作；macOS 26 实机也未在本轮提供。
+
+### v1.3：宠物双击、模型加载与设置 Dock / 原生控件（2026-09-26）
+
+- 接手基线：`main` HEAD `94ac935`，开始时工作区干净。用户要求第 1/2/4 项维持现状；第 3 项两端本地宠物改为双击切换、Codex 候选双击导入；第 5 项 Mac 模型列表按钮与 Windows 加载态一致；第 6 项设置打开时显示 Dock 图标并使用 macOS 27 原生控件；第 7 项将整体验收和交付留到全部任务结束。最低支持 macOS 26 保持 v1.2 决定，使用系统控件在 macOS 27 自动采用新外观。
+- REQ-S19 代码已实施：Windows 本地列表单击只选择、双击发切换命令；Mac 本地/Codex 列表与记忆事实改为系统 `List`。Mac Codex 扫描按钮原本被包在 `showingCodexPets` 隐藏分支内，首次无法点到；现改为始终可见的独立分区，重新扫描走 `SCAN_CODEX_PETS`。列表仍提供选择后按钮，便于键盘操作。两端双击切换前都先提交当前待保存的设置；Mac 去抖任务按人格/模型/记忆/问候分开，宠物变更后只回填这只宠物的人格，避免旧人格写到新宠物或取消全局设置。
+- REQ-S20 代码已实施：Mac 模型拉取状态由 worker 文案驱动，进行中改按钮文字、禁用重复请求并显示系统 `ProgressView`；失败提示和手动填写仍保留。
+- REQ-S21 代码已实施：Mac 设置窗口打开时切换应用 activation policy 为 regular 以显示 Dock，关闭后恢复 accessory；App 菜单的系统设置命令指向现有窗口。六页沿用 `NavigationSplitView`、grouped `Form`、`Section`、`LabeledContent`、原生 `List` 和空状态控件，不引入第三方 UI。
+- 自动验证：macOS 27.0 arm64 `/Users/book/Desktop/Petsona` 下，目标 `NativeLifecycleTests` 的 `xcodebuild ... test` exit 0；同工程 Debug build 曾因重命名 `reloadLater` 后遗漏人格导入调用点 exit 65，修正后重跑 exit 0。当前最终代码的 `bash scripts/verify-macos-all.sh` 完整 exit 0（Rust core 71、FFI 4、runtime 15、XCTest 22/22、native smoke 7/7；隔离宿主与临时打包检查通过），证据见 [`native-ui-rewrite` 执行记录 8.27](native-ui-rewrite.md)。Windows XAML `xmllint --noout` exit 0；本机无 `dotnet`/PowerShell，Windows `-Full` 明确 SKIP，需 Windows 机器补跑。按用户决定，人工整体验收和交付包刷新留到所有任务完成后。

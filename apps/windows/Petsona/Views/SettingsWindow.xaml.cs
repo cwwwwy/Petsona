@@ -58,6 +58,7 @@ public sealed partial class SettingsWindow : Window
     private readonly Dictionary<string, StackPanel> _pages;
     private readonly Dictionary<string, ImageSource?> _thumbnailCache = new();
     private string _lastPetsJson = string.Empty;
+    private string _lastActivePetId = string.Empty;
     private string _lastCodexJson = string.Empty;
     private string _lastPersonasJson = string.Empty;
     private string _lastMemoryJson = string.Empty;
@@ -101,13 +102,7 @@ public sealed partial class SettingsWindow : Window
         _applyTimer = DispatcherQueue.CreateTimer();
         _applyTimer.Interval = TimeSpan.FromMilliseconds(450);
         _applyTimer.IsRepeating = false;
-        _applyTimer.Tick += (_, _) =>
-        {
-            _applyTimer.Stop();
-            var apply = _pendingApply;
-            _pendingApply = null;
-            apply?.Invoke();
-        };
+        _applyTimer.Tick += (_, _) => FlushPendingApply();
 
         DeepSeekModel.TextChanged += (_, _) => ScheduleApply(ApplyDeepSeekConfig);
         DeepSeekBaseUrl.TextChanged += (_, _) => ScheduleApply(ApplyDeepSeekConfig);
@@ -117,10 +112,10 @@ public sealed partial class SettingsWindow : Window
         DeepSeekTemperature.ValueChanged += (_, _) => ScheduleApply(ApplyDeepSeekConfig);
         DeepSeekThinkingDisabled.Toggled += (_, _) => ScheduleApply(ApplyDeepSeekConfig);
 
-        PersonaToneBox.TextChanged += (_, _) => ScheduleApply(ApplyPersona);
-        PersonaEmojiToggle.Toggled += (_, _) => ScheduleApply(ApplyPersona);
-        PersonaGreetingBox.TextChanged += (_, _) => ScheduleApply(ApplyPersona);
-        PersonaSystemPromptBox.TextChanged += (_, _) => ScheduleApply(ApplyPersona);
+        PersonaToneBox.TextChanged += (_, _) => ScheduleApply(ApplyPersona, petBound: true);
+        PersonaEmojiToggle.Toggled += (_, _) => ScheduleApply(ApplyPersona, petBound: true);
+        PersonaGreetingBox.TextChanged += (_, _) => ScheduleApply(ApplyPersona, petBound: true);
+        PersonaSystemPromptBox.TextChanged += (_, _) => ScheduleApply(ApplyPersona, petBound: true);
 
         MemoryEnabledToggle.Toggled += (_, _) => ScheduleApply(ApplyMemoryConfig);
         MemoryRecentEventsBox.ValueChanged += (_, _) => ScheduleApply(ApplyMemoryConfig);
@@ -323,6 +318,17 @@ public sealed partial class SettingsWindow : Window
             }
         }
 
+        var activePetId = _engine.Text(PetsonaTextField.PetId);
+        if (activePetId != _lastActivePetId)
+        {
+            _lastActivePetId = activePetId;
+            if (_formsLoaded)
+            {
+                LoadPersonaForm();
+                ResetFactEditor();
+            }
+        }
+
         var conflict = _engine.Text(PetsonaTextField.ImportConflict);
         if (conflict != _lastConflictJson)
         {
@@ -448,8 +454,13 @@ public sealed partial class SettingsWindow : Window
     private void OnPetSelectionChanged(object sender, SelectionChangedEventArgs e)
     {
         UpdatePetActionState();
-        if (!_suppressEvents && PetList.SelectedItem is PetListItem item)
+    }
+
+    private void OnPetDoubleTapped(object sender, Microsoft.UI.Xaml.Input.DoubleTappedRoutedEventArgs e)
+    {
+        if (PetList.SelectedItem is PetListItem item)
         {
+            FlushPendingApply();
             _engine.Send(PetsonaCommandKind.SelectPet, text: item.Id);
         }
     }
@@ -897,7 +908,7 @@ public sealed partial class SettingsWindow : Window
         PersonaToneBox.Text = TonePresets[index].Tone;
         _personaVerbosity = TonePresets[index].Verbosity;
         _suppressEvents = false;
-        ScheduleApply(ApplyPersona);
+        ScheduleApply(ApplyPersona, petBound: true);
     }
 
     /// Preset index, or the "custom" entry when the tone is not one of them.
@@ -1206,16 +1217,31 @@ public sealed partial class SettingsWindow : Window
     // ------------------------------------------------------------- helpers
 
     /// <summary>Debounce a change into one immediate command (REQ-S05).</summary>
-    private void ScheduleApply(Action apply)
+    private void ScheduleApply(Action apply, bool petBound = false)
     {
         if (_suppressEvents)
         {
             return;
         }
 
-        _pendingApply = apply;
+        var targetPetId = petBound ? _engine.Text(PetsonaTextField.PetId) : null;
+        _pendingApply = () =>
+        {
+            if (targetPetId is null || _engine.Text(PetsonaTextField.PetId) == targetPetId)
+            {
+                apply();
+            }
+        };
         _applyTimer.Stop();
         _applyTimer.Start();
+    }
+
+    private void FlushPendingApply()
+    {
+        _applyTimer.Stop();
+        var apply = _pendingApply;
+        _pendingApply = null;
+        apply?.Invoke();
     }
 
     private void SendJson(PetsonaCommandKind kind, Dictionary<string, object?> payload)

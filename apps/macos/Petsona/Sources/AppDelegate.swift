@@ -69,7 +69,7 @@ enum SettingsLaunchPolicy {
 }
 
 @MainActor
-final class AppDelegate: NSObject, NSApplicationDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     #if DEBUG
     private(set) var testHostHome: URL?
     #endif
@@ -239,6 +239,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         #endif
     }
 
+    func windowWillClose(_ notification: Notification) {
+        guard let window = notification.object as? NSWindow,
+              window === settingsWindow else { return }
+        DispatchQueue.main.async { [weak self] in
+            guard let self, self.settingsWindow?.isVisible == false else { return }
+            self.setDockVisible(false)
+        }
+    }
+
+    private func setDockVisible(_ visible: Bool) {
+        let policy: NSApplication.ActivationPolicy = visible ? .regular : .accessory
+        guard NSApp.activationPolicy() != policy else { return }
+        if !NSApp.setActivationPolicy(policy) {
+            engine.reportError(visible ? "无法在 Dock 显示设置窗口" : "无法恢复菜单栏模式")
+        }
+    }
+
     private func makeMenu() -> NSMenu {
         let menu = NSMenu()
         menu.addItem(withTitle: "设置…", action: #selector(openSettings), keyEquivalent: ",")
@@ -299,17 +316,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    @objc private func openSettings() {
+    @objc func openSettings() {
         if settingsWindow == nil {
             let navigation = SettingsNavigationState()
             let root = SettingsView(engine: engine, navigation: navigation)
             let hosting = NSHostingView(rootView: root)
             let window = SettingsWindow(contentRect: NSRect(x: 0, y: 0, width: 960, height: 700),
                                         navigationState: navigation)
+            window.delegate = self
             window.contentView = hosting
             window.center()
             settingsWindow = window
         }
+        setDockVisible(true)
         NSApp.activate(ignoringOtherApps: true)
         settingsWindow?.makeKeyAndOrderFront(nil)
         settingsWindow?.orderFrontRegardless()

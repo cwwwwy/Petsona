@@ -90,6 +90,7 @@ MSVC 缺 `link.exe` 的 GNU 回退写在 `docs/WINDOWS_VERIFICATION.md`。
 - Windows 线：**原生前端自动门禁 + 人工矩阵已闭合**（W1–W11 / W13 / W14 于 2026-09-21 通过，W12 多屏 / 重力 / 活动提醒 / 透明度 / 协议设置界面 / 托盘化 / 影子动画按计划 v1.1 §3.1 暂缓）；CR-W1 启动性能选 C（只记基线，不优化）、CR-W2 协议粘滞状态选 A（`action:"clear"` 已实现，smoke N25）。**剩余发布项**：D1–D6（release exe / 图标 / 打包 / tag / 干净机器 / 登录自启）、CI 首次运行、`-Full` 在桌面空闲时的干净复跑。旧入口（egui/Win32）冻结、保持可构建。
 - 当前 macOS 原生入口已从骨架推进到可构建/可测试/可协议 smoke 的实施状态，但**仍未完成完整原生验收**；剩余功能和人工项以执行记录 REV-02/04/05/07/08 及 M-01～M-06 为准。旧入口暂留作行为对照；Windows 旧验证结论不代表新原生实现已通过。
 - 2026-09-23 用户确认 macOS 后续版本最低支持 macOS 26；现行 SwiftUI/AppKit 设置窗口按 macOS 26+ 设计。最低版本由 `apps/macos/project.yml` 管理，XcodeGen 生成工程后必须同步记录并验证打包 `LSMinimumSystemVersion`。
+- 2026-09-26 用户决定：两端本地宠物列表单击只选择、双击才切换，Codex 候选双击导入；macOS 模型拉取期间显示加载状态，设置窗口打开期间显示 Dock 图标、关闭后恢复菜单栏模式。设置页继续使用系统原生 `NavigationSplitView`、`Form`、`List` 等控件，由 macOS 27 呈现对应系统外观，最低支持版本仍为 macOS 26。整体验收与交付在全部任务完成后集中进行；Windows W33 与 Mac A4/A5/A6/A11 的新交互仍待人工。
 - 2026-09-20 执行：在已有 runtime worker + ABI3 FFI、原生 SwiftUI/AppKit 宠物窗/气泡/Composer/设置/宠物库命令基础上，完成 DeepSeek 全配置、记忆管理、人格 CRUD/模板/导入导出、明确偏好提取、重复导入确认、拖放导入和固定缩放档位/状态栏菜单；Rust workspace、原生 XCTest 5/5、native smoke 6/6、Release 静态链接与 arm64 打包门禁通过，但不等于窗口视觉、IME、Keychain/LaunchAgent 真实行为、多屏、签名、公证人工通过。
 
 ### 旧入口历史记录（非当前原生验收结论）

@@ -4,10 +4,11 @@
 
 ## 身份与授权
 
-- 任务ID / 版本 / 日期：`settings-consolidation` / `1.0` / 2026-09-21。
+- 任务ID / 版本 / 日期：`settings-consolidation` / `1.3` / 2026-09-26（初版 2026-09-21）。
 - 用户目标：收束设置项（删除与行为不符的设置）、按行业领先做法重做设置页 UI、补上空闲问候功能；Windows 与 macOS 同批。
 - v1.1（2026-09-21 第二批决定）：见 §修订记录；Windows 侧第一批已实机通过（W15）。
 - v1.2（2026-09-23）：用户确认 macOS 设置窗口六页整体按最新原生规范重做，并将最低系统版本提高至 macOS 26；见 REQ-S18。
+- v1.3（2026-09-26）：用户要求两端宠物列表使用双击切换/导入、Mac 模型拉取显示加载状态、设置窗口打开时显示 Dock 图标，并完成 macOS 27 原生控件；其他已列差异维持现状，集中到全部任务完成后再做人工验收与交付。见 REQ-S19～S21；最低支持版本仍为 macOS 26。
 - 已确认决定（2026-09-21 对话）：
   1. 卡片样式**手写、零新依赖**（不引入 Community Toolkit）；
   2. 接受**全部即时生效**，删除 DeepSeek / 人格 / 记忆三处「保存」按钮；
@@ -41,6 +42,9 @@
 | REQ-S16 |（Windows ✅ / macOS 待验证）模型供应商：`deepseek` / `custom` 两种；DeepSeek 预填 Base URL；填入 API Key 后可**显式拉取模型列表**（异步、有失败与空状态、允许手填模型名）；自定义 = OpenAI 兼容端点；`thinking` 字段按供应商门控；凭据按供应商隔离（`api-key:<provider>`） | v1.1 | 新增 ABI 命令（`ListModels`，追加值）；Rust 单测：请求体按供应商门控；人工：DeepSeek 拉到列表、自定义手填可用 |
 | REQ-S17 | 设置侧边栏：每个分区加图标；窗口变窄时 `NavigationView` 自动收成只显示图标（`PaneDisplayMode=Auto` + Threshold），macOS 侧对应 `NavigationSplitView` 的紧凑行为 | v1.1 | 自动：dotnet build；人工：拉伸窗口观察收纳/展开 |
 | REQ-S18 | macOS 26+ 设置窗口采用全尺寸透明标题栏与统一工具栏；系统侧边栏宽度变化时标题栏跟踪分隔器保持对齐；显示侧边栏显隐入口、当前窗格标题并恢复上次窗格；六页采用原生 grouped `Form` / `Section`、系统控件和语义颜色，顶部内容无滚动模糊遮挡；危险记忆清理有明确确认 | v1.2 | XCTest 验证窗口样式、窗格恢复/切换；完整 `verify-macos-all.sh` 检查打包最低版本 26.0；隔离验收包检查 720/900/1000pt、浅/深色、辅助功能显示设置、滚动边缘与主要设置流程 |
+| REQ-S19 | 两端本地宠物列表单击仅选择、双击才切换；Codex 候选双击导入。macOS 候选扫描入口始终可见，列表使用原生选择控件并保留键盘可达的操作按钮 | v1.3 | Mac 原生编译/测试与 Windows 原生构建；两端实际单击/双击、空库和重新扫描留到集中人工验收 |
+| REQ-S20 | Mac 模型列表请求进行中显示加载文案及原生进度反馈，并禁用重复提交；完成/失败后恢复按钮，保留失败提示及手填模型能力 | v1.3 | Mac 门禁与状态投影检查；实际慢网络和失败场景留到集中人工验收 |
+| REQ-S21 | Mac 设置窗口打开期间显示 Dock 图标，关闭后恢复菜单栏常驻模式；Dock/App 菜单重新打开同一设置窗口。六页保留系统 `NavigationSplitView` / grouped `Form` / `Section` / `LabeledContent`，集合行改用原生 `List` 与空状态控件，在 macOS 27 采用系统外观；最低系统仍为 macOS 26 | v1.3 | Mac 原生构建/门禁；Dock 显隐、焦点、原生列表、浅深色与辅助功能视觉留到集中人工验收 |
 
 ## 逐文件变更
 
@@ -55,6 +59,9 @@
 | `apps/windows/Petsona/Views/SettingsWindow.xaml` / `.xaml.cs` | 重写 | 6 页卡片布局、手写 `SettingsCardStyle`、即时生效、`ContentDialog` 确认、关于区、问候设置；删除 14 个控件 | S04–S07 | S01/S02 |
 | `apps/windows/Petsona.Tests/SettingsFlowTests.cs` | 修改 | 删除已移除字段断言，改为逐项即时命令断言 + 问候配置断言 | S05/S09 | S01 |
 | `apps/macos/Petsona/Sources/SettingsView.swift` | 重写 | 同 6 分区卡片化、即时生效、确认、关于、问候 | S08 | S01/S02 |
+| `apps/windows/Petsona/Views/SettingsWindow.xaml` / `.xaml.cs` | 修改 | 本地列表只选择、双击切换；Codex 双击导入保留，文案与事件一致 | S19 | — |
+| `apps/macos/Petsona/Sources/SettingsView.swift` | 修改 | 本地/Codex/偏好事实使用原生 `List`，修复 Codex 扫描入口；本地双击切换、Codex 双击导入；模型拉取按钮显示加载状态 | S19/S20/S21 | S18 |
+| `apps/macos/Petsona/Sources/AppDelegate.swift` / `PetsonaApp.swift` | 修改 | 设置可见时切换 Dock activation policy，关闭后恢复；App 菜单的设置命令复用当前设置窗 | S21 | S18 |
 | `apps/macos/PetsonaTests/EngineClientTests.swift` | 修改 | 删除 `retentionDays` 断言，补问候配置与人格字段收束断言 | S08/S09 | — |
 | `scripts/windows-smoke.ps1` | 修改 | 若设置页结构变化影响 N12/N19 就修；新增问候调度可见性检查（如可行） | S09 | — |
 | `docs/WINDOWS_VERIFICATION.md`、`docs/MACOS_VERIFICATION.md`、`docs/FEATURE_PARITY.md`、`docs/execution/settings-consolidation.md`、`AGENTS.md` | 修改 | 新增设置页人工条目、状态与长期规则 | S10 | 实施完成 |
@@ -79,6 +86,9 @@
 | T-S05 | S08/S09 | macOS arm64 | Mac | `bash scripts/verify-macos-all.sh` | 退出 0（本机无法执行 → 记录为待 Mac 验证） |
 | T-S06 | S10 | 文档 | — | 人工检查链接与状态 | 无死链、状态与实际一致 |
 | T-S07 | S18 | macOS 26+ arm64 | Xcode / XcodeGen | `bash scripts/verify-macos-all.sh` + 隔离验收包人工矩阵 | 退出 0；窗口样式、分栏状态、最低系统版本及视觉矩阵有记录 |
+| T-S08 | S19–S21（Mac） | macOS 27 arm64 | Xcode | `bash scripts/verify-macos-all.sh` | 退出 0；原生入口、隔离数据、列表和 Dock 生命周期代码可构建；人工视觉不由门禁替代 |
+| T-S09 | S19（Windows） | Windows x64 | Windows SDK / WinUI | `powershell -ExecutionPolicy Bypass -File scripts\verify-windows.ps1 -Full` | 退出 0；原生入口和设置页不回归；真实双击行为由 T-S10 人工确认 |
+| T-S10 | S19–S21 | 两端实体桌面 | 全部任务完成后 | 按两端验收清单检查双击、Codex 导入、模型加载、Dock 与 macOS 27 系统外观 | 用户集中验收通过前维持待验，不以编译或执行者声明替代 |
 
 ## 顺序、暂停与完成
 
@@ -86,6 +96,7 @@
 - 可由执行者判断：卡片样式细节、文案、分组内顺序、状态提示形式。
 - 必须暂停：若删除字段导致 Codex 人格包导入必需字段缺失；若问候调度需要改变协议 / ABI；若 macOS 改动无法在无 Mac 环境下保证编译。
 - 本次完成条件：S01–S04/S06/S07/S10 有实现与自动/人工证据；S05 有即时生效证据；S08 在 Mac 上回归（否则明确「未完成/待 Mac 验证」）；S09 退出码 0。
+- v1.3 阶段条件：S19～S21 的 Mac 代码与完整门禁通过、Windows 代码通过 Windows 原生门禁；人工 Dock、双击和 macOS 27 外观按用户决定延期集中验收，未验前保持“待验收”。Windows 机器不可用时须保留 T-S09 SKIP，不以 Mac 构建替代。
 - 全项目完成条件：Windows 与 macOS 均实机通过设置页人工条目，且旧 schema 兼容证据留存。
 
 ## 修订记录
@@ -95,3 +106,4 @@
 | 1.0 | 2026-09-21：用户逐条确认 5 个决策（手写零依赖 / 接受即时生效 / 死设置完全移除 / 补空闲问候 / 两端同批） | 初版 | 设置项收束与 UI 优化立项 |
 | 1.1 | 2026-09-21：第二批用户决定 —— ① 缩放**先按吸附档位**做且**托盘菜单一起改**；② 同意人格页精简（提示词进高级 / 固定问候移到问候卡 / 回答长度并入预设）；③ 同意删除「默认语言」并改为提示词跟随用户语言；④ 同意自定义＝OpenAI 兼容 + `thinking` 门控 + 允许手填模型；⑤ 记忆页**先做**「可编辑 + 分级清空 + 导出/导入」；⑥ 新增：侧边栏图标 + 响应式收纳为纯图标 | 新增 REQ-S11～S17 | 设置页第二批优化 |
 | 1.2 | 2026-09-23：用户要求按最新 macOS 规范重做全部六页，并明确接受仅支持新版；用户选择最低 macOS 26 | 新增 REQ-S18；最低版本与视觉验收范围升至 macOS 26+ | 修复标题栏/侧边栏错位与滚动模糊遮挡，使用系统原生分组表单 |
+| 1.3 | 2026-09-26：用户要求本地宠物也双击切换、Codex 双击导入保持两端一致；Mac 模型加载反馈一致；设置打开显示 Dock 并使用 macOS 27 原生控件；人工验收/交付待全部任务完成后集中进行 | 新增 REQ-S19～S21 与 T-S08～S10；不改变 macOS 26 最低版本 | 收束两端手势及 Mac 设置窗口交互与系统外观 |

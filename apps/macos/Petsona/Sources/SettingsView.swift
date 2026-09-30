@@ -281,6 +281,13 @@ enum SettingsLayout {
     static let sidebarMaxWidth: CGFloat = 240
 }
 
+private enum SettingsApplyKind: Hashable {
+    case persona
+    case deepSeek
+    case memory
+    case greeting
+}
+
 struct SettingsView: View {
     @ObservedObject var engine: EngineClient
     @ObservedObject var navigation: SettingsNavigationState
@@ -290,6 +297,9 @@ struct SettingsView: View {
     @State private var alwaysOnTop = true
     @State private var showingCodexPets = false
     @State private var dropTargeted = false
+    @State private var selectedPetID: String?
+    @State private var selectedCodexPetID: String?
+    @State private var selectedFactID: String?
 
     @State private var personaName = ""
     @State private var personaTone = ""
@@ -326,13 +336,15 @@ struct SettingsView: View {
     @State private var loadedDeepSeekSignature = ""
     @State private var loadedMemorySignature = ""
     @State private var loadedGreetingSignature = ""
-    @State private var pendingApply: Task<Void, Never>?
+    @State private var pendingApplies: [SettingsApplyKind: Task<Void, Never>] = [:]
     @State private var factKey = ""
     @State private var factValue = ""
     @State private var editingFactID = ""
     @State private var autostart = false
     private var pets: [PetChoice] { decode(PETSONA_TEXT_PETS, as: [PetChoice].self) ?? [] }
     private var codexPets: [CodexPetChoice] { decode(PETSONA_TEXT_CODEX_PETS, as: [CodexPetChoice].self) ?? [] }
+    private var selectedPet: PetChoice? { pets.first { $0.id == selectedPetID } }
+    private var selectedCodexPet: CodexPetChoice? { codexPets.first { $0.id == selectedCodexPetID } }
     private var currentPersona: PersonaProjection {
         decode(PETSONA_TEXT_PERSONA, as: PersonaProjection.self) ?? PersonaProjection()
     }
@@ -344,6 +356,9 @@ struct SettingsView: View {
         engine.statusMessage.hasPrefix("拉取模型列表失败") ||
         engine.statusMessage.hasPrefix("服务商没有返回")
     }
+    private var modelFetchBusy: Bool {
+        engine.statusMessage.hasPrefix("正在拉取")
+    }
 
     private var availableModels: [String] {
         decode(PETSONA_TEXT_MODELS, as: [String].self) ?? []
@@ -351,6 +366,9 @@ struct SettingsView: View {
 
     private var memory: MemoryProjection {
         decode(PETSONA_TEXT_MEMORY, as: MemoryProjection.self) ?? MemoryProjection()
+    }
+    private var selectedFact: MemoryFactProjection? {
+        memory.facts.first { $0.id == selectedFactID }
     }
     private var importConflict: ImportConflictProjection? {
         decode(PETSONA_TEXT_IMPORT_CONFLICT, as: ImportConflictProjection.self)
@@ -373,6 +391,12 @@ struct SettingsView: View {
         .frame(minWidth: SettingsLayout.windowMinWidth,
                minHeight: SettingsLayout.windowMinHeight)
         .onAppear { reloadForm() }
+        .onChange(of: engine.text(PETSONA_TEXT_PET_ID)) { oldID, newID in
+            guard oldID != newID else { return }
+            pendingApplies[.persona]?.cancel()
+            resetFactEditor()
+            reloadPersona()
+        }
     }
 
     @ViewBuilder
@@ -444,77 +468,17 @@ struct SettingsView: View {
         }
     }
 
+    @ViewBuilder
     private var petLibrarySection: some View {
         settingsCard("本地宠物") {
-            if engine.snapshot.has_pet == 0 {
-                Text("本地库为空。请选择一个 Codex 宠物包或文件夹导入。")
-                    .foregroundStyle(.secondary)
+            Text("双击列表中的宠物即可切换；也可先选中，再使用下方按钮。")
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+            if pets.isEmpty {
+                ContentUnavailableView("本地库为空", systemImage: "pawprint",
+                                       description: Text("导入宠物文件夹或 .zip，或从 Codex 候选中选择。"))
             } else {
-                Text("当前：\(engine.text(PETSONA_TEXT_PET_NAME))")
-            }
-            HStack {
-                Button("导入…") { importPet() }
-                Text("支持文件夹或 .zip")
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-            }
-            GroupBox {
-                Text("将宠物文件夹或 .zip 拖到这里导入")
-                    .foregroundStyle(dropTargeted ? .primary : .secondary)
-                    .frame(maxWidth: .infinity, minHeight: 36)
-                    .contentShape(Rectangle())
-                    .onDrop(of: [UTType.fileURL], isTargeted: $dropTargeted, perform: handleDrop)
-            } label: {
-                Label("拖放导入", systemImage: "arrow.down.doc")
-            }
-
-            if let conflict = importConflict {
-                VStack(alignment: .leading, spacing: 6) {
-                    Text("发现同 ID 宠物：\(conflict.name)（\(conflict.id)）")
-                    Text("覆盖会替换 Petsona 本地库中的版本，Codex 原文件不会被修改。")
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
-                    HStack {
-                        Button("覆盖导入") {
-                            engine.importPet(URL(fileURLWithPath: conflict.path), overwrite: true)
-                        }
-                        Button("取消") { engine.clearImportConflict() }
-                    }
-                }
-                .padding(.vertical, 4)
-            }
-
-            if showingCodexPets {
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("Codex 宠物（选择后才会复制到 Petsona 本地库）")
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
-                    if codexPets.isEmpty {
-                        Text("没有发现可导入的宠物目录。").foregroundStyle(.secondary)
-                    }
-                    HStack {
-                        Button("从 Codex 导入…") { importCodexPet() }
-                        Button("重新扫描") { engine.send(kind: PETSONA_COMMAND_REFRESH_PETS) }
-                    }
-                    ForEach(codexPets) { pet in
-                        HStack {
-                            CodexPreview(path: pet.spritesheet,
-                                         cellWidth: pet.cellWidth,
-                                         cellHeight: pet.cellHeight,
-                                         columns: pet.columns)
-                            VStack(alignment: .leading) {
-                                Text(pet.name)
-                                Text(pet.id).font(.caption).foregroundStyle(.secondary)
-                            }
-                            Spacer()
-                            if pet.v2 { Text("V2").foregroundStyle(.secondary) }
-                            Button("导入") { engine.importPet(URL(fileURLWithPath: pet.path)) }
-                        }
-                    }
-                }
-            }
-            ForEach(pets) { pet in
-                VStack(alignment: .leading, spacing: 8) {
+                List(pets, selection: $selectedPetID) { pet in
                     HStack(spacing: 12) {
                         if let spritesheet = pet.spritesheet,
                            let cellWidth = pet.cellWidth,
@@ -535,19 +499,105 @@ struct SettingsView: View {
                         }
                         Spacer()
                         if pet.v2 { Text("V2").foregroundStyle(.secondary) }
-                    }
-                    HStack(spacing: 8) {
-                        Spacer()
                         if engine.text(PETSONA_TEXT_PET_ID) == pet.id {
-                            Text("当前").foregroundStyle(.secondary)
-                        } else {
-                            Button("切换") { engine.selectPet(pet.id) }
+                            Label("当前", systemImage: "checkmark.circle.fill")
+                                .foregroundStyle(.secondary)
                         }
-                        Button("导出") { exportPet(pet.id) }
-                        Button("删除", role: .destructive) { deletePet(pet.id) }
                     }
+                    .contentShape(Rectangle())
+                    .tag(pet.id)
+                    .simultaneousGesture(TapGesture(count: 2).onEnded {
+                        selectedPetID = pet.id
+                        switchPet(to: pet.id)
+                    })
                 }
-                .frame(maxWidth: .infinity, alignment: .leading)
+                .frame(height: min(CGFloat(pets.count) * 60 + 16, 220))
+                .accessibilityLabel("本地宠物")
+            }
+            HStack {
+                Button("导入…") { importPet() }
+                Button("切换") {
+                    if let selectedPet { switchPet(to: selectedPet.id) }
+                }
+                .disabled(selectedPet == nil || selectedPet?.id == engine.text(PETSONA_TEXT_PET_ID))
+                Button("导出…") {
+                    if let selectedPet { exportPet(selectedPet.id) }
+                }
+                .disabled(selectedPet == nil)
+                Button("删除", role: .destructive) {
+                    if let selectedPet { deletePet(selectedPet.id) }
+                }
+                .disabled(selectedPet == nil)
+            }
+            GroupBox {
+                Text("将宠物文件夹或 .zip 拖到这里导入")
+                    .foregroundStyle(dropTargeted ? .primary : .secondary)
+                    .frame(maxWidth: .infinity, minHeight: 36)
+                    .contentShape(Rectangle())
+                    .onDrop(of: [UTType.fileURL], isTargeted: $dropTargeted, perform: handleDrop)
+            } label: {
+                Label("拖放导入", systemImage: "arrow.down.doc")
+            }
+        }
+
+        if let conflict = importConflict {
+            settingsCard("导入冲突") {
+                Text("发现同 ID 宠物：\(conflict.name)（\(conflict.id)）")
+                Text("覆盖会替换 Petsona 本地库中的版本，Codex 原文件不会被修改。")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                HStack {
+                    Button("覆盖导入") {
+                        engine.importPet(URL(fileURLWithPath: conflict.path), overwrite: true)
+                    }
+                    Button("取消") { engine.clearImportConflict() }
+                }
+            }
+        }
+
+        settingsCard("从 Codex 导入") {
+            Text("只读取 Codex 宠物候选；双击候选才会复制到 Petsona 本地库。")
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+            HStack {
+                Button(showingCodexPets ? "重新扫描" : "从 Codex 导入…") { importCodexPet() }
+                if showingCodexPets {
+                    Button("导入选中") {
+                        if let selectedCodexPet {
+                            engine.importPet(URL(fileURLWithPath: selectedCodexPet.path))
+                        }
+                    }
+                    .disabled(selectedCodexPet == nil)
+                }
+            }
+            if showingCodexPets {
+                if codexPets.isEmpty {
+                    ContentUnavailableView("没有发现 Codex 宠物", systemImage: "pawprint",
+                                           description: Text("请确认 ~/.codex/pets 中已有宠物包，然后重新扫描。"))
+                } else {
+                    List(codexPets, selection: $selectedCodexPetID) { pet in
+                        HStack {
+                            CodexPreview(path: pet.spritesheet,
+                                         cellWidth: pet.cellWidth,
+                                         cellHeight: pet.cellHeight,
+                                         columns: pet.columns)
+                            VStack(alignment: .leading) {
+                                Text(pet.name)
+                                Text(pet.id).font(.caption).foregroundStyle(.secondary)
+                            }
+                            Spacer()
+                            if pet.v2 { Text("V2").foregroundStyle(.secondary) }
+                        }
+                        .contentShape(Rectangle())
+                        .tag(pet.id)
+                        .simultaneousGesture(TapGesture(count: 2).onEnded {
+                            selectedCodexPetID = pet.id
+                            engine.importPet(URL(fileURLWithPath: pet.path))
+                        })
+                    }
+                    .frame(height: min(CGFloat(codexPets.count) * 60 + 16, 220))
+                    .accessibilityLabel("Codex 宠物候选")
+                }
             }
         }
     }
@@ -614,7 +664,7 @@ struct SettingsView: View {
         }
         .onChange(of: personaSignature) { _, value in
             guard value != loadedPersonaSignature else { return }
-            scheduleApply(savePersona)
+            scheduleApply(.persona, savePersona)
         }
     }
 
@@ -631,7 +681,7 @@ struct SettingsView: View {
                     if provider != "custom" {
                         deepSeekBaseURL = "https://api.deepseek.com/v1"
                     }
-                    scheduleApply(saveDeepSeekConfig)
+                    scheduleApply(.deepSeek, saveDeepSeekConfig)
                 }
             }
             settingsRow("Base URL", description: deepSeekProvider == "custom" ? "自定义 OpenAI 兼容端点。" : "DeepSeek 的固定地址。") {
@@ -673,7 +723,15 @@ struct SettingsView: View {
             }
             settingsRow("模型列表") {
                 VStack(alignment: .leading, spacing: 8) {
-                    Button("拉取模型列表") { engine.listModels() }
+                    HStack {
+                        Button(modelFetchBusy ? "正在拉取…" : "拉取模型列表") { engine.listModels() }
+                            .disabled(modelFetchBusy)
+                        if modelFetchBusy {
+                            ProgressView()
+                                .controlSize(.small)
+                                .accessibilityLabel("正在拉取模型列表")
+                        }
+                    }
                     if !availableModels.isEmpty {
                         Picker("选择模型", selection: $deepSeekModel) {
                             ForEach(availableModels, id: \.self) { Text($0).tag($0) }
@@ -726,7 +784,7 @@ struct SettingsView: View {
         }
         .onChange(of: deepSeekSignature) { _, value in
             guard value != loadedDeepSeekSignature else { return }
-            scheduleApply(saveDeepSeekConfig)
+            scheduleApply(.deepSeek, saveDeepSeekConfig)
         }
 
     }
@@ -774,28 +832,34 @@ struct SettingsView: View {
                     }
                 }
             }
-            ForEach(memory.facts) { fact in
-                VStack(alignment: .leading, spacing: 6) {
-                    HStack {
-                        VStack(alignment: .leading) {
-                            Text("\(fact.key)：\(fact.value)")
-                            Text("来源：\(fact.sourceLabel)")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
-                        Spacer()
-                        Button("编辑") {
-                            editingFactID = fact.id
-                            factKey = fact.key
-                            factValue = fact.value
-                        }
-                        Button("删除") {
-                            confirmForgetFact(fact)
-                        }
-                        .buttonStyle(.borderless)
+            if memory.facts.isEmpty {
+                ContentUnavailableView("暂无偏好", systemImage: "list.bullet",
+                                       description: Text("对话中的明确偏好或手动添加的内容会显示在这里。"))
+            } else {
+                List(memory.facts, selection: $selectedFactID) { fact in
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text("\(fact.key)：\(fact.value)")
+                        Text("来源：\(fact.sourceLabel)")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
                     }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .contentShape(Rectangle())
+                    .tag(fact.id)
                 }
-                .frame(maxWidth: .infinity, alignment: .leading)
+                .frame(height: min(CGFloat(memory.facts.count) * 52 + 12, 180))
+                .accessibilityLabel("已记录的偏好")
+                .onChange(of: selectedFactID) { _, id in
+                    guard let id,
+                          let fact = memory.facts.first(where: { $0.id == id }) else { return }
+                    editingFactID = fact.id
+                    factKey = fact.key
+                    factValue = fact.value
+                }
+                Button("删除选中偏好", role: .destructive) {
+                    if let selectedFact { confirmForgetFact(selectedFact) }
+                }
+                .disabled(selectedFact == nil)
             }
             if !memory.events.isEmpty {
                 DisclosureGroup("最近互动（\(memory.events.count)）") {
@@ -831,7 +895,7 @@ struct SettingsView: View {
         }
         .onChange(of: memorySignature) { _, value in
             guard value != loadedMemorySignature else { return }
-            scheduleApply(saveMemoryConfig)
+            scheduleApply(.memory, saveMemoryConfig)
         }
     }
 
@@ -898,7 +962,7 @@ struct SettingsView: View {
         }
         .onChange(of: greetingSignature) { _, value in
             guard value != loadedGreetingSignature else { return }
-            scheduleApply(saveGreetingConfig)
+            scheduleApply(.greeting, saveGreetingConfig)
         }
 
         settingsCard("测试") {
@@ -974,17 +1038,7 @@ struct SettingsView: View {
         alwaysOnTop = engine.snapshot.always_on_top != 0
         autostart = LaunchAgentService.isEnabled
 
-        let persona = currentPersona
-        personaName = persona.name
-        personaTone = persona.traits.tone
-        personaVerbosity = persona.traits.verbosity
-        personaTonePreset = TonePreset.all.contains { $0.tone == persona.traits.tone }
-            ? persona.traits.tone
-            : ""
-        personaEmoji = persona.traits.emoji
-        greeting = persona.greeting ?? ""
-        systemPrompt = persona.systemPrompt
-        loadedPersonaSignature = personaSignature
+        reloadPersona()
 
         let deepSeek = deepSeek
         deepSeekProvider = deepSeek.provider == "custom" ? "custom" : "deepseek"
@@ -1013,13 +1067,29 @@ struct SettingsView: View {
         loadedGreetingSignature = greetingSignature
     }
 
+    private func reloadPersona() {
+        let persona = currentPersona
+        personaName = persona.name
+        personaTone = persona.traits.tone
+        personaVerbosity = persona.traits.verbosity
+        personaTonePreset = TonePreset.all.contains { $0.tone == persona.traits.tone }
+            ? persona.traits.tone
+            : ""
+        personaEmoji = persona.traits.emoji
+        greeting = persona.greeting ?? ""
+        systemPrompt = persona.systemPrompt
+        loadedPersonaSignature = personaSignature
+    }
+
     // Instant apply: every field change schedules one debounced command and
     // never fires for values that came from a reload (settings-consolidation S05).
-    private func scheduleApply(_ action: @escaping () -> Void) {
-        pendingApply?.cancel()
-        pendingApply = Task { @MainActor in
+    private func scheduleApply(_ kind: SettingsApplyKind, _ action: @escaping () -> Void) {
+        pendingApplies[kind]?.cancel()
+        let targetPetID = kind == .persona ? engine.text(PETSONA_TEXT_PET_ID) : nil
+        pendingApplies[kind] = Task { @MainActor in
             try? await Task.sleep(nanoseconds: 450_000_000)
             guard !Task.isCancelled else { return }
+            if let targetPetID, engine.text(PETSONA_TEXT_PET_ID) != targetPetID { return }
             action()
         }
     }
@@ -1045,10 +1115,14 @@ struct SettingsView: View {
          String(greetingCooldownMinutes), String(greetingMaxChars)].joined(separator: "\u{1F}")
     }
 
-    private func reloadLater() {
+    private func reloadPersonaLater() {
+        let targetPetID = engine.text(PETSONA_TEXT_PET_ID)
+        let submittedSignature = personaSignature
         Task { @MainActor in
             try? await Task.sleep(nanoseconds: 180_000_000)
-            reloadForm()
+            guard engine.text(PETSONA_TEXT_PET_ID) == targetPetID,
+                  personaSignature == submittedSignature else { return }
+            reloadPersona()
         }
     }
 
@@ -1061,7 +1135,7 @@ struct SettingsView: View {
             "greeting": greeting,
             "system_prompt": systemPrompt,
         ])
-        reloadLater()
+        reloadPersonaLater()
     }
 
     private func saveDeepSeekConfig() {
@@ -1100,6 +1174,7 @@ struct SettingsView: View {
         editingFactID = ""
         factKey = ""
         factValue = ""
+        selectedFactID = nil
     }
 
     private func confirmForgetFact(_ fact: MemoryFactProjection) {
@@ -1110,6 +1185,7 @@ struct SettingsView: View {
         alert.addButton(withTitle: "取消")
         if alert.runModal() == .alertFirstButtonReturn {
             engine.forgetFact(fact.id)
+            if selectedFactID == fact.id { selectedFactID = nil }
             if editingFactID == fact.id { resetFactEditor() }
         }
     }
@@ -1205,6 +1281,13 @@ struct SettingsView: View {
         engine.send(kind: PETSONA_COMMAND_SCAN_CODEX_PETS)
     }
 
+    private func switchPet(to id: String) {
+        guard engine.text(PETSONA_TEXT_PET_ID) != id else { return }
+        pendingApplies[.persona]?.cancel()
+        if personaSignature != loadedPersonaSignature { savePersona() }
+        engine.selectPet(id)
+    }
+
     private func exportPet(_ id: String) {
         let panel = NSSavePanel()
         panel.nameFieldStringValue = "\(id).zip"
@@ -1235,7 +1318,7 @@ struct SettingsView: View {
         panel.allowedContentTypes = [.json]
         guard panel.runModal() == .OK, let url = panel.url else { return }
         engine.importPersona(url)
-        reloadLater()
+        reloadPersonaLater()
     }
 
     /// Rounded percentages so slider values outside the old preset list still

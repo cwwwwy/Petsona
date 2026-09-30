@@ -63,9 +63,9 @@
                         <Border Style="{StaticResource SettingsCardStyle}">
                             <StackPanel Spacing="8">
                                 <TextBlock Text="本地宠物" Style="{StaticResource CardHeaderStyle}" />
-                                <TextBlock Text="单击切换当前宠物；双击 Codex 候选可直接导入。V2 图集（8×11）支持方向姿势与更多动作。"
+                                <TextBlock Text="双击切换本地宠物；双击 Codex 候选可直接导入。V2 图集（8×11）支持方向姿势与更多动作。"
                                            Style="{StaticResource CardDescriptionStyle}" />
-                                <ListView x:Name="PetList" MaxHeight="220" SelectionChanged="OnPetSelectionChanged">
+                                <ListView x:Name="PetList" MaxHeight="220" SelectionChanged="OnPetSelectionChanged" DoubleTapped="OnPetDoubleTapped">
                                     <ListView.ItemTemplate>
                                         <DataTemplate>
                                             <StackPanel Orientation="Horizontal" Spacing="12">

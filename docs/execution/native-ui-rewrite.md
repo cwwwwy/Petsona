@@ -464,3 +464,21 @@ E-07 的 xcresult 摘要在上一只读审查中因 TestReport 临时写入权�
 | E-34i | 实际 dist 验收包协议 smoke / macOS 27.0 arm64 | `PETSONA_NATIVE_APP="$PWD/dist/Petsona-macos-arm64-acceptance/Petsona.app" PETSONA_SMOKE_STATE_PORT=17972 PETSONA_SMOKE_HOOK_PORT=17973 bash scripts/macos-smoke.sh`（隔离临时 home、专用端口） | exit 0；进程、`/health`、`/pets`、状态 TTL、第二实例和安全退出 7/7。此 smoke 不呈现设置 GUI。 |
 
 **仍待人工确认**：在 macOS 27 打开验收包，测 720/900/1000pt 窗宽；查看工具栏 tracking separator 与分栏是否连续、顶部模糊层是否消失、浅/深色和降低透明度/增强对比度、工具栏显隐与键盘/VoiceOver 标签、各页即时生效/危险操作确认。macOS 26 实机未在本轮可用，需另行验收最低版本运行表现。自动门禁通过不代替上述窗口验收。
+
+### 8.27 设置窗口 Dock、系统列表与双击行为（2026-09-26）
+
+- 用户决定见 `docs/plans/settings-consolidation.md` v1.3 / REQ-S19～S21。最低 macOS 26 不变；macOS 27 的列表、分组表单和进度控件由系统绘制。Mac 的本地宠物/Codex 候选/偏好事实改用可选择的系统 `List`；本地宠物与 Codex 候选双击执行切换/导入，按钮保留键盘路径。原先 Codex 扫描入口被自己隐藏的分支包住，现固定在独立分区；重新扫描改为实际调用 `SCAN_CODEX_PETS`。
+- 编辑中的宠物切换时取消待发送的去抖修改，并根据新宠物投影回填设置，避免跨宠物误写。Mac 模型列表请求中按钮改为“正在拉取…”，禁用并显示原生 `ProgressView`；结果返回后恢复。
+- 设置窗口打开前将 `NSApplication` activation policy 切换为 regular 以显示 Dock；关闭窗口后恢复 accessory，菜单栏入口仍保留。App 菜单的系统“设置…”命令指向同一原生窗口，不生成第二个空设置窗口。未改 `LSUIElement=true` 的默认菜单栏模式。
+
+| 证据 ID | 目标 / 环境 | 命令 | 结果 / 位置 |
+|---|---|---|---|
+| E-35a | Mac 原生列表与窗口代码；macOS 27.0 arm64，仓库根 | `xcodebuild -quiet -project apps/macos/Petsona.xcodeproj -scheme Petsona -configuration Debug -destination 'platform=macOS,arch=arm64' -derivedDataPath .scratch/settings-native-design-tests -only-testing:PetsonaTests/NativeLifecycleTests CODE_SIGNING_ALLOWED=NO test` | exit 0；隔离 XCTest 宿主，结果在 `.scratch/settings-native-design-tests/Logs/Test/` |
+| E-35b | App 菜单路由；macOS 27.0 arm64，仓库根 | `xcodebuild -quiet -project apps/macos/Petsona.xcodeproj -scheme Petsona -configuration Debug -destination 'platform=macOS,arch=arm64' -derivedDataPath .scratch/settings-native-design-tests CODE_SIGNING_ALLOWED=NO build` | exit 0；Debug 原生构建通过 |
+| E-35c | 最终 Mac 统一门禁；macOS 27.0 arm64，仓库根，允许本机回环 | `bash scripts/verify-macos-all.sh` | exit 0；fmt/clippy、Rust core 71 / FFI 4 / runtime 15、Release 原生构建、XCTest 22/22、native smoke 7/7、测试宿主用户数据隔离与临时打包结构均通过；摘要 `.scratch/macos-native-tests/test-summary.json` |
+| E-35d | Windows XAML 静态结构；macOS 主机，仓库根 | `xmllint --noout apps/windows/Petsona/Views/SettingsWindow.xaml` | exit 0；WinUI 事件绑定代码未在 Windows 构建。`dotnet`/PowerShell 在此 Mac 不可用，`verify-windows.ps1 -Full` 明确 SKIP，待 Windows 主机 |
+| E-35e | 最终补丁格式与 XAML 结构；macOS 27.0 arm64，仓库根 | `git diff --check && cargo fmt --all -- --check`；`xmllint --noout apps/windows/Petsona/Views/SettingsWindow.xaml` | 两条命令均 exit 0；仅静态检查，不替代 Windows 原生构建或桌面双击验收 |
+| E-35f | 去抖保存重构首轮编译；macOS 27.0 arm64，仓库根 | `xcodebuild -quiet -project apps/macos/Petsona.xcodeproj -scheme Petsona -configuration Debug -destination 'platform=macOS,arch=arm64' -derivedDataPath .scratch/settings-native-design-tests CODE_SIGNING_ALLOWED=NO build` | exit 65；`importPersona` 留有旧 `reloadLater()` 调用；修为 `reloadPersonaLater()` 后重跑同一命令 exit 0。失败保留，不把首轮记为通过 |
+| E-35g | 当前最终代码完整门禁；macOS 27.0 arm64，仓库根，允许本机回环 | `bash scripts/verify-macos-all.sh` | exit 0；fmt/clippy、Rust core 71 / FFI 4 / runtime 15、Release 原生构建、隔离 XCTest 22/22、native smoke 7/7、用户目录未变化与临时包结构通过。结果 `.scratch/macos-native-tests/test-summary.json`；Windows 门禁仍 SKIP |
+
+**状态**：REQ-S19～S21 Mac 当前最终代码与完整自动门禁已通过；Windows 本地双击及切换时人格回填改动仅完成代码与 XAML 结构检查，Windows 原生门禁未跑。Dock 显隐、双击命中、模型加载态与 macOS 27 外观必须在用户要求的集中人工验收时确认。本批未刷新最终 `dist/` 交付包，也未执行 Git add/commit/push。

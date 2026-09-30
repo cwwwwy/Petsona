@@ -12,8 +12,9 @@
 CI 只能证明“能编译”，不能证明“能用”；**真实结论以本清单为准**。
 最小可用判定：**B1（左键）、B3（拖拽）、B5（转头）、B6（穿透）、B11（空闲 CPU）全部通过**。
 
-## 已知状态（2026-09-23）
+## 已知状态（2026-09-26）
 
+- ⚠️ 2026-09-26 REQ-S19～S21 源码已增加原生可选择列表/双击操作、模型加载反馈和设置窗口 Dock 生命周期；完整 macOS 自动门禁 E-35 通过。按用户要求，实际 `dist/` 验收包尚未刷新，集中验收前不要用旧包判断这些新改动。
 - ✅ 2026-09-23 设置窗口原生化已接入：minimum macOS 26；AppKit 全尺寸透明标题栏 + unified toolbar；系统 sidebar tracking separator 与 `NavigationSplitView` 同步；六页使用 grouped Form/Section，详情区禁用顶部滚动边缘模糊；页面选择会持久化，记忆清理显示确认。门禁与打包最低版本检查见 `native-ui-rewrite` E-34。当前机器 macOS 27；720/900/1000pt、浅/深色、降低透明度/增强对比度和真实键盘/焦点仍需人工验收。
 - ⚠️ 2026-09-23 最终 `dist/Petsona-macos-arm64-acceptance/` 已刷新为 minimum macOS 26 的构建；E-34i 实际验收包协议 smoke 7/7。隔离包 `open --env` 仍返回 `kLSNoExecutableErr`，直接 executable 退出 134，自动化环境没能取得 GUI 截图；标题栏与表单外观仍需用户桌面实机确认。执行证据见 [macOS 执行记录](execution/native-ui-rewrite.md) 8.26。
 - ✅ 2026-09-23 第一批 Windows 对齐代码已接入：气泡 150ms 淡入、剩余时间进度条、悬停暂停/恢复；编辑入口固定为可点击圆角条并支持 220ms 横向/纵向展开、工作区边缘侧挂；Composer 可按下方/左侧/右侧空间跟随宠物；计划暂缓的活动提醒/重力开关不再显示在 macOS 设置页。自动验证见执行记录 8.22；气泡观感、触控板悬停、边缘侧挂和 IME 仍需人工复验。
@@ -58,14 +59,14 @@ cd "dist/Petsona-macos-$(uname -m)-acceptance" && open --env "PETSONA_HOME=$PWD/
 | A1 | 启动 | 宠物窗口出现、无边框、透明背景、置顶 | 待实测 |
 | A2 | 看菜单栏 | 出现 Petsona 托盘图标 | 待实测 |
 | A3 | 点击托盘图标 | macOS 原生菜单：打开设置 / 选择宠物（V2 有勾选）/ 显示隐藏 / 退出 | 代码完成；实机已通过一次，可复测 |
-| A4 | 打开设置 | 能打开、滚动；页面顺序为宠物库 / 外观与交互 / 人格 / 记忆 / 模型服务 / 系统；全尺寸统一标题栏与侧边栏分界连续，页面标题更新且无重复遮挡；在约 720、900、1000pt 检查控件排布，并在浅/深色、降低透明度、增强对比度下确认可读；侧边栏可显隐、重启后恢复上次页面；缩放档位、穿透、DeepSeek、人格、记忆可操作 | E-34 自动门禁通过；macOS 27 窗口视觉/交互待人工；macOS 26 实机待验 |
-| A5 | 切换宠物 | 本地库 + 原生导入 / 切换可用；切换后动画与窗口更新 | native worker/UI 已接；人工待实测 |
-| A6 | 导入 / 导出 | 文件面板或拖放导入；Codex 可预览；重复 ID 明确确认覆盖；保存面板导出；删除有确认 | native worker/UI 已接；人工待实测 |
+| A4 | 打开设置 | 打开时 Dock 显示 Petsona，关闭设置后 Dock 图标消失而菜单栏宠物继续运行；Dock / App 菜单 / Command+, 均回到同一个设置窗口。六页使用 macOS 27 原生侧边栏、分组表单、列表与控件；标题栏分界连续、当前页标题更新；约 720/900/1000pt、浅深色和辅助功能设置下均可读且不遮挡 | E-35 完整自动门禁通过；整体验收按用户要求留到全部任务结束；macOS 26 实机待验 |
+| A5 | 切换宠物 | 本地宠物列表单击只选中，双击才切换；键盘选中后可用“切换”按钮；切换后动画、窗口和这只宠物的人格/记忆同步更新 | E-35 自动门禁通过；集中人工验收待执行 |
+| A6 | 导入 / 导出 | 文件面板或拖放导入；“从 Codex 导入”扫描入口始终可见、可预览候选，双击候选或选中后点按钮导入；重复 ID 明确确认覆盖；保存面板导出；删除有确认 | E-35 自动门禁通过；集中人工验收待执行 |
 | A7 | 状态协议 POST | `waiting`/`failed`/`review`/`running` 切换动画；message 显示气泡；TTL 回 base | 待实测 |
 | A8 | 状态协议 GET | `/health`、`/pets` 返回正确 | 待实测 |
 | A9 | 重启持久化 | 宠物、人格、缩放、位置写入 `config.json` 并保持 | 位置写入 smoke 通过；真实拖动重启待人工 |
 | A10 | 托盘隐藏 / 显示 / 退出 | 隐藏后窗口消失、可恢复；退出后进程真的结束 | 待实测 |
-| A11 | DeepSeek / Keychain | Base URL、模型、超时、token、温度、思考模式可保存；Keychain 密钥可保存/清除，重启仍可读；无 key 回落固定问候 | 自动接线通过；待实测 |
+| A11 | DeepSeek / Keychain | Base URL、模型、超时、token、温度、思考模式可保存；拉取模型时按钮显示“正在拉取…”并禁用，完成/失败后恢复，可手填模型；Keychain 密钥可保存/清除，重启仍可读；无 key 回落固定问候 | 自动接线通过；整体验收后复测 |
 | A12 | 设置 → 启动 → 开机自启动 | 勾选 / 取消会创建 / 移除 `~/Library/LaunchAgents/com.petsona.desktop.plist` | 原生服务 XCTest 隔离验证；真实设置控件/登录启动待实测 |
 
 ```bash
@@ -110,7 +111,7 @@ curl -XPOST http://127.0.0.1:17872/state \
 - [x] `cargo build --release` 通过；bundle 结构检查完成
 - [x] `scripts/package-macos.sh` 生成 `.app`（Info.plist、bundle id、图标、常规 zip）；本地包 ad-hoc 签名，不含 Developer ID / 公证
 - [x] `scripts/package-macos.sh` 生成包含 `.app` + `acceptance-data/` 的整体验收目录与干净初始数据 zip
-- [x] `LSUIElement = true`，默认不显示 Dock 图标
+- [x] `LSUIElement = true`，默认不显示 Dock 图标；打开设置时运行时切换为 Dock 可见，关闭后恢复
 - [x] `scripts/install-macos-launch-agent.sh` 安装 / 卸载 LaunchAgent
 - [x] `scripts/sign-macos.sh`、`scripts/notarize-macos.sh` 流程就绪（ad-hoc 签名验证过）
 - [x] `.github/workflows/release-macos.yml` tag / 手动触发运行完整原生门禁、对最终 dist 包 smoke，并以 `unsigned` 标记产物
