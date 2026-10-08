@@ -95,3 +95,38 @@
 - 托盘右键菜单（任务栏可见 + 收纳面板两种状态）、菜单打开设置窗；设置窗打字与中文 IME。
 - 真实穿透点击（透明处落桌面、宠物像素可点）与拖动手感目视。
 - macOS objc2 可行性（需 Mac）。
+
+
+## M1 执行记录（2026-10-08 接续）
+
+### 范围细化（「M1 骨架」的逐项 REQ）
+
+| REQ | 内容 | 结果 |
+|---|---|---|
+| M1-01 引擎接入 | `apps/desktop/src-tauri` 直接依赖 `petsona-runtime`（无 FFI）：worker 线程负责数据目录（`PETSONA_HOME`/默认）、日志（`logs/petsona.log`）、`petsona.lock` 单实例、配置与宠物加载 | 完成 |
+| M1-02 状态协议 | 由 runtime 绑定 `stateServer.port`（默认 17872）；`/health`、`/pets`、`/state`（TTL、非法状态 400、`action:clear`）与运行时状态联动 | 完成（隔离 home 用 17897/17898 验证） |
+| M1-03 托盘菜单 | 设置… / 显示-隐藏宠物 / 退出（Tauri tray-icon）。**细化说明**：宠物库/缩放/历史项在 M2/M3 拥有实际目标后加入，避免死菜单项（执行记录已标注，非静默缩减） | 完成（人工点验待补） |
+| M1-04 空库首启 | `ready && !has_pet` → 自动打开设置窗（一次性） | 完成 |
+| M1-05 浮层可见性 | 由 runtime 驱动：`ready && has_pet && pet_visible` 才显示；托盘显隐即时生效 | 完成 |
+| M1-06 退出与端口 | 托盘退出 / `--exit-after-ms` 走 `engine.stop()` + `app.exit(0)`；端口释放 | 完成 |
+
+### 命令证据（追加）
+
+| 证据ID/时间 | REQ | 环境 | 操作 | 结果 |
+|---|---|---|---|---|
+| E-M1-01 | M1-01 | WSL→Windows | `scripts/desktop-build-windows.ps1`（新增 petsona-runtime 路径依赖；workspace 继承正常） | exit 0 |
+| E-M1-02 | M1-01..06 | Windows | **`scripts/desktop-smoke.ps1` 完整运行（EXIT=0）**；隔离 homes `%TEMP%\petsona-smoke-pet`（v2 夹具宠物 + activePet）与 `petsona-smoke-empty`（无宠物），端口 17897/17898 | 全部分节通过 |
+| E-M1-02a | 启动 | 同上 | 启动计时 ×3（runtime 驱动，宠物可见） | 751 / 793 / 759 ms |
+| E-M1-02b | 样式/穿透/拖动/焦点 | 同上 | 样式 4 项全 True；穿透 transparent/opaque 均切换；拖动 attempt 2 成功 dx=100 dy=60（attempt 1 受真实鼠标干扰失败）；宠物前台=False | 通过 |
+| E-M1-02c | 单实例 | 同上 | 第二进程退出、存活 1 个、第一个实例 /health 正常 | 通过 |
+| E-M1-02d | 协议 | 同上 | /health（pet='TestPet'、pets=[test_fixture_v2]）、/pets 包含夹具、POST waiting→TTL→idle、非法状态 HTTP 400、action:clear 接受 | 通过 |
+| E-M1-02e | 退出 | 同上 | `--exit-after-ms 3000`：进程退出、17897 不再监听 | 通过 |
+| E-M1-02f | 空库首启 | 同上 | 设置窗自动可见、宠物窗隐藏、/health `pet` 为空 | 通过 |
+
+### 备注与偏差
+
+- 启动 0.75–0.88s（含 runtime 配置/宠物加载与真实呈现路径），高于旧 C# 热启动基线 ~0.55s；不阻塞 M1，列入 M6 性能收尾评估。
+- 第二实例当前**静默退出**（写日志）；旧壳的「故障/锁冲突提示气泡 + 3 秒退出」待 M2 气泡窗口就绪后补齐。
+- 合成拖动测试加固：最多 3 次重试 + 取离窗口中心最近的可点击像素；真实鼠标活动仍可能造成单次假失败（日志可辨）。
+- 新配置事实：隔离 home 的 `config.json` 端口键必须是 **`stateServer`**（camelCase）；写成 `state` 会被 serde 默认值忽略并回落 17872（M1 首跑即踩到，已在脚本中修正）。
+- 脚本演化：`desktop-m0-check.ps1` 更名为 `desktop-smoke.ps1`（保留 M0 检查并新增 M1 六节；`-SkipMouseChecks` 供鼠标忙时使用）。

@@ -4,56 +4,77 @@ mod logging;
 #[cfg(windows)]
 mod overlay;
 
+use std::sync::{Arc, Mutex};
+use std::thread;
+use std::time::Duration;
+
+use petsona_runtime::commands::RuntimeCommand;
+use petsona_runtime::engine::RuntimeEngine;
+use petsona_runtime::snapshot::RuntimeTextField;
 use tauri::{
-    menu::{Menu, MenuItem},
+    menu::{Menu, MenuItem, PredefinedMenuItem},
     tray::TrayIconBuilder,
-    Manager,
+    AppHandle, Manager,
 };
+
+/// The shell owns the runtime handle; the worker thread owns all disk and
+/// protocol state (same ownership split the old FFI exposed).
+type Engine = Arc<Mutex<RuntimeEngine>>;
 
 fn main() {
     logging::mark_start();
     logging::log("main: start");
 
-    // Dev/test flag: open the settings window immediately (used by M0 checks
-    // to verify foreground focus without driving the tray menu).
-    let show_settings = std::env::args().any(|arg| arg == "--show-settings");
+    let args: Vec<String> = std::env::args().collect();
+    let show_settings = args.iter().any(|arg| arg == "--show-settings");
+    let exit_after_ms = args
+        .iter()
+        .position(|arg| arg == "--exit-after-ms")
+        .and_then(|index| args.get(index + 1))
+        .and_then(|value| value.parse::<u64>().ok());
+
+    // The runtime worker resolves PETSONA_HOME (or the platform data dir),
+    // acquires petsona.lock, loads config/pets and binds the state protocol.
+    // A second instance fails the lock and surfaces as a faulted snapshot.
+    let engine: Engine = match RuntimeEngine::spawn(None, || {}) {
+        Ok(engine) => Arc::new(Mutex::new(engine)),
+        Err(error) => {
+            logging::log(&format!("main: cannot spawn the runtime worker: {error:#}"));
+            return;
+        }
+    };
+    logging::log("main: runtime worker spawned");
 
     #[cfg(windows)]
-    overlay::spawn();
+    overlay::spawn(Arc::clone(&engine));
 
+    let engine_for_setup = Arc::clone(&engine);
     tauri::Builder::default()
+        .on_window_event(|window, event| {
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                // Closing the settings window hides it; the shell keeps running
+                // with its pet and tray until the user quits from the tray.
+                api.prevent_close();
+                let _ = window.hide();
+            }
+        })
         .setup(move |app| {
-            let show = MenuItem::with_id(app, "show", "设置…", true, None::<&str>)?;
-            let quit = MenuItem::with_id(app, "quit", "退出", true, None::<&str>)?;
-            let menu = Menu::with_items(app, &[&show, &quit])?;
-
-            let icon = tauri::image::Image::from_bytes(include_bytes!(
-                "../../../../packaging/windows/Petsona.ico"
-            ))?;
-
-            TrayIconBuilder::with_id("petsona-tray")
-                .icon(icon)
-                .tooltip("Petsona")
-                .menu(&menu)
-                .show_menu_on_left_click(true)
-                .on_menu_event(|app, event| match event.id.as_ref() {
-                    "show" => {
-                        if let Some(window) = app.get_webview_window("settings") {
-                            let _ = window.show();
-                            let _ = window.set_focus();
-                        }
-                    }
-                    "quit" => app.exit(0),
-                    _ => {}
-                })
-                .build(app)?;
+            build_tray(app, Arc::clone(&engine_for_setup))?;
 
             if show_settings {
-                if let Some(window) = app.get_webview_window("settings") {
-                    let _ = window.show();
-                    let _ = window.set_focus();
-                    logging::log("tauri: settings window shown (--show-settings)");
-                }
+                show_settings_window(app.handle());
+                logging::log("tauri: settings window shown (--show-settings)");
+            }
+
+            start_watcher(app.handle().clone(), Arc::clone(&engine_for_setup));
+
+            if let Some(milliseconds) = exit_after_ms {
+                let handle = app.handle().clone();
+                let engine = Arc::clone(&engine_for_setup);
+                thread::spawn(move || {
+                    thread::sleep(Duration::from_millis(milliseconds));
+                    stop_and_exit(&handle, &engine);
+                });
             }
 
             logging::log("tauri: setup complete (tray ready)");
@@ -61,4 +82,96 @@ fn main() {
         })
         .run(tauri::generate_context!())
         .expect("error while running Petsona desktop shell");
+}
+
+fn build_tray(app: &mut tauri::App, engine: Engine) -> tauri::Result<()> {
+    let show = MenuItem::with_id(app, "show", "设置…", true, None::<&str>)?;
+    let toggle = MenuItem::with_id(app, "toggle", "显示 / 隐藏宠物", true, None::<&str>)?;
+    let separator = PredefinedMenuItem::separator(app)?;
+    let quit = MenuItem::with_id(app, "quit", "退出", true, None::<&str>)?;
+    let menu = Menu::with_items(app, &[&show, &toggle, &separator, &quit])?;
+
+    let icon = tauri::image::Image::from_bytes(include_bytes!(
+        "../../../../packaging/windows/Petsona.ico"
+    ))?;
+
+    let engine_for_menu = Arc::clone(&engine);
+    TrayIconBuilder::with_id("petsona-tray")
+        .icon(icon)
+        .tooltip("Petsona")
+        .menu(&menu)
+        .show_menu_on_left_click(true)
+        .on_menu_event(move |app, event| match event.id.as_ref() {
+            "show" => show_settings_window(app),
+            "toggle" => toggle_pet_visibility(&engine_for_menu),
+            "quit" => stop_and_exit(app, &engine_for_menu),
+            _ => {}
+        })
+        .build(app)?;
+    Ok(())
+}
+
+fn show_settings_window(app: &AppHandle) {
+    if let Some(window) = app.get_webview_window("settings") {
+        let _ = window.show();
+        let _ = window.set_focus();
+    }
+}
+
+fn toggle_pet_visibility(engine: &Engine) {
+    if let Ok(engine) = engine.lock() {
+        let visible = engine.snapshot().pet_visible;
+        let _ = engine.send(RuntimeCommand::SetVisibility(!visible));
+        logging::log(&format!("tray: pet visibility -> {}", !visible));
+    }
+}
+
+fn stop_and_exit(app: &AppHandle, engine: &Engine) {
+    logging::log("shell: quit requested");
+    if let Ok(mut engine) = engine.lock() {
+        engine.stop();
+    }
+    app.exit(0);
+}
+
+/// Watches the runtime snapshot: a faulted worker (second instance / fatal
+/// error) must not leave an inert process behind, and an empty pet library
+/// opens the settings window once, matching the old frontends.
+fn start_watcher(app: AppHandle, engine: Engine) {
+    thread::spawn(move || {
+        logging::log("watcher: started");
+        let mut settings_presented = false;
+        loop {
+            thread::sleep(Duration::from_millis(200));
+            let (faulted, error, ready, has_pet) = {
+                let Ok(engine) = engine.lock() else {
+                    return;
+                };
+                let snapshot = engine.snapshot();
+                (
+                    snapshot.faulted,
+                    engine.text(RuntimeTextField::Error),
+                    snapshot.ready,
+                    snapshot.has_pet,
+                )
+            };
+
+            if faulted {
+                if error.to_lowercase().contains("lock") {
+                    logging::log("watcher: another instance owns the data directory; exiting");
+                } else {
+                    logging::log(&format!("watcher: runtime faulted: {error}"));
+                }
+                app.exit(0);
+                return;
+            }
+
+            if ready && !has_pet && !settings_presented {
+                settings_presented = true;
+                logging::log("watcher: no pet loaded; opening the settings window");
+                let handle = app.clone();
+                let _ = app.run_on_main_thread(move || show_settings_window(&handle));
+            }
+        }
+    });
 }

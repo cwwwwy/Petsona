@@ -12,7 +12,9 @@
 use std::cell::RefCell;
 use std::ffi::c_void;
 use std::ptr;
-use std::sync::OnceLock;
+use std::sync::{Arc, Mutex, OnceLock};
+
+use petsona_runtime::engine::RuntimeEngine;
 
 use windows_sys::Win32::Foundation::{HWND, LPARAM, LRESULT, POINT, RECT, SIZE, WPARAM};
 use windows_sys::Win32::Graphics::Dwm::{
@@ -28,8 +30,8 @@ use windows_sys::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, DefWindowProcW, DispatchMessageW, GetCursorPos, GetMessageW,
     GetWindowLongPtrW, GetWindowRect, KillTimer, LoadCursorW, PostQuitMessage, RegisterClassExW,
     SetCursor, SetTimer, SetWindowLongPtrW, SetWindowPos, ShowWindow, TranslateMessage,
-    UpdateLayeredWindow, GWL_EXSTYLE, IDC_ARROW, MSG, SW_SHOWNOACTIVATE, SWP_NOACTIVATE,
-    SWP_NOSIZE, SWP_NOZORDER, ULW_ALPHA, WM_DESTROY, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEMOVE,
+    UpdateLayeredWindow, GWL_EXSTYLE, IDC_ARROW, MSG, SWP_NOACTIVATE, SWP_NOSIZE, SWP_NOZORDER,
+    SW_HIDE, SW_SHOWNOACTIVATE, ULW_ALPHA, WM_DESTROY, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEMOVE,
     WM_NCHITTEST, WM_SETCURSOR, WM_TIMER, WNDCLASSEXW, WS_EX_LAYERED, WS_EX_NOACTIVATE,
     WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_EX_TRANSPARENT, WS_POPUP,
 };
@@ -64,6 +66,8 @@ struct State {
     frames: Vec<Frame>,
     idle_union: Vec<bool>,
     index: usize,
+    engine: Arc<Mutex<RuntimeEngine>>,
+    /// Whether the pet window is currently shown (driven by the runtime).
     shown: bool,
     dragging: bool,
     moved: bool,
@@ -79,16 +83,16 @@ thread_local! {
 static CLASS_REGISTERED: OnceLock<bool> = OnceLock::new();
 
 /// Spawns the overlay thread. Idempotent per process for the spike.
-pub fn spawn() {
+pub fn spawn(engine: Arc<Mutex<RuntimeEngine>>) {
     let spawned = std::thread::Builder::new()
         .name("petsona-overlay".into())
-        .spawn(|| unsafe { thread_main() });
+        .spawn(move || unsafe { thread_main(engine) });
     if let Err(err) = spawned {
         log(&format!("overlay: thread spawn failed: {err}"));
     }
 }
 
-unsafe fn thread_main() {
+unsafe fn thread_main(engine: Arc<Mutex<RuntimeEngine>>) {
     let frames = match load_frames() {
         Ok(frames) => frames,
         Err(err) => {
@@ -110,10 +114,11 @@ unsafe fn thread_main() {
     apply_dwm_attributes(hwnd);
 
     let idle_union = union_masks(&frames);
-    let mut state = Box::new(State {
+    let state = Box::new(State {
         frames,
         idle_union,
         index: 0,
+        engine,
         shown: false,
         dragging: false,
         moved: false,
@@ -123,13 +128,11 @@ unsafe fn thread_main() {
     });
 
     present(hwnd, &state.frames[0]);
-    state.shown = true;
     STATE.with(|cell| *cell.borrow_mut() = Some(state));
 
-    ShowWindow(hwnd, SW_SHOWNOACTIVATE);
     SetTimer(hwnd, ANIM_TIMER, ANIM_INTERVAL_MS, None);
     SetTimer(hwnd, HIT_TIMER, HIT_INTERVAL_MS, None);
-    log("overlay: pet window shown");
+    log("overlay: pet window created (hidden until the runtime is ready)");
 
     let mut msg: MSG = std::mem::zeroed();
     while GetMessageW(&mut msg, ptr::null_mut(), 0, 0) > 0 {
@@ -220,14 +223,7 @@ unsafe fn present(hwnd: HWND, frame: &Frame) {
     };
 
     let mut bits: *mut c_void = ptr::null_mut();
-    let dib = CreateDIBSection(
-        mem_dc,
-        &info,
-        DIB_RGB_COLORS,
-        &mut bits,
-        ptr::null_mut(),
-        0,
-    );
+    let dib = CreateDIBSection(mem_dc, &info, DIB_RGB_COLORS, &mut bits, ptr::null_mut(), 0);
     if dib.is_null() || bits.is_null() {
         DeleteDC(mem_dc);
         ReleaseDC(ptr::null_mut(), screen_dc);
@@ -292,6 +288,7 @@ unsafe extern "system" fn wnd_proc(
                     state.index = (state.index + 1) % state.frames.len();
                     present(hwnd, &state.frames[state.index]);
                 } else if wparam == HIT_TIMER {
+                    sync_visibility(hwnd, state);
                     update_pass_through(hwnd, state);
                 }
                 Some(0)
@@ -402,6 +399,31 @@ unsafe fn on_nchittest(hwnd: HWND, state: &State, lparam: LPARAM) -> LRESULT {
         HIT_CLIENT
     } else {
         HIT_TRANSPARENT
+    }
+}
+
+/// Shows or hides the pet window from the runtime snapshot: ready + a loaded
+/// pet + `pet_visible` (the tray toggle) must all hold.
+unsafe fn sync_visibility(hwnd: HWND, state: &mut State) {
+    let (ready, has_pet, pet_visible) = {
+        let Ok(engine) = state.engine.lock() else {
+            return;
+        };
+        let snapshot = engine.snapshot();
+        (snapshot.ready, snapshot.has_pet, snapshot.pet_visible)
+    };
+    let want_visible = ready && has_pet && pet_visible;
+    if want_visible == state.shown {
+        return;
+    }
+    state.shown = want_visible;
+    if want_visible {
+        present(hwnd, &state.frames[state.index]);
+        ShowWindow(hwnd, SW_SHOWNOACTIVATE);
+        log("overlay: pet shown");
+    } else {
+        ShowWindow(hwnd, SW_HIDE);
+        log("overlay: pet hidden");
     }
 }
 

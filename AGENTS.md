@@ -51,7 +51,7 @@ cargo test --workspace          # core + runtime；状态协议测试需要绑�
 
 ## 跨对话工作流（规划 → 执行 → 审查）
 
-- 当前任务线：`desktop-shell-rust-ts`（P0 已提交 `1e3b5c1`；M0 自动对照通过，托盘人工与 macOS 可行性待补）。
+- 当前任务线：`desktop-shell-rust-ts`（P0 已提交 `1e3b5c1`、M0 已提交 `534d0f8`；M1 自动冒烟通过，托盘三项人工与 macOS 可行性待补）。
 - **规划**：只读调查，明确目标/非目标、逐文件增改删、约束、REQ 编号、依赖、验收矩阵、命令与完成条件；
   授权落盘后才写指定文档，不写产品代码。
 - **执行**：先复述关键目标与验收标准，再按计划实施；可作计划内局部实现选择，不得自行缩减功能、
@@ -65,12 +65,15 @@ cargo test --workspace          # core + runtime；状态协议测试需要绑�
 
 ## 当前状态（2026-10-08）
 
-- P0 清场已提交：`1e3b5c1`（删除 124 项 + 新增/重写文档与配置）；此后为 M0 批次（未提交）。
+- P0 `1e3b5c1`、M0 `534d0f8` 已提交；当前未提交为 M1 批次（runtime 接入 + 冒烟扩展）。
 - `crates/petsona-core` / `petsona-runtime` 门禁 **114/114**（core 86 / runtime 28）。
-- M0 已建成 `apps/desktop` 骨架（Tauri 2.12 + React/Vite/TS）：原生浮层窗口渲染测试夹具、托盘、`--show-settings`；
-  启动计时 346–485ms、样式/穿透切换/焦点自动对照通过；拖动经真实鼠标验证成功。
-- M0 待补：托盘右键菜单人工确认、真实穿透点击与观感、macOS objc2 可行性（需 Mac）。
-- 构建入口：`scripts/desktop-build-windows.ps1`（Windows）；检查脚本 `scripts/desktop-m0-check.ps1`、截图 `scripts/desktop-shot.ps1`。
+- M1：`apps/desktop` 直接依赖 `petsona-runtime`（无 FFI）——数据目录/`PETSONA_HOME`、日志、`petsona.lock` 单实例、
+  `stateServer.port` 协议（/health /pets /state + TTL/400/clear）、托盘（设置… / 显示-隐藏 / 退出）、
+  空库首启自动开设置、退出释放端口，均由 runtime 驱动；浮层可见性 = `ready && has_pet && pet_visible`。
+  `scripts/desktop-smoke.ps1` 完整冒烟 EXIT=0；启动（含 runtime 与宠物加载）**0.75–0.88s**。
+- M1 待人工：托盘三项菜单点验；真实宠物渲染仍为测试夹具（M2 切换为真实图集/缩放/注视/位置持久化）。
+- 构建入口：`scripts/desktop-build-windows.ps1`（Windows）；冒烟 `scripts/desktop-smoke.ps1`（`-SkipMouseChecks` 供鼠标忙时）；
+  截图 `scripts/desktop-shot.ps1`。
 - 旧世界验收知识已迁移：行为矩阵在 `docs/DESKTOP_VERIFICATION.md`，产品决策在计划文档「继承的产品决策」。
 - 发布目标：新壳首个正式版 `windows-v0.1.0`（旧 `0.1.0-rc.1` 未发布，作废）。
 
@@ -90,7 +93,8 @@ cargo test --workspace          # core + runtime；状态协议测试需要绑�
 - 数据目录：`%APPDATA%\Petsona` / `~/Library/Application Support/Petsona`，`PETSONA_HOME` 可覆盖。
 - 宠物库：只加载本地 `...\Petsona\pets`；`~/.codex/pets` 仅作为「从 Codex 导入」来源；
   **无内置宠物**，本地库为空时启动直接打开设置窗口；测试用自绘夹具 `crates/petsona-core/testdata/v2-test-pet`。
-- 配置：`config.json`；`window.startPosition` 为物理像素；缩放 0.5–2.0、吸附 7 档。
+- 配置：`config.json`；`window.startPosition` 为物理像素；缩放 0.5–2.0、吸附 7 档；
+  协议端口键为 **`stateServer.port`**（camelCase，默认 17872）——写错键会被 serde 默认值静默忽略。
 - 状态协议：`127.0.0.1:17872`，`POST /state`、`GET /health`、`GET /pets`；验收实例用独立端口（如 17873）。
 - 开机自启（Windows）：`HKCU\Software\Microsoft\Windows\CurrentVersion\Run` 的 `Petsona` 值；macOS 用 LaunchAgent（M5）。
 - 日志：数据目录 `logs/petsona.log`；单实例锁：`petsona.lock`。
@@ -119,7 +123,8 @@ cargo test --workspace          # core + runtime；状态协议测试需要绑�
 - **PowerShell ↔ P/Invoke 的 `$null` 陷阱**：传给字符串参数时 `$null` 会被编组成**空串**（如 `FindWindowW` 变成找空标题窗口）；
   要传 `[NullString]::Value`。
 - **合成鼠标测试会被真实鼠标污染**：`SetCursorPos`/`mouse_event` 期间必须保持鼠标空闲；真实拖动轨迹是 1px 级高频移动，
-  可在日志中与合成测试（大步长）区分。
+  可在日志中与合成测试（大步长）区分。拖动测试应取**离窗口中心最近的可点击像素并允许重试**——
+  边缘像素会被轻微漂移变成穿透点击。
 - **WSL 起来的 PowerShell 会污染 `PATHEXT`**：新脚本开头恢复 Windows 默认值，否则命令静默失败。
 - **PowerShell 5.1** 含中文的 `.ps1` 必须 UTF-8 BOM；`Compress-Archive` 反斜杠问题用 `ZipFile::CreateFromDirectory` 规避。
 - **macOS 代码必须在 Mac 上验证**：objc2/AppKit 改动在 Windows/Linux 只能审查，不能算通过。

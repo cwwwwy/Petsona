@@ -14,7 +14,11 @@ pub fn log(message: &str) {
     let elapsed = START.get().map(|t| t.elapsed().as_millis()).unwrap_or(0);
     let line = format!("[+{elapsed}ms] {message}\n");
     let path = std::env::temp_dir().join("petsona-desktop.log");
-    if let Ok(mut file) = std::fs::OpenOptions::new().create(true).append(true).open(&path) {
+    if let Ok(mut file) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&path)
+    {
         let _ = file.write_all(line.as_bytes());
     }
     #[cfg(debug_assertions)]
