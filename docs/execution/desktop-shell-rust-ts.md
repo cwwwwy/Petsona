@@ -6,7 +6,7 @@
 - 用户执行授权 / 日期 / 对话标识：2026-10-08 用户回复“开始”（授权 P0 清场 + M0）；此前同日确认 Rust+TS 方向并明确“与最新目标无关的旧代码和文件可以完全摈弃”。
 - HEAD、分支、相关dirty/untracked文件和已有用户改动：`main` @ `6bca241`（**旧世界完整快照**，工作区干净）；本轮直接在 `main` 上执行 P0。
 - 关键目标与验收复述：提取产品行为规格 → 删除旧前端/FFI/旧脚本/旧文档 → workspace 收为 core+runtime → 重写根文档与 CI → 门禁通过；随后进入 M0（Tauri 骨架 + 六项浮层对照 + macOS 可行性）。
-- 本次实际状态：**P0 实施完成（未提交，待用户提交）；M0 未开始**。
+- 本次实际状态：**P0 已提交（`1e3b5c1`）；M0 自动对照已取得数据（透明/穿透/拖动/焦点/启动计时），托盘菜单与观感待人工，macOS 可行性待 Mac。**
 
 ## 要求与文件
 
@@ -51,3 +51,47 @@
 - 旧世界参照方法（只读）：`git show 6bca241:apps/windows/...`、`git show 6bca241:docs/WINDOWS_VERIFICATION.md` 等；不恢复死代码到工作树。
 - Git操作是否发生（默认无）：无。用户提交命令见本轮交付说明。
 - 完成判定及对应证据：P0 自动门禁通过（E-D02–E-D04b）；M0 未开始，整体迁移未完成。
+
+
+## M0 执行记录（2026-10-08 接续）
+
+### 范围与结果
+
+| REQ | 结果 | 证据 |
+|---|---|---|
+| REQ-S01 骨架 | `apps/desktop`（Tauri 2.12 + React 18 + Vite 6 + TS）构建成功，空设置窗可开合 | E-M0-02/03 |
+| REQ-S02 原生宠物窗 | `WS_EX_LAYERED` + `UpdateLayeredWindow` 渲染夹具精灵；透明背景截图目检通过 | E-M0-05/09 |
+| REQ-S03 穿透与光标 | `WS_EX_TRANSPARENT` 在透明/不透明像素间正确切换；`WM_NCHITTEST` 返回 `HTTRANSPARENT`；类光标为箭头 | E-M0-06 |
+| REQ-S04 焦点 | 宠物窗始终不为前台；`--show-settings` 时设置窗取得前台 | E-M0-07 |
+| REQ-S05 托盘 | **待人工**：任务栏/收纳面板右键菜单、设置项打开设置窗 | 待人工 |
+| REQ-S06 启动耗时 | 3 次实测 485 / 356 / 346 ms（旧基线：热 ~550ms / 冷 ~3200ms），不劣化 | E-M0-04 |
+| REQ-S07 macOS 可行性 | **未开始**（需 Mac 环境） | — |
+| REQ-S08 决策结论 | 六项中五项已获证据且无阻断问题；待托盘人工确认后关闭 M0 | 本文 |
+
+### 命令证据（追加）
+
+| 证据ID/时间 | REQ | 环境 | 命令/操作 | 结果 |
+|---|---|---|---|---|
+| E-M0-01 | 环境 | Windows | `node --version` / `pnpm --version` / WebView2 注册表 / rustup toolchain list / vswhere | node v24.19.0、pnpm 12.3.4、WebView2 154.0.4258.62、Rust 1.98.0-msvc（`.rustup` 直调）+ VS BuildTools 18 |
+| E-M0-02 | S01 | WSL | `cd apps/desktop && pnpm install && pnpm build` | exit 0；tsc + vite 构建 27 模块；`pnpm-workspace.yaml allowBuilds: esbuild`（pnpm 11 新设置） |
+| E-M0-03 | S01 | Windows | `scripts/desktop-build-windows.ps1`（vcvars 导入 + 工具链直调 + 本地 `CARGO_TARGET_DIR`） | exit 0；产物 `C:\Users\happyddz\petsona-build\desktop-target\debug\petsona-desktop.exe` |
+| E-M0-04 | S06 | Windows | `desktop-m0-check.ps1` 启动计时 ×3 | 485 / 356 / 346 ms（Start-Process → 宠物窗可见） |
+| E-M0-05 | S02 | Windows | 同上，读取窗口 ex-style | LAYERED / TOOLWINDOW / TOPMOST / NOACTIVATE 全部 True |
+| E-M0-06 | S03 | Windows | 同上，网格采样 + 样式读取 | transparent=True 与 opaque=True 均观察到（切换生效） |
+| E-M0-07 | S04 | Windows | 同上 + `--show-settings` | 宠物前台=False；设置窗可见且前台=True |
+| E-M0-08 | S02/S03 | Windows | 合成拖动与真实拖动 | 合成输入受**真实鼠标活动干扰**多次未命中（记录了失败）；随后真实鼠标拖动成功：日志显示窗口 (420,260)→(1246,415) 平滑跟随、drag started/ended 完整 |
+| E-M0-09 | S02 | Windows | `scripts/desktop-shot.ps1` 截图 `%TEMP%\petsona-m0-shot.png` | 透明背景、无白底、无边框；桌面内容透过窗口可见 |
+
+### M0 修复的缺陷
+
+| # | 现象 | 根因 | 修复 |
+|---|---|---|---|
+| 1 | 应用启动即崩溃（exit 0xC0000409） | `SetWindowLongPtrW` 修改样式时同步投递 `WM_STYLECHANGED` 重入窗口过程，`RefCell` 二次借用 panic；panic 跨 `extern "system"` 直接终止进程 | 窗口过程改用 `try_borrow_mut`，重入消息回退 `DefWindowProcW`（`overlay.rs`） |
+| 2 | 检查脚本始终找不到宠物窗 | PowerShell 将 `$null` 字符串参数编组为**空串**，`FindWindowW` 变成“查找标题为空的窗口” | 脚本改用 `[NullString]::Value` 传真实 NULL；加注释防止复发 |
+| 3 | 合成鼠标测试结果不稳定 | 真实鼠标活动与 `SetCursorPos/mouse_event` 冲突（用户在场操作） | 记录区分（真实拖动为 1px 级高频轨迹）；后续自动化测试需在鼠标空闲时执行 |
+
+### 待人工/后续
+
+- 托盘右键菜单（任务栏可见 + 收纳面板两种状态）、菜单打开设置窗；设置窗打字与中文 IME。
+- 真实穿透点击（透明处落桌面、宠物像素可点）与拖动手感目视。
+- macOS objc2 可行性（需 Mac）。

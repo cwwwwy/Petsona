@@ -51,7 +51,7 @@ cargo test --workspace          # core + runtime；状态协议测试需要绑�
 
 ## 跨对话工作流（规划 → 执行 → 审查）
 
-- 当前任务线：`desktop-shell-rust-ts`（P0 清场完成，M0 技术验证待启动）。
+- 当前任务线：`desktop-shell-rust-ts`（P0 已提交 `1e3b5c1`；M0 自动对照通过，托盘人工与 macOS 可行性待补）。
 - **规划**：只读调查，明确目标/非目标、逐文件增改删、约束、REQ 编号、依赖、验收矩阵、命令与完成条件；
   授权落盘后才写指定文档，不写产品代码。
 - **执行**：先复述关键目标与验收标准，再按计划实施；可作计划内局部实现选择，不得自行缩减功能、
@@ -65,10 +65,12 @@ cargo test --workspace          # core + runtime；状态协议测试需要绑�
 
 ## 当前状态（2026-10-08）
 
-- HEAD 以只读查询为准；P0 清场批次尚未提交（删除 124 项 + 新增/重写文档与配置）。
-- 唯一保留的代码：`crates/petsona-core`、`crates/petsona-runtime`；门禁 **114/114**（core 86 / runtime 28）。
-- 下一步 M0：`apps/desktop` 骨架 → 六项浮层量化对照（透明、穿透、拖动帧、焦点、托盘、启动耗时）
-  → macOS objc2 极小可行性 → 决策结论。
+- P0 清场已提交：`1e3b5c1`（删除 124 项 + 新增/重写文档与配置）；此后为 M0 批次（未提交）。
+- `crates/petsona-core` / `petsona-runtime` 门禁 **114/114**（core 86 / runtime 28）。
+- M0 已建成 `apps/desktop` 骨架（Tauri 2.12 + React/Vite/TS）：原生浮层窗口渲染测试夹具、托盘、`--show-settings`；
+  启动计时 346–485ms、样式/穿透切换/焦点自动对照通过；拖动经真实鼠标验证成功。
+- M0 待补：托盘右键菜单人工确认、真实穿透点击与观感、macOS objc2 可行性（需 Mac）。
+- 构建入口：`scripts/desktop-build-windows.ps1`（Windows）；检查脚本 `scripts/desktop-m0-check.ps1`、截图 `scripts/desktop-shot.ps1`。
 - 旧世界验收知识已迁移：行为矩阵在 `docs/DESKTOP_VERIFICATION.md`，产品决策在计划文档「继承的产品决策」。
 - 发布目标：新壳首个正式版 `windows-v0.1.0`（旧 `0.1.0-rc.1` 未发布，作废）。
 
@@ -111,6 +113,13 @@ cargo test --workspace          # core + runtime；状态协议测试需要绑�
   “像素级穿透”与“零闪烁”需要权衡；旧实现的取舍落在 `git show 6bca241:apps/windows/...` 可查。
 - **逐像素浮层实现参照**：`WS_EX_LAYERED` + `UpdateLayeredWindow`（旧 `LayeredPresenter.cs`），新壳 Rust 移植以此为参照。
 - **协议 socket 非阻塞继承**：`accept()` 后要显式恢复阻塞，否则偶发空响应；core 已有回归测试。
+- **窗口过程可被同步重入**：`SetWindowLongPtrW`（样式变化）、`SetWindowPos` 等会同步投递消息回到窗口过程；
+  持有状态的借用时重入会 panic，而 panic 跨 `extern "system"` 会直接终止进程。窗口过程内用 `try_borrow` 防御，
+  重入消息交 `DefWindowProcW`。
+- **PowerShell ↔ P/Invoke 的 `$null` 陷阱**：传给字符串参数时 `$null` 会被编组成**空串**（如 `FindWindowW` 变成找空标题窗口）；
+  要传 `[NullString]::Value`。
+- **合成鼠标测试会被真实鼠标污染**：`SetCursorPos`/`mouse_event` 期间必须保持鼠标空闲；真实拖动轨迹是 1px 级高频移动，
+  可在日志中与合成测试（大步长）区分。
 - **WSL 起来的 PowerShell 会污染 `PATHEXT`**：新脚本开头恢复 Windows 默认值，否则命令静默失败。
 - **PowerShell 5.1** 含中文的 `.ps1` 必须 UTF-8 BOM；`Compress-Archive` 反斜杠问题用 `ZipFile::CreateFromDirectory` 规避。
 - **macOS 代码必须在 Mac 上验证**：objc2/AppKit 改动在 Windows/Linux 只能审查，不能算通过。

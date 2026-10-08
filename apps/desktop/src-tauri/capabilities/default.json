@@ -1,0 +1,6 @@
+{
+  "identifier": "default",
+  "description": "Capability for the settings window (content UI).",
+  "windows": ["settings"],
+  "permissions": ["core:default"]
+}
