@@ -48,7 +48,17 @@ const CLASS_NAME: &str = "PetsonaPetWindow";
 const VISUAL_TIMER: usize = 1;
 const HIT_TIMER: usize = 2;
 const VISUAL_INTERVAL_MS: u32 = 33;
-const HIT_INTERVAL_MS: u32 = 50;
+const HIT_INTERVAL_MS: u32 = 16;
+/// Gaze ellipse: enter margin 80% / exit margin 100% of the short side, and
+/// a 35% centre dead zone (ported from `GazeFilter.cs`, git 6bca241).
+const GAZE_ENTER_MARGIN: f32 = 0.80;
+const GAZE_EXIT_MARGIN: f32 = 1.00;
+const GAZE_DEAD_ZONE: f32 = 0.35;
+/// Official 16-direction mapping with angular hysteresis (ported from
+/// `GazeStabilizer.cs`, git 6bca241).
+const GAZE_STEP_DEGREES: f32 = 22.5;
+const GAZE_HYSTERESIS_DEGREES: f32 = 7.0;
+const GAZE_MIN_MOVEMENT_PX: f32 = 2.0;
 const ALPHA_THRESHOLD: u8 = 13;
 const DRAG_THRESHOLD: i32 = 4;
 const FRAME_CACHE_LIMIT: usize = 256;
@@ -89,6 +99,9 @@ struct State {
     drag_cursor: (i32, i32),
     drag_offset: (i32, i32),
     transparent: Option<bool>,
+    gaze_active: bool,
+    gaze_direction: i32,
+    gaze_last: (f32, f32),
 }
 
 thread_local! {
@@ -133,6 +146,9 @@ unsafe fn thread_main(engine: Arc<Mutex<RuntimeEngine>>) {
         drag_cursor: (0, 0),
         drag_offset: (0, 0),
         transparent: None,
+        gaze_active: false,
+        gaze_direction: -1,
+        gaze_last: (0.0, 0.0),
     });
     STATE.with(|cell| *cell.borrow_mut() = Some(state));
 
@@ -232,6 +248,7 @@ unsafe extern "system" fn wnd_proc(
                     refresh(hwnd, state);
                 } else if wparam == HIT_TIMER {
                     update_pass_through(hwnd, state);
+                    update_gaze(hwnd, state);
                 }
                 Some(0)
             }
@@ -785,7 +802,132 @@ unsafe fn on_nchittest(hwnd: HWND, state: &State, lparam: LPARAM) -> LRESULT {
     }
 }
 
-/// 50 ms poll toggling `WS_EX_TRANSPARENT` so transparent pixels pass clicks
+/// Samples the global cursor at 16 ms and drives the runtime gaze target with
+/// the stabilized official direction. Mirrors `AppController.SampleGaze`.
+unsafe fn update_gaze(hwnd: HWND, state: &mut State) {
+    if !state.visible || state.dragging {
+        clear_gaze(state);
+        return;
+    }
+    let Some((_, width, height)) = state.rendered else {
+        clear_gaze(state);
+        return;
+    };
+
+    let mut cursor: POINT = std::mem::zeroed();
+    if GetCursorPos(&mut cursor) == 0 {
+        return;
+    }
+    let mut rect: RECT = std::mem::zeroed();
+    if GetWindowRect(hwnd, &mut rect) == 0 {
+        return;
+    }
+
+    let width = width as f32;
+    let height = height as f32;
+    let dx = cursor.x as f32 - (rect.left as f32 + width / 2.0);
+    let dy = cursor.y as f32 - (rect.top as f32 + height / 2.0);
+
+    if !gaze_inside(dx, dy, width, height, state.gaze_active)
+        || gaze_in_dead_zone(dx, dy, width, height)
+    {
+        clear_gaze(state);
+        return;
+    }
+
+    let direction = gaze_stabilize(state, dx, dy);
+    let (unit_x, unit_y) = gaze_unit_vector(direction);
+    if let Ok(engine) = state.engine.lock() {
+        let _ = engine.send(RuntimeCommand::SetGazeTarget {
+            dx: unit_x,
+            dy: unit_y,
+        });
+    }
+    state.gaze_active = true;
+}
+
+/// Sends `ClearGaze` only when a target is currently held, then resets the
+/// stabilizer (a fresh approach must not inherit stale hysteresis).
+fn clear_gaze(state: &mut State) {
+    if state.gaze_active {
+        if let Ok(engine) = state.engine.lock() {
+            let _ = engine.send(RuntimeCommand::ClearGaze);
+        }
+        state.gaze_active = false;
+    }
+    state.gaze_direction = -1;
+    state.gaze_last = (0.0, 0.0);
+}
+
+fn gaze_inside(dx: f32, dy: f32, width: f32, height: f32, was_active: bool) -> bool {
+    let short = width.min(height);
+    let margin = short
+        * if was_active {
+            GAZE_EXIT_MARGIN
+        } else {
+            GAZE_ENTER_MARGIN
+        };
+    let radius_x = width * 0.5 + margin;
+    let radius_y = height * 0.5 + margin;
+    if radius_x <= 0.0 || radius_y <= 0.0 {
+        return false;
+    }
+    (dx * dx) / (radius_x * radius_x) + (dy * dy) / (radius_y * radius_y) <= 1.0
+}
+
+fn gaze_in_dead_zone(dx: f32, dy: f32, width: f32, height: f32) -> bool {
+    let dead_zone = width.min(height) * GAZE_DEAD_ZONE;
+    (dx * dx + dy * dy).sqrt() <= dead_zone
+}
+
+fn gaze_stabilize(state: &mut State, dx: f32, dy: f32) -> i32 {
+    let raw = gaze_quantize(dx, dy);
+    if state.gaze_direction < 0 {
+        state.gaze_direction = raw;
+        state.gaze_last = (dx, dy);
+        return raw;
+    }
+
+    let move_x = dx - state.gaze_last.0;
+    let move_y = dy - state.gaze_last.1;
+    if move_x * move_x + move_y * move_y < GAZE_MIN_MOVEMENT_PX * GAZE_MIN_MOVEMENT_PX {
+        return state.gaze_direction;
+    }
+    state.gaze_last = (dx, dy);
+
+    let held_angle = state.gaze_direction as f32 * GAZE_STEP_DEGREES;
+    let delta = normalize_signed(gaze_angle_degrees(dx, dy) - held_angle);
+    if delta.abs() > GAZE_STEP_DEGREES / 2.0 + GAZE_HYSTERESIS_DEGREES {
+        state.gaze_direction = raw;
+    }
+    state.gaze_direction
+}
+
+fn gaze_angle_degrees(dx: f32, dy: f32) -> f32 {
+    (dx.atan2(-dy).to_degrees() + 360.0) % 360.0
+}
+
+fn gaze_quantize(dx: f32, dy: f32) -> i32 {
+    ((gaze_angle_degrees(dx, dy) / GAZE_STEP_DEGREES).round() as i32).rem_euclid(16)
+}
+
+fn gaze_unit_vector(direction: i32) -> (f32, f32) {
+    let normalized = direction.rem_euclid(16) as f32;
+    let radians = normalized * GAZE_STEP_DEGREES * std::f32::consts::PI / 180.0;
+    (radians.sin(), -radians.cos())
+}
+
+fn normalize_signed(degrees: f32) -> f32 {
+    let mut value = degrees % 360.0;
+    if value > 180.0 {
+        value -= 360.0;
+    } else if value < -180.0 {
+        value += 360.0;
+    }
+    value
+}
+
+/// 16 ms poll toggling `WS_EX_TRANSPARENT` so transparent pixels pass clicks
 /// through to whatever is underneath (cross-process HTTRANSPARENT alone is not
 /// reliable).
 unsafe fn update_pass_through(hwnd: HWND, state: &mut State) {

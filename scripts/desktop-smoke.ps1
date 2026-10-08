@@ -1,25 +1,28 @@
 # Petsona desktop smoke checks (Windows, run on the real desktop).
 #
-# M0 + M1 coverage:
-#   1. startup timing (start -> pet window visible, runtime-driven)
-#   2. pet window ex-styles / pass-through toggling / focus (mouse parts optional)
-#   3. single instance: a second process exits, only one shell remains
-#   4. state protocol: /health, /pets, /state TTL, invalid state, action:clear
-#   5. graceful exit releases the state port
-#   6. empty pet library opens the settings window and hides the pet
+# POLICY: this script never moves the cursor or injects mouse input. Pass-through
+# clicks, dragging, clamping and cursor-shape checks are MANUAL items for the
+# user (see docs/DESKTOP_VERIFICATION.md section A and the checklist printed at
+# the end of this script).
 #
-# NOTE: mouse sections move the real cursor; do not touch the mouse while they run.
+# Coverage:
+#   1. startup timing (start -> pet window visible, runtime-driven)
+#   2. window ex-styles + position restore + geometry (scale x DPI) + animation
+#   3. focus: the pet never becomes the foreground window; --show-settings does
+#   4. single instance: a second process exits, only one shell remains
+#   5. state protocol: /health, /pets, /state TTL, invalid state, action:clear
+#   6. graceful exit releases the state port
+#   7. empty pet library opens the settings window and hides the pet
+#
 # Usage (Windows PowerShell):
 #   powershell -ExecutionPolicy Bypass -File scripts\desktop-smoke.ps1
-#   powershell -ExecutionPolicy Bypass -File scripts\desktop-smoke.ps1 -SkipMouseChecks
 
 param(
   [string]$Exe = "$env:USERPROFILE\petsona-build\desktop-target\debug\petsona-desktop.exe",
   [string]$RepoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path,
   [int]$PetPort = 17897,
   [int]$EmptyPort = 17898,
-  [int]$StartupRuns = 3,
-  [switch]$SkipMouseChecks
+  [int]$StartupRuns = 3
 )
 
 $ErrorActionPreference = 'Stop'
@@ -49,16 +52,10 @@ public static class SmokeNative
     public static extern uint GetDpiForWindow(IntPtr hWnd);
 
     [DllImport("user32.dll")]
-    public static extern bool SetCursorPos(int X, int Y);
-
-    [DllImport("user32.dll")]
     public static extern IntPtr GetForegroundWindow();
 
     [DllImport("user32.dll")]
     public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint lpdwProcessId);
-
-    [DllImport("user32.dll")]
-    public static extern void mouse_event(uint dwFlags, int dx, int dy, uint dwData, UIntPtr dwExtraInfo);
 
     public struct RECT { public int Left; public int Top; public int Right; public int Bottom; }
 
@@ -70,13 +67,10 @@ public static class SmokeNative
 }
 '@
 
-$WS_EX_TRANSPARENT = 0x00000020
 $WS_EX_TOOLWINDOW  = 0x00000080
 $WS_EX_TOPMOST     = 0x00000008
 $WS_EX_LAYERED     = 0x00080000
 $WS_EX_NOACTIVATE  = 0x08000000
-$MOUSEEVENTF_LEFTDOWN = 0x0002
-$MOUSEEVENTF_LEFTUP   = 0x0004
 
 $homePet = Join-Path $env:TEMP 'petsona-smoke-pet'
 $homeEmpty = Join-Path $env:TEMP 'petsona-smoke-empty'
@@ -176,26 +170,28 @@ for ($run = 1; $run -le $StartupRuns; $run++) {
     Stop-Petsona
 }
 
-# ---------------- 2. styles / pass-through / focus ----------------
-Write-Host '== window styles / pass-through / focus =='
-# Drop any remembered position so the drag test proves a fresh save.
-$configPetNoPosition = '{"stateServer":{"port":' + $PetPort + '},"activePet":"test_fixture_v2","firstRun":false,"window":{"scale":1.5}}'
-[IO.File]::WriteAllText((Join-Path $homePet 'config.json'), $configPetNoPosition)
+# ---------------- 2. styles / position restore / geometry / animation ----------------
+Write-Host '== window styles / position restore / geometry / animation =='
+# Known remembered position: the pet must appear exactly there before we assert
+# anything else (clamped only if it would fall outside the work area).
+$configPetPositioned = '{"stateServer":{"port":' + $PetPort + '},"activePet":"test_fixture_v2","firstRun":false,"window":{"scale":1.5,"startPosition":{"x":200.0,"y":200.0,"displayId":null,"backingScale":1.0}}}'
+[IO.File]::WriteAllText((Join-Path $homePet 'config.json'), $configPetPositioned)
+
 $null = Start-Process -FilePath $Exe -PassThru
-$visibleMs = Wait-PetVisible 20000
-if (-not $visibleMs) { throw 'pet window not found within 20s' }
+if (-not (Wait-PetVisible 20000)) { throw 'pet window not found within 20s' }
 $hwnd = Get-PetWindow
+
+$rect = New-Object SmokeNative+RECT
+[void][SmokeNative]::GetWindowRect($hwnd, [ref]$rect)
+$width = $rect.Right - $rect.Left
+$height = $rect.Bottom - $rect.Top
+Write-Host ("  position restore: expected=(200,200) actual=({0},{1})" -f $rect.Left, $rect.Top)
 
 $style = [SmokeNative]::GetExStyle($hwnd)
 Write-Host ("  WS_EX_LAYERED    : {0}" -f (($style -band $WS_EX_LAYERED) -ne 0))
 Write-Host ("  WS_EX_TOOLWINDOW : {0}" -f (($style -band $WS_EX_TOOLWINDOW) -ne 0))
 Write-Host ("  WS_EX_TOPMOST    : {0}" -f (($style -band $WS_EX_TOPMOST) -ne 0))
 Write-Host ("  WS_EX_NOACTIVATE : {0}" -f (($style -band $WS_EX_NOACTIVATE) -ne 0))
-
-$rect = New-Object SmokeNative+RECT
-[void][SmokeNative]::GetWindowRect($hwnd, [ref]$rect)
-$width = $rect.Right - $rect.Left
-$height = $rect.Bottom - $rect.Top
 
 # geometry: the runtime reports the canonical V2 cell (192x208) for any V2
 # pet, config scale is 1.5, and the shell clamps DPI to >= 1.0
@@ -205,8 +201,7 @@ $expectedW = [int][Math]::Round(192 * 1.5 * $dpiScale)
 $expectedH = [int][Math]::Round(208 * 1.5 * $dpiScale)
 Write-Host ("  geometry: dpi={0} expected={1}x{2} actual={3}x{4}" -f $dpi, $expectedW, $expectedH, $width, $height)
 
-# animation: the runtime advances sprite_index; capture a few frames and
-# require at least two distinct images
+# animation: the runtime advances sprite_index; screenshots (no cursor input)
 $hashes = @()
 for ($frame = 1; $frame -le 14; $frame++) {
     $shot = Join-Path $env:TEMP ("petsona-smoke-anim{0}.png" -f $frame)
@@ -216,119 +211,6 @@ for ($frame = 1; $frame -le 14; $frame++) {
 }
 $distinct = ($hashes | Sort-Object -Unique | Measure-Object).Count
 Write-Host ("  animation distinct frames over 14 samples: {0}  (expected >1)" -f $distinct)
-
-$sawTransparent = $false
-$sawOpaque = $false
-$opaquePoint = $null
-if (-not $SkipMouseChecks) {
-    for ($ix = 1; $ix -le 7; $ix++) {
-        for ($iy = 1; $iy -le 7; $iy++) {
-            $x = [int]($rect.Left + $width * $ix / 8.0)
-            $y = [int]($rect.Top + $height * $iy / 8.0)
-            [void][SmokeNative]::SetCursorPos($x, $y)
-            Start-Sleep -Milliseconds 100
-            $s = [SmokeNative]::GetExStyle($hwnd)
-            if (($s -band $WS_EX_TRANSPARENT) -ne 0) {
-                $sawTransparent = $true
-            } else {
-                $sawOpaque = $true
-                if (-not $opaquePoint) { $opaquePoint = @($x, $y) }
-            }
-        }
-    }
-    Write-Host ("  pass-through toggling: transparent={0} opaque={1}" -f $sawTransparent, $sawOpaque)
-
-    Write-Host '== drag test =='
-    # Real mouse activity can steal the cursor between our SetCursorPos and the
-    # synthetic press; re-find a clickable point and retry a few times.
-    $dragMoved = $false
-    for ($attempt = 1; $attempt -le 3 -and -not $dragMoved; $attempt++) {
-        $current = New-Object SmokeNative+RECT
-        [void][SmokeNative]::GetWindowRect($hwnd, [ref]$current)
-        $cw = $current.Right - $current.Left
-        $ch = $current.Bottom - $current.Top
-        # Sample a grid and press the clickable pixel nearest the window
-        # centre: a few pixels of real-mouse drift around an edge pixel would
-        # otherwise turn the press into a pass-through click.
-        $candidates = @()
-        for ($ix = 2; $ix -le 6; $ix++) {
-            for ($iy = 2; $iy -le 6; $iy++) {
-                $x = [int]($current.Left + $cw * $ix / 8.0)
-                $y = [int]($current.Top + $ch * $iy / 8.0)
-                [void][SmokeNative]::SetCursorPos($x, $y)
-                Start-Sleep -Milliseconds 120
-                if ((([SmokeNative]::GetExStyle($hwnd)) -band $WS_EX_TRANSPARENT) -eq 0) { $candidates += ,@($x, $y) }
-            }
-        }
-        if ($candidates.Count -eq 0) { Write-Host ("  attempt {0}: no clickable point found" -f $attempt); continue }
-        $centreX = $current.Left + $cw / 2.0
-        $centreY = $current.Top + $ch / 2.0
-        $point = $candidates | Sort-Object { [Math]::Pow($_[0] - $centreX, 2) + [Math]::Pow($_[1] - $centreY, 2) } | Select-Object -First 1
-
-        [void][SmokeNative]::SetCursorPos($point[0], $point[1])
-        Start-Sleep -Milliseconds 150
-        if ((([SmokeNative]::GetExStyle($hwnd)) -band $WS_EX_TRANSPARENT) -ne 0) {
-            Write-Host ("  attempt {0}: point went transparent before press (cursor stolen?)" -f $attempt)
-            continue
-        }
-
-        $before = New-Object SmokeNative+RECT
-        [void][SmokeNative]::GetWindowRect($hwnd, [ref]$before)
-        [SmokeNative]::mouse_event($MOUSEEVENTF_LEFTDOWN, 0, 0, 0, [UIntPtr]::Zero)
-        Start-Sleep -Milliseconds 80
-        for ($step = 1; $step -le 5; $step++) {
-            [void][SmokeNative]::SetCursorPos($point[0] + 20 * $step, $point[1] + 12 * $step)
-            Start-Sleep -Milliseconds 40
-        }
-        [SmokeNative]::mouse_event($MOUSEEVENTF_LEFTUP, 0, 0, 0, [UIntPtr]::Zero)
-        Start-Sleep -Milliseconds 250
-        $after = New-Object SmokeNative+RECT
-        [void][SmokeNative]::GetWindowRect($hwnd, [ref]$after)
-        $dx = $after.Left - $before.Left
-        $dy = $after.Top - $before.Top
-        Write-Host ("  attempt {0}: moved dx={1} dy={2}  (expected ~100/~60)" -f $attempt, $dx, $dy)
-        # Any real movement proves the capture/move path; a live mouse can steal
-        # the cursor mid-drag so the full 100px is not a hard requirement.
-        if (([Math]::Abs($dx) + [Math]::Abs($dy)) -ge 8) { $dragMoved = $true }
-    }
-    $dragResult = if ($dragMoved) { 'MOVED' } else { 'NO MOVEMENT [WARN: likely real-mouse interference]' }
-    Write-Host ("  drag result: {0}" -f $dragResult)
-
-    if ($dragMoved) {
-        # the drag end sends SetPosition; the worker persists startPosition
-        $configPath = Join-Path $homePet 'config.json'
-        $saved = $null
-        for ($wait = 1; $wait -le 10 -and -not $saved; $wait++) {
-            Start-Sleep -Milliseconds 200
-            try {
-                $config = Get-Content -LiteralPath $configPath -Raw | ConvertFrom-Json
-                if ($config.window.startPosition) { $saved = $config.window.startPosition }
-            } catch {}
-        }
-        if ($saved) {
-            Write-Host ("  position saved: {0},{1}" -f $saved.x, $saved.y)
-            Stop-Petsona
-            $null = Start-Process -FilePath $Exe -PassThru
-            if (Wait-PetVisible 20000) {
-                $hwnd2 = Get-PetWindow
-                $restored = New-Object SmokeNative+RECT
-                [void][SmokeNative]::GetWindowRect($hwnd2, [ref]$restored)
-                Write-Host ("  position restored dx={0} dy={1}  (expected ~0/~0)" -f `
-                    ([Math]::Abs($restored.Left - [int]$saved.x)), ([Math]::Abs($restored.Top - [int]$saved.y)))
-            } else {
-                Write-Host '  restart for position check: pet not visible  [FAIL]'
-            }
-            Stop-Petsona
-            $null = Start-Process -FilePath $Exe -PassThru
-            $null = Wait-PetVisible 20000
-            $hwnd = Get-PetWindow
-        } else {
-            Write-Host '  no startPosition saved after drag  [FAIL]'
-        }
-    }
-} else {
-    Write-Host '  (mouse checks skipped)'
-}
 
 $foreground = [SmokeNative]::GetForegroundWindow()
 Write-Host ("  foreground is pet window: {0}  (expected False)" -f ($foreground -eq $hwnd))
@@ -441,6 +323,15 @@ Write-Host ("  settings visible: {0}; pet hidden: {1}; /health ok: {2}; pet fiel
 
 Stop-Petsona
 Remove-Item Env:\PETSONA_HOME -ErrorAction SilentlyContinue
+
+Write-Host '== manual checks (user, do not automate) =='
+Write-Host '  - pass-through: click a transparent pixel -> desktop; click the pet body -> pet'
+Write-Host '  - drag: follows the cursor; release at screen/taskbar edges stays inside the work area'
+Write-Host '  - position memory: drag, quit, relaunch -> pet returns to the last position'
+Write-Host '  - cursor over the pet stays the normal arrow (no busy ring)'
+Write-Host '  - gaze: look follows the cursor in all 16 directions (including above the pet),'
+Write-Host '    stays neutral very close to the centre, and does not jitter near the boundary'
+Write-Host '  - tray: settings / show-hide / quit'
 
 Write-Host '== smoke finished =='
 $log = Join-Path $env:TEMP 'petsona-desktop.log'
