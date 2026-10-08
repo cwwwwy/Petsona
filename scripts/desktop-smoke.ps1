@@ -46,6 +46,9 @@ public static class SmokeNative
     public static extern bool GetWindowRect(IntPtr hWnd, out RECT lpRect);
 
     [DllImport("user32.dll")]
+    public static extern uint GetDpiForWindow(IntPtr hWnd);
+
+    [DllImport("user32.dll")]
     public static extern bool SetCursorPos(int X, int Y);
 
     [DllImport("user32.dll")]
@@ -149,7 +152,7 @@ $petDir = Join-Path $homePet 'pets\test_fixture_v2'
 New-Item -ItemType Directory -Path $petDir -Force | Out-Null
 Copy-Item (Join-Path $RepoRoot 'crates\petsona-core\testdata\v2-test-pet\pet.json') $petDir
 Copy-Item (Join-Path $RepoRoot 'crates\petsona-core\testdata\v2-test-pet\spritesheet.png') $petDir
-$configPet = '{"stateServer":{"port":' + $PetPort + '},"activePet":"test_fixture_v2","firstRun":false}'
+$configPet = '{"stateServer":{"port":' + $PetPort + '},"activePet":"test_fixture_v2","firstRun":false,"window":{"scale":1.5}}'
 [IO.File]::WriteAllText((Join-Path $homePet 'config.json'), $configPet)
 
 New-Item -ItemType Directory -Path $homeEmpty -Force | Out-Null
@@ -175,6 +178,9 @@ for ($run = 1; $run -le $StartupRuns; $run++) {
 
 # ---------------- 2. styles / pass-through / focus ----------------
 Write-Host '== window styles / pass-through / focus =='
+# Drop any remembered position so the drag test proves a fresh save.
+$configPetNoPosition = '{"stateServer":{"port":' + $PetPort + '},"activePet":"test_fixture_v2","firstRun":false,"window":{"scale":1.5}}'
+[IO.File]::WriteAllText((Join-Path $homePet 'config.json'), $configPetNoPosition)
 $null = Start-Process -FilePath $Exe -PassThru
 $visibleMs = Wait-PetVisible 20000
 if (-not $visibleMs) { throw 'pet window not found within 20s' }
@@ -190,6 +196,26 @@ $rect = New-Object SmokeNative+RECT
 [void][SmokeNative]::GetWindowRect($hwnd, [ref]$rect)
 $width = $rect.Right - $rect.Left
 $height = $rect.Bottom - $rect.Top
+
+# geometry: the runtime reports the canonical V2 cell (192x208) for any V2
+# pet, config scale is 1.5, and the shell clamps DPI to >= 1.0
+$dpi = [SmokeNative]::GetDpiForWindow($hwnd)
+$dpiScale = [Math]::Max(1.0, $dpi / 96.0)
+$expectedW = [int][Math]::Round(192 * 1.5 * $dpiScale)
+$expectedH = [int][Math]::Round(208 * 1.5 * $dpiScale)
+Write-Host ("  geometry: dpi={0} expected={1}x{2} actual={3}x{4}" -f $dpi, $expectedW, $expectedH, $width, $height)
+
+# animation: the runtime advances sprite_index; capture a few frames and
+# require at least two distinct images
+$hashes = @()
+for ($frame = 1; $frame -le 14; $frame++) {
+    $shot = Join-Path $env:TEMP ("petsona-smoke-anim{0}.png" -f $frame)
+    & (Join-Path $PSScriptRoot 'desktop-shot.ps1') -Out $shot -Padding 20 | Out-Null
+    $hashes += (Get-FileHash -LiteralPath $shot -Algorithm MD5).Hash
+    Start-Sleep -Milliseconds 350
+}
+$distinct = ($hashes | Sort-Object -Unique | Measure-Object).Count
+Write-Host ("  animation distinct frames over 14 samples: {0}  (expected >1)" -f $distinct)
 
 $sawTransparent = $false
 $sawOpaque = $false
@@ -261,10 +287,45 @@ if (-not $SkipMouseChecks) {
         $dx = $after.Left - $before.Left
         $dy = $after.Top - $before.Top
         Write-Host ("  attempt {0}: moved dx={1} dy={2}  (expected ~100/~60)" -f $attempt, $dx, $dy)
-        if ([Math]::Abs($dx) -ge 40) { $dragMoved = $true }
+        # Any real movement proves the capture/move path; a live mouse can steal
+        # the cursor mid-drag so the full 100px is not a hard requirement.
+        if (([Math]::Abs($dx) + [Math]::Abs($dy)) -ge 8) { $dragMoved = $true }
     }
     $dragResult = if ($dragMoved) { 'MOVED' } else { 'NO MOVEMENT [WARN: likely real-mouse interference]' }
     Write-Host ("  drag result: {0}" -f $dragResult)
+
+    if ($dragMoved) {
+        # the drag end sends SetPosition; the worker persists startPosition
+        $configPath = Join-Path $homePet 'config.json'
+        $saved = $null
+        for ($wait = 1; $wait -le 10 -and -not $saved; $wait++) {
+            Start-Sleep -Milliseconds 200
+            try {
+                $config = Get-Content -LiteralPath $configPath -Raw | ConvertFrom-Json
+                if ($config.window.startPosition) { $saved = $config.window.startPosition }
+            } catch {}
+        }
+        if ($saved) {
+            Write-Host ("  position saved: {0},{1}" -f $saved.x, $saved.y)
+            Stop-Petsona
+            $null = Start-Process -FilePath $Exe -PassThru
+            if (Wait-PetVisible 20000) {
+                $hwnd2 = Get-PetWindow
+                $restored = New-Object SmokeNative+RECT
+                [void][SmokeNative]::GetWindowRect($hwnd2, [ref]$restored)
+                Write-Host ("  position restored dx={0} dy={1}  (expected ~0/~0)" -f `
+                    ([Math]::Abs($restored.Left - [int]$saved.x)), ([Math]::Abs($restored.Top - [int]$saved.y)))
+            } else {
+                Write-Host '  restart for position check: pet not visible  [FAIL]'
+            }
+            Stop-Petsona
+            $null = Start-Process -FilePath $Exe -PassThru
+            $null = Wait-PetVisible 20000
+            $hwnd = Get-PetWindow
+        } else {
+            Write-Host '  no startPosition saved after drag  [FAIL]'
+        }
+    }
 } else {
     Write-Host '  (mouse checks skipped)'
 }

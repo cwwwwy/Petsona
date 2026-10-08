@@ -51,7 +51,7 @@ cargo test --workspace          # core + runtime；状态协议测试需要绑�
 
 ## 跨对话工作流（规划 → 执行 → 审查）
 
-- 当前任务线：`desktop-shell-rust-ts`（P0 已提交 `1e3b5c1`、M0 已提交 `534d0f8`；M1 自动冒烟通过，托盘三项人工与 macOS 可行性待补）。
+- 当前任务线：`desktop-shell-rust-ts`（P0/M0/M1 已提交；M2-A 真实图集渲染/缩放/位置记忆完成待人工；M2-B 注视/气泡/编辑条/Composer 待做；macOS 可行性待补）。
 - **规划**：只读调查，明确目标/非目标、逐文件增改删、约束、REQ 编号、依赖、验收矩阵、命令与完成条件；
   授权落盘后才写指定文档，不写产品代码。
 - **执行**：先复述关键目标与验收标准，再按计划实施；可作计划内局部实现选择，不得自行缩减功能、
@@ -71,7 +71,9 @@ cargo test --workspace          # core + runtime；状态协议测试需要绑�
   `stateServer.port` 协议（/health /pets /state + TTL/400/clear）、托盘（设置… / 显示-隐藏 / 退出）、
   空库首启自动开设置、退出释放端口，均由 runtime 驱动；浮层可见性 = `ready && has_pet && pet_visible`。
   `scripts/desktop-smoke.ps1` 完整冒烟 EXIT=0；启动（含 runtime 与宠物加载）**0.75–0.88s**。
-- M1 待人工：托盘三项菜单点验；真实宠物渲染仍为测试夹具（M2 切换为真实图集/缩放/注视/位置持久化）。
+- M2-A（未提交）：浮层改为 runtime 驱动——真实图集渲染（boba 已实机验证）、33ms 轮询动画、scale×DPI（钳制 ≥1）与 bottom-centre 锚点、
+  拖动结束写 `startPosition` 并在启动时恢复、全程 `rcWork` 夹取；`desktop-smoke.ps1` EXIT=0（几何 288×312=192×208×1.5、动画 2 帧、位置往返 dx=0）。
+- M2-B 待做：注视采样与迟滞、气泡（淡入/进度/悬停暂停）、编辑条、Composer、故障提示气泡。
 - 构建入口：`scripts/desktop-build-windows.ps1`（Windows）；冒烟 `scripts/desktop-smoke.ps1`（`-SkipMouseChecks` 供鼠标忙时）；
   截图 `scripts/desktop-shot.ps1`。
 - 旧世界验收知识已迁移：行为矩阵在 `docs/DESKTOP_VERIFICATION.md`，产品决策在计划文档「继承的产品决策」。
@@ -93,6 +95,8 @@ cargo test --workspace          # core + runtime；状态协议测试需要绑�
 - 数据目录：`%APPDATA%\Petsona` / `~/Library/Application Support/Petsona`，`PETSONA_HOME` 可覆盖。
 - 宠物库：只加载本地 `...\Petsona\pets`；`~/.codex/pets` 仅作为「从 Codex 导入」来源；
   **无内置宠物**，本地库为空时启动直接打开设置窗口；测试用自绘夹具 `crates/petsona-core/testdata/v2-test-pet`。
+- 渲染格：runtime 一律按 **192×208**（1536×2288 ÷ 8×11）报告 V2 cell，**不读取宠物包内的 `grid.cellWidth/Height`**；
+  测试夹具虽声明 64×64 也按 192×208 渲染（旧 C# 行为一致）。
 - 配置：`config.json`；`window.startPosition` 为物理像素；缩放 0.5–2.0、吸附 7 档；
   协议端口键为 **`stateServer.port`**（camelCase，默认 17872）——写错键会被 serde 默认值静默忽略。
 - 状态协议：`127.0.0.1:17872`，`POST /state`、`GET /health`、`GET /pets`；验收实例用独立端口（如 17873）。
