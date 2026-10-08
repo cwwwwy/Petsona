@@ -1,166 +1,58 @@
 # Petsona
 
-A lightweight desktop pet for Windows and macOS. A shared Rust core/runtime drives
-native platform frontends (Windows: C# / WinUI 3 + Win32, macOS: SwiftUI / AppKit),
-with a Codex-compatible pet engine, model chat, local memory and configurable personalities.
+Windows / macOS 桌宠与 AI 伴侣：读取 Codex 宠物包（`pet.json` + 图集），按锁定基准播放动画，
+支持流式聊天、本地历史、人格与记忆。
 
-## Features
+> **状态：桌面壳重建中（2026-10-08 起）。**
+> 项目正按 [desktop-shell-rust-ts 计划](docs/plans/desktop-shell-rust-ts.md) 重建为
+> **Rust**（core / runtime / 平台层 / 浮层窗口）+ **TypeScript**（设置、聊天、历史、人格、宠物库等全部内容界面）。
+> 旧 C#/WinUI 与 Swift/AppKit 前端已删除，完整快照在 git `6bca241`；
+> 当前保留并持续通过测试的代码是 `crates/petsona-core` 与 `crates/petsona-runtime`，
+> 新产品入口 `apps/desktop` 处于 M0 建设期。
 
-- Local, user-owned pet library (no bundled pet; pick or import one on first run)
-- 8×9 / 8×11 Codex pet packs, animation state machine, pixel-accurate click-through
-- Click / double-click / drag / native context menu / cursor gaze / speech bubble
-- Explicit import from Codex (`~/.codex/pets`), a folder or a `.zip`
-- macOS companion: streaming chat and per-pet history, editable preferences and
-  confirmed habits, personalities shaped from chat samples or a named reference
-- Local state protocol (`127.0.0.1:17872`) so Codex hooks can drive the pet
-- One stable personality per pet; local history and long-term memory have separate controls
-- Windows: WinUI 3 + Win32 frontend — tray with native menu, login autostart,
-  single-monitor position memory (multi-monitor / gravity / activity reminders are
-  deferred, see [plan §3.1](docs/plans/windows-native-rewrite.md))
-- macOS: SwiftUI / AppKit frontend — menu-bar menu, LaunchAgent autostart
-
-## Workspace
-
-| Crate | Contents |
-|---|---|
-| `crates/petsona-core/` | Pet format, animation engine, persona, memory, DeepSeek, state protocol |
-| `crates/petsona-runtime/` | Runtime: sessions, storage, chat/history, memory learning, personality generation, locks and logs |
-| `crates/petsona-ffi/` | Native frontend C ABI; ABI 3 contract and worker projection |
-| `apps/windows/` | C# / WinUI 3 + Win32 native Windows frontend (current product line) |
-| `apps/macos/` | SwiftUI + AppKit native macOS frontend (manual acceptance in progress) |
-
-Both native frontends call the shared engine through `contracts/petsona.h`. The
-old egui UI and the two legacy shells were **deleted on 2026-09-22** (Windows
-plan REQ-W15); historical behaviour can be inspected with read-only `git show`.
-
-Windows state: the earlier native gate and manual W1–W11 / W13 / W14 passed; W12
-remains deferred. Later W29–W33, shared-layer regression and release checks remain
-open in [the Windows checklist](docs/WINDOWS_VERIFICATION.md).
-macOS state: native settings use a unified titlebar/sidebar and grouped forms;
-window, IME, Keychain, and signing acceptance remains open. **macOS 26 or later
-is required.**
-See the plans ([macOS companion](docs/plans/macos-companion-evolution.md),
-[Windows](docs/plans/windows-native-rewrite.md)), their
-[execution records](docs/execution/), and [collaboration rules](AGENTS.md).
-
-## Run
-
-```powershell
-# Windows (current): build or run the native frontend
-dotnet build apps/windows/Petsona.sln -c Release -p:Platform=x64
-powershell -ExecutionPolicy Bypass -File scripts\package-windows.ps1   # then run dist\…\Petsona.exe
-
-# macOS 26 or later
-xcodegen generate --spec apps/macos/project.yml --project apps/macos
-xcodebuild -project apps/macos/Petsona.xcodeproj -scheme Petsona \
-  -configuration Release -arch "$(uname -m)" \
-  -derivedDataPath .scratch/macos-native-build CODE_SIGNING_ALLOWED=NO build
-```
-
-macOS builds require full Xcode and XcodeGen; the generated project builds the Rust FFI automatically.
-Use [the isolated acceptance instructions](docs/MACOS_VERIFICATION.md#0-准备) for UI checks.
-
-Windows needs VS Build Tools ("Desktop development with C++") for the MSVC
-linker. A GNU toolchain fallback is documented in `docs/WINDOWS_VERIFICATION.md`.
-
-## Install / upgrade / uninstall (Windows)
-
-The release zip is **portable and self-contained** — it bundles the .NET runtime
-and the Windows App SDK, so no separate runtime install is required:
-
-1. Unzip anywhere (e.g. `%LOCALAPPDATA%\Petsona`).
-2. Run `Petsona.exe`. First launch opens Settings because no pet is bundled;
-   import one from `~/.codex/pets`, a folder or a `.zip`.
-3. **Upgrade**: unzip the new version over the same folder. Your data lives in
-   `%APPDATA%\Petsona` and is never touched by an upgrade.
-4. **Uninstall**: delete the unzipped folder, then optionally delete
-   `%APPDATA%\Petsona` (pets, personas, memory, logs) and remove the `Petsona`
-   value from `HKCU\Software\Microsoft\Windows\CurrentVersion\Run` if you
-   enabled autostart.
-
-Privacy: everything is stored locally. Network access only happens when you
-configure a model service (DeepSeek or a custom OpenAI-compatible endpoint) —
-then conversation text and memory snippets are sent to that service.
-
-## Verify
+## 目标架构
 
 ```text
-macOS    bash scripts/verify-macos-all.sh               # Rust + native build + smoke + package
-         bash scripts/verify-macos-all.sh --gates-only  # Rust + native build gates
-Windows  powershell -ExecutionPolicy Bypass -File scripts\verify-windows.ps1        # gates
-         powershell -ExecutionPolicy Bypass -File scripts\verify-windows.ps1 -Full  # gates + smoke
+crates/petsona-core      宠物格式、动画与注视、人格、记忆、DeepSeek、状态协议
+crates/petsona-runtime   配置与会话、宠物库、实例锁、日志、问候、流式聊天
+        │  同进程 crate 调用（无 C ABI）
+apps/desktop/src-tauri   Tauri 2 壳：托盘、窗口几何、凭据、自启 + 原生浮层渲染
+        │  Tauri commands / events（JSON 投影）
+apps/desktop/src         TypeScript 内容界面（设置六页、聊天、历史、人格、宠物库）
 ```
 
-Window, tray, menu and click-through behaviour still needs the manual checklists
-in `docs/WINDOWS_VERIFICATION.md` / `docs/MACOS_VERIFICATION.md`.
+设计铁律：**宠物、气泡、编辑条、Composer 由 Rust 原生窗口渲染；WebView 只承载内容页面。**
 
-## Package
-
-```powershell
-powershell -ExecutionPolicy Bypass -File scripts\package-windows.ps1   # dist\Petsona-windows-x64-<version>.zip
-bash scripts/package-macos.sh                                          # dist/Petsona.app + zip
-```
-
-The Windows exe embeds `packaging/windows/Petsona.ico`, generated from the macOS
-artwork by `packaging/windows/generate-icon.ps1`.
-
-## State protocol
+## 开发
 
 ```bash
-curl -XPOST http://127.0.0.1:17872/state \
-  -H 'content-type: application/json' \
-  -d '{"source":"codex","state":"running","message":"running tests","ttlMs":120000}'
+cargo fmt --all -- --check
+cargo clippy --workspace --all-targets -- -D warnings
+cargo test --workspace            # core + runtime；协议测试需要本地回环端口
 ```
 
-`GET /health` returns the current pet/persona/state snapshot, `GET /pets` lists the
-pet ids. Available states: `idle`, `running`, `waiting`, `failed`, `review`,
-`waving`, `jumping`, `running-left`, `running-right`, `look-row-9`, `look-row-10`.
-`ttlMs: 0` means "never expires"; the source that raised a state can retract it
-again (e.g. after a crash) without naming a new state:
+`apps/desktop` 的构建与验收命令在 M0 建立后补充到
+[docs/DESKTOP_VERIFICATION.md](docs/DESKTOP_VERIFICATION.md)。
 
-```bash
-curl -XPOST http://127.0.0.1:17872/state \
-  -H 'content-type: application/json' -d '{"source":"codex","action":"clear"}'
-```
+测试与验收始终使用隔离数据目录（`PETSONA_HOME`）、独立端口与假凭据，不影响日常实例。
 
-## Pets
+## 数据与协议
 
-The app loads only its own library (`<config>/Petsona/pets`). Codex pets are
-copied there explicitly via Settings → 宠物 → 「从 Codex 导入」; importing a
-folder or `.zip` (or dropping it on the window) works too. Packages are
-validated before import, exports use the Codex upload format, and deleting a
-local copy asks for confirmation.
+- 数据目录：`%APPDATA%\Petsona`（Windows）/ `~/Library/Application Support/Petsona`（macOS）。
+- 宠物库：本地导入的 `pets/`；`~/.codex/pets` 仅作为「从 Codex 导入」来源；无内置宠物。
+- 状态协议：`127.0.0.1:17872` 的 `POST /state`、`GET /health`、`GET /pets`（语义与手工命令见验收清单附录）。
 
-Petsona ships without a bundled pet: on first launch (or whenever the local
-library is empty) the Settings window opens so a pet can be picked from
-`~/.codex/pets` or imported from a folder / `.zip`.
+## 文档
 
-Inspect any pet package:
-
-```powershell
-cargo run -p petsona-core --example pet_inspect -- "$env:USERPROFILE\.codex\pets\boba" .scratch\boba
-```
-
-## DeepSeek (optional)
-
-```text
-base URL: https://api.deepseek.com/v1
-model:    deepseek-v4-flash
-```
-
-```powershell
-$env:DEEPSEEK_API_KEY = "sk-..."
-```
-
-The settings window can also save the key to the OS keychain. Greetings are
-non-streaming and use a small token budget; without a key Petsona falls back to
-the persona's fixed or time-based greeting.
-
-## Docs
-
-| File | Contents |
+| 文档 | 内容 |
 |---|---|
-| `docs/PLATFORM_ARCHITECTURE.md` | Shared core/runtime + native frontend boundaries and release tracks |
-| `docs/WINDOWS_VERIFICATION.md` | Windows native manual checklist (W/D/F, includes the W11 protocol steps) |
-| `docs/MACOS_VERIFICATION.md` | macOS manual checklist |
-| `docs/plans/` · `docs/execution/` | Cross-conversation plan contracts and evidence records |
+| [平台架构](docs/PLATFORM_ARCHITECTURE.md) | 分层、线程模型、接口与数据边界 |
+| [桌面壳计划](docs/plans/desktop-shell-rust-ts.md) | P0 清场、M0 验证、M1–M6 里程碑与继承的产品决策 |
+| [执行记录](docs/execution/desktop-shell-rust-ts.md) | 每批改动的证据与接续点 |
+| [验收清单](docs/DESKTOP_VERIFICATION.md) | M0 决策门 + 浮层/托盘/设置/聊天/协议/macOS 人工矩阵 |
+
+旧实现（C#/WinUI、Swift/AppKit、旧 egui）与旧验收记录已从工作树移除，历史可用 `git show 6bca241:<path>` 查阅。
+
+## License
+
+MIT

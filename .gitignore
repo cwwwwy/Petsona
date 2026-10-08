@@ -10,13 +10,7 @@
 .pet-local
 /release
 
-# .NET / WinUI build outputs
-apps/windows/**/bin/
-apps/windows/**/obj/
-.vs/
-
-# Xcode local state and build caches
-apps/macos/**/xcuserdata/
-apps/macos/**/DerivedData/
-apps/macos/build/
-apps/macos/.build/
+# apps/desktop（Tauri 壳 + TS 前端，建设中）
+apps/desktop/node_modules/
+apps/desktop/dist/
+apps/desktop/src-tauri/target/

@@ -686,17 +686,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "petsona-ffi"
-version = "0.1.0-rc.1"
-dependencies = [
- "anyhow",
- "petsona-core",
- "petsona-runtime",
- "serde_json",
- "tempfile",
-]
-
-[[package]]
 name = "petsona-runtime"
 version = "0.1.0-rc.1"
 dependencies = [

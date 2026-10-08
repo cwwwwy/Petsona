@@ -3,7 +3,6 @@ resolver = "2"
 members = [
     "crates/petsona-core",
     "crates/petsona-runtime",
-    "crates/petsona-ffi",
 ]
 
 [workspace.package]
@@ -38,7 +37,6 @@ opt-level = 2
 lto = "thin"
 codegen-units = 1
 strip = true
-# The native frontends call through a C ABI. The FFI layer catches unwinding
-# panics and turns them into a terminal engine error instead of unwinding into
-# Swift or .NET. Undefined pointers and OOM remain process-fatal.
+# 新的 Tauri 壳与运行时同进程；保持 unwind 以便引擎任务捕获 panic 并记录，
+# 而不是让一次任务 panic 结束整个常驻进程。
 panic = "unwind"
