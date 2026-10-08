@@ -1,5 +1,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+#[cfg(windows)]
+mod gdi_text;
 mod logging;
 #[cfg(windows)]
 mod overlay;
@@ -50,15 +52,28 @@ fn main() {
 
     let engine_for_setup = Arc::clone(&engine);
     tauri::Builder::default()
-        .on_window_event(|window, event| {
-            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+        .on_window_event(|window, event| match event {
+            tauri::WindowEvent::CloseRequested { api, .. } => {
                 // Closing the settings window hides it; the shell keeps running
                 // with its pet and tray until the user quits from the tray.
                 api.prevent_close();
                 let _ = window.hide();
             }
+            tauri::WindowEvent::ThemeChanged(theme) => {
+                #[cfg(windows)]
+                overlay::set_dark_theme(matches!(theme, tauri::Theme::Dark));
+            }
+            _ => {}
         })
         .setup(move |app| {
+            let dark = app
+                .get_webview_window("settings")
+                .and_then(|window| window.theme().ok())
+                .map(|theme| matches!(theme, tauri::Theme::Dark))
+                .unwrap_or(false);
+            #[cfg(windows)]
+            overlay::set_dark_theme(dark);
+
             build_tray(app, Arc::clone(&engine_for_setup))?;
 
             if show_settings {

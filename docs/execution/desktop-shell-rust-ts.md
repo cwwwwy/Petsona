@@ -188,3 +188,26 @@
 
 - 注视：全方向（含宠物上方）、近距离保持中性、边界不抖动；
 - 既有鼠标项：穿透点击、拖动与边缘夹取、拖动后重启位置记忆、光标形状、托盘三项。
+
+
+## M2-B-02 气泡（2026-10-08 接续）
+
+- 新模块 `apps/desktop/src-tauri/src/gdi_text.rs`：GDI+ 扁平 API 文字测量/绘制（Microsoft YaHei UI 14pt、AntiAliasGridFit、
+  Segoe UI 回退），与旧 System.Drawing 渲染一致；写入预乘 BGRA 缓冲。
+- 新窗口 `PetsonaOverlayWindow`（LAYERED/TOOLWINDOW/NOACTIVATE/TOPMOST）：圆角 12、1px 边框；四色取自 `BubblePalette.cs`
+  （浅/深色随系统主题，经 Tauri `ThemeChanged` 同步）；进度条 3px；布局常量与旧版一致（padding 16×12、最大文本宽 300、宽域 120–332）。
+- 时序：generation 变化 → 150ms 淡入（`SourceConstantAlpha` 渐变）；进度 = remaining/total（runtime 计算）；文案或进度 1/120 变化才重绘。
+- 悬停暂停：光标轮询（不注入输入）判定悬停 → `SetBubblePaused(true)`（按 generation 记录）；移开 → `SetBubblePaused(false)` 从剩余时间续跑。
+- 定位：宠物上方居中；上方空间不足翻到下方；`rcWork` 夹取（`OverlayLayout.PositionBubble` 移植，EdgeMargin=8、间距=10）。
+- 事实记录：协议气泡生命周期为 **固定 8 秒**（runtime 既有行为，与 `ttlMs` 无关；旧版一致）。
+
+### 证据
+
+| 证据ID/时间 | 操作 | 结果 |
+|---|---|---|
+| E-M2-B-02a | 真实数据目录 + 协议 POST 中文 message，截图 `%TEMP%\petsona-bubble-shot.png` | 圆角面板/中文抗锯齿文字/蓝色进度条/位于宠物上方，全部正确 |
+| E-M2-B-02b | 无鼠标冒烟 `desktop-smoke.ps1`（新增气泡可见性检查） | **EXIT=0**：bubble visible after POST=True；hidden after ~8s=True；启动/位置恢复/几何/动画/焦点/单实例/协议/退出/空库全部通过 |
+
+### 待人工（用户）
+
+- 淡入观感；悬停暂停与移开续跑；宠物贴近屏幕顶部时气泡翻到下方；连续新消息重新淡入；点击气泡当前为 no-op（Composer 在 M2-B-04 接入）。

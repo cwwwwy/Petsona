@@ -13,7 +13,9 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::ffi::c_void;
 use std::ptr;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
+use std::time::Instant;
 
 use petsona_runtime::commands::RuntimeCommand;
 use petsona_runtime::engine::RuntimeEngine;
@@ -42,6 +44,7 @@ use windows_sys::Win32::UI::WindowsAndMessaging::{
     WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_EX_TRANSPARENT, WS_POPUP,
 };
 
+use crate::gdi_text;
 use crate::logging::log;
 
 const CLASS_NAME: &str = "PetsonaPetWindow";
@@ -67,6 +70,37 @@ const DEFAULT_MARGIN: i32 = 24;
 const HIT_CLIENT: LRESULT = 1;
 const HIT_TRANSPARENT: LRESULT = -1;
 
+const BUBBLE_CLASS_NAME: &str = "PetsonaOverlayWindow";
+const BUBBLE_FADE_MS: u64 = 150;
+/// 14pt at 96 DPI, matching the old System.Drawing bubble font.
+const BUBBLE_FONT_PX: f32 = 14.0 * 96.0 / 72.0;
+const BUBBLE_PADDING_X: f32 = 16.0;
+const BUBBLE_PADDING_Y: f32 = 12.0;
+const BUBBLE_MAX_TEXT_WIDTH: f32 = 300.0;
+const BUBBLE_RADIUS: f32 = 12.0;
+const BUBBLE_PROGRESS_HEIGHT: i32 = 3;
+const BUBBLE_GAP: i32 = 10;
+const EDGE_MARGIN: i32 = 8;
+
+// BubblePalette.cs (ARGB), git 6bca241
+const LIGHT_FILL: u32 = 0xF2FF_FFFF;
+const LIGHT_BORDER: u32 = 0x4600_0000;
+const LIGHT_TEXT: u32 = 0xFF20_2020;
+const LIGHT_ACCENT: u32 = 0xFF00_78D4;
+const LIGHT_TRACK: u32 = 0x2D00_0000;
+const DARK_FILL: u32 = 0xF22B_2B2B;
+const DARK_BORDER: u32 = 0x46FF_FFFF;
+const DARK_TEXT: u32 = 0xFFF0_F0F0;
+const DARK_ACCENT: u32 = 0xFF00_99FF;
+const DARK_TRACK: u32 = 0x46FF_FFFF;
+
+static DARK_THEME: AtomicBool = AtomicBool::new(false);
+
+/// Called by the shell when the system/app theme changes.
+pub fn set_dark_theme(dark: bool) {
+    DARK_THEME.store(dark, Ordering::Relaxed);
+}
+
 struct Frame {
     width: i32,
     height: i32,
@@ -85,8 +119,24 @@ struct IdleUnion {
     mask: Vec<bool>,
 }
 
+struct BubbleState {
+    hovered: bool,
+    /// Generation we sent `SetBubblePaused(true)` for; -1 = not paused.
+    paused_generation: i64,
+    generation: i64,
+    fade_started: Instant,
+    render_key: String,
+    pixels: Vec<u8>,
+    width: i32,
+    height: i32,
+    visible: bool,
+}
+
 struct State {
     engine: Arc<Mutex<RuntimeEngine>>,
+    pet_hwnd: HWND,
+    bubble_hwnd: HWND,
+    bubble: BubbleState,
     atlas: Option<Atlas>,
     frames: HashMap<(u32, i32, i32), Frame>,
     idle: Option<IdleUnion>,
@@ -108,7 +158,8 @@ thread_local! {
     static STATE: RefCell<Option<Box<State>>> = const { RefCell::new(None) };
 }
 
-static CLASS_REGISTERED: OnceLock<bool> = OnceLock::new();
+static PET_CLASS: OnceLock<bool> = OnceLock::new();
+static BUBBLE_CLASS: OnceLock<bool> = OnceLock::new();
 
 /// Spawns the overlay thread that owns the pet window and its message pump.
 pub fn spawn(engine: Arc<Mutex<RuntimeEngine>>) {
@@ -121,20 +172,36 @@ pub fn spawn(engine: Arc<Mutex<RuntimeEngine>>) {
 }
 
 unsafe fn thread_main(engine: Arc<Mutex<RuntimeEngine>>) {
-    if !register_class() {
+    if !register_class(CLASS_NAME, &PET_CLASS) || !register_class(BUBBLE_CLASS_NAME, &BUBBLE_CLASS)
+    {
         log("overlay: RegisterClassExW failed");
         return;
     }
 
-    let hwnd = create_window();
+    let hwnd = create_window(CLASS_NAME, "Petsona");
     if hwnd.is_null() {
         log("overlay: CreateWindowExW failed");
         return;
     }
     apply_dwm_attributes(hwnd);
+    let bubble_hwnd = create_window(BUBBLE_CLASS_NAME, "Petsona");
+    apply_dwm_attributes(bubble_hwnd);
 
     let state = Box::new(State {
         engine,
+        pet_hwnd: hwnd,
+        bubble_hwnd,
+        bubble: BubbleState {
+            hovered: false,
+            paused_generation: -1,
+            generation: -1,
+            fade_started: Instant::now(),
+            render_key: String::new(),
+            pixels: Vec::new(),
+            width: 0,
+            height: 0,
+            visible: false,
+        },
         atlas: None,
         frames: HashMap::new(),
         idle: None,
@@ -164,9 +231,9 @@ unsafe fn thread_main(engine: Arc<Mutex<RuntimeEngine>>) {
     log("overlay: message loop ended");
 }
 
-unsafe fn register_class() -> bool {
-    *CLASS_REGISTERED.get_or_init(|| {
-        let class_w = wide(CLASS_NAME);
+unsafe fn register_class(name: &str, cell: &'static OnceLock<bool>) -> bool {
+    *cell.get_or_init(|| {
+        let class_w = wide(name);
         let wc = WNDCLASSEXW {
             cbSize: std::mem::size_of::<WNDCLASSEXW>() as u32,
             style: 0,
@@ -185,9 +252,9 @@ unsafe fn register_class() -> bool {
     })
 }
 
-unsafe fn create_window() -> HWND {
-    let class_w = wide(CLASS_NAME);
-    let title_w = wide("Petsona");
+unsafe fn create_window(class_name: &str, title: &str) -> HWND {
+    let class_w = wide(class_name);
+    let title_w = wide(title);
     CreateWindowExW(
         WS_EX_LAYERED | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE | WS_EX_TOPMOST,
         class_w.as_ptr(),
@@ -242,6 +309,20 @@ unsafe extern "system" fn wnd_proc(
             Some(state) => state,
             None => return None,
         };
+        if !state.bubble_hwnd.is_null() && hwnd == state.bubble_hwnd {
+            return match msg {
+                WM_SETCURSOR => {
+                    SetCursor(LoadCursorW(ptr::null_mut(), IDC_ARROW));
+                    Some(1)
+                }
+                WM_LBUTTONUP => {
+                    log("bubble: clicked");
+                    Some(0)
+                }
+                WM_DESTROY => Some(0),
+                _ => None,
+            };
+        }
         match msg {
             WM_TIMER => {
                 if wparam == VISUAL_TIMER {
@@ -300,6 +381,7 @@ unsafe fn refresh(hwnd: HWND, state: &mut State) {
     if want_visible != state.visible {
         if want_visible {
             if !render_frame(hwnd, state, &snapshot, &atlas_path) {
+                update_bubble(state); // keeps a stale bubble from surviving
                 return; // stay hidden and retry on the next tick
             }
             if !state.position_applied {
@@ -314,12 +396,10 @@ unsafe fn refresh(hwnd: HWND, state: &mut State) {
             ShowWindow(hwnd, SW_HIDE);
             log("overlay: pet hidden");
         }
-        return;
-    }
-
-    if state.visible {
+    } else if state.visible {
         render_frame(hwnd, state, &snapshot, &atlas_path);
     }
+    update_bubble(state);
 }
 
 /// Renders the current runtime frame; returns false when the atlas could not
@@ -385,7 +465,7 @@ unsafe fn render_frame(
     }
 
     if let Some(frame) = state.frames.get(&key) {
-        present(hwnd, frame);
+        present(hwnd, frame, 255);
     }
     state.rendered = Some(key);
     true
@@ -644,7 +724,11 @@ unsafe fn clamp_to_work_area(rect: RECT) -> RECT {
     }
 }
 
-unsafe fn present(hwnd: HWND, frame: &Frame) {
+unsafe fn present(hwnd: HWND, frame: &Frame, opacity: u8) {
+    present_pixels(hwnd, &frame.pixels, frame.width, frame.height, opacity);
+}
+
+unsafe fn present_pixels(hwnd: HWND, pixels: &[u8], width: i32, height: i32, opacity: u8) {
     let screen_dc = GetDC(ptr::null_mut());
     if screen_dc.is_null() {
         return;
@@ -658,8 +742,8 @@ unsafe fn present(hwnd: HWND, frame: &Frame) {
     let mut info: BITMAPINFO = std::mem::zeroed();
     info.bmiHeader = BITMAPINFOHEADER {
         biSize: std::mem::size_of::<BITMAPINFOHEADER>() as u32,
-        biWidth: frame.width,
-        biHeight: -frame.height, // top-down
+        biWidth: width,
+        biHeight: -height, // top-down
         biPlanes: 1,
         biBitCount: 32,
         biCompression: BI_RGB,
@@ -675,17 +759,17 @@ unsafe fn present(hwnd: HWND, frame: &Frame) {
     }
 
     let old = SelectObject(mem_dc, dib as HGDIOBJ);
-    ptr::copy_nonoverlapping(frame.pixels.as_ptr(), bits as *mut u8, frame.pixels.len());
+    ptr::copy_nonoverlapping(pixels.as_ptr(), bits as *mut u8, pixels.len());
 
     let size = SIZE {
-        cx: frame.width,
-        cy: frame.height,
+        cx: width,
+        cy: height,
     };
     let src = POINT { x: 0, y: 0 };
     let blend = BLENDFUNCTION {
         BlendOp: 0, // AC_SRC_OVER
         BlendFlags: 0,
-        SourceConstantAlpha: 255,
+        SourceConstantAlpha: opacity,
         AlphaFormat: 1, // AC_SRC_ALPHA
     };
     let _ = UpdateLayeredWindow(
@@ -977,6 +1061,318 @@ fn hit(state: &State, x: i32, y: i32) -> bool {
         .copied()
         .unwrap_or(false);
     frame_hit || idle_hit
+}
+
+/// Drives the speech bubble from the runtime projection: fade-in, progress
+/// bar, hover pause (polled, no injected input) and pet-relative placement.
+fn update_bubble(state: &mut State) {
+    if state.bubble_hwnd.is_null() {
+        return;
+    }
+    if !state.visible || state.pet_hwnd.is_null() {
+        hide_bubble(state);
+        return;
+    }
+
+    let (text, timing) = {
+        let Ok(engine) = state.engine.lock() else {
+            return;
+        };
+        (
+            engine.text(RuntimeTextField::Bubble),
+            engine.text(RuntimeTextField::BubbleTiming),
+        )
+    };
+    if text.trim().is_empty() {
+        hide_bubble(state);
+        return;
+    }
+    let Some((remaining_ms, total_ms, generation)) = parse_bubble_timing(&timing) else {
+        hide_bubble(state);
+        return;
+    };
+
+    // Hover is derived from the cursor position: the bubble must pause while
+    // the pointer rests on it, and resume from the remaining time after.
+    let hovered = unsafe {
+        let mut cursor: POINT = std::mem::zeroed();
+        let mut rect: RECT = std::mem::zeroed();
+        GetCursorPos(&mut cursor) != 0
+            && state.bubble.visible
+            && GetWindowRect(state.bubble_hwnd, &mut rect) != 0
+            && cursor.x >= rect.left
+            && cursor.x < rect.right
+            && cursor.y >= rect.top
+            && cursor.y < rect.bottom
+    };
+    state.bubble.hovered = hovered;
+
+    if !hovered && state.bubble.paused_generation != -1 {
+        if let Ok(engine) = state.engine.lock() {
+            let _ = engine.send(RuntimeCommand::SetBubblePaused(false));
+        }
+        state.bubble.paused_generation = -1;
+    }
+    if hovered && state.bubble.paused_generation != generation {
+        if let Ok(engine) = state.engine.lock() {
+            let _ = engine.send(RuntimeCommand::SetBubblePaused(true));
+        }
+        state.bubble.paused_generation = generation;
+    }
+
+    let progress = if total_ms <= 0 {
+        1.0
+    } else {
+        (remaining_ms as f32 / total_ms as f32).clamp(0.0, 1.0)
+    };
+    let render_key = format!("{text}\u{1f}{}", (progress * 120.0).round() as i32);
+    if render_key != state.bubble.render_key || state.bubble.pixels.is_empty() {
+        match render_bubble(&text, progress) {
+            Some((pixels, width, height)) => {
+                state.bubble.pixels = pixels;
+                state.bubble.width = width;
+                state.bubble.height = height;
+                state.bubble.render_key = render_key;
+            }
+            None => return,
+        }
+    }
+
+    if generation != state.bubble.generation {
+        state.bubble.generation = generation;
+        state.bubble.fade_started = Instant::now();
+    }
+    let elapsed = state.bubble.fade_started.elapsed().as_millis() as u64;
+    let opacity = ((elapsed * 255) / BUBBLE_FADE_MS).min(255) as u8;
+
+    unsafe {
+        let mut pet_rect: RECT = std::mem::zeroed();
+        if GetWindowRect(state.pet_hwnd, &mut pet_rect) == 0 {
+            return;
+        }
+        let (x, y) = position_bubble(pet_rect, state.bubble.width, state.bubble.height);
+        SetWindowPos(
+            state.bubble_hwnd,
+            ptr::null_mut(),
+            x,
+            y,
+            0,
+            0,
+            SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE,
+        );
+        present_pixels(
+            state.bubble_hwnd,
+            &state.bubble.pixels,
+            state.bubble.width,
+            state.bubble.height,
+            opacity,
+        );
+        if !state.bubble.visible {
+            state.bubble.visible = true;
+            ShowWindow(state.bubble_hwnd, SW_SHOWNOACTIVATE);
+            log("bubble: shown");
+        }
+    }
+}
+
+fn hide_bubble(state: &mut State) {
+    if state.bubble_hwnd.is_null() {
+        return;
+    }
+    state.bubble.hovered = false;
+    state.bubble.paused_generation = -1;
+    state.bubble.generation = -1;
+    state.bubble.render_key.clear();
+    state.bubble.pixels.clear();
+    if state.bubble.visible {
+        state.bubble.visible = false;
+        unsafe {
+            ShowWindow(state.bubble_hwnd, SW_HIDE);
+        }
+        log("bubble: hidden");
+    }
+}
+
+fn parse_bubble_timing(text: &str) -> Option<(i64, i64, i64)> {
+    let mut parts = text.split(',');
+    let remaining = parts.next()?.trim().parse().ok()?;
+    let total = parts.next()?.trim().parse().ok()?;
+    let generation = parts.next()?.trim().parse().ok()?;
+    Some((remaining, total, generation))
+}
+
+/// Paints the bubble: rounded panel + 1px border + progress bar + GDI+ text.
+fn render_bubble(text: &str, progress: f32) -> Option<(Vec<u8>, i32, i32)> {
+    let (text_width, text_height) =
+        gdi_text::measure(text, BUBBLE_FONT_PX, BUBBLE_MAX_TEXT_WIDTH, 240.0)?;
+    let width = ((text_width.ceil() as i32) + (BUBBLE_PADDING_X as i32 * 2))
+        .clamp(120, BUBBLE_MAX_TEXT_WIDTH as i32 + 32);
+    let height =
+        text_height.ceil() as i32 + (BUBBLE_PADDING_Y as i32 * 2) + BUBBLE_PROGRESS_HEIGHT + 2;
+    let mut pixels = vec![0u8; (width * height * 4) as usize];
+
+    let dark = DARK_THEME.load(Ordering::Relaxed);
+    let (fill, border, text_color, accent, track) = if dark {
+        (DARK_FILL, DARK_BORDER, DARK_TEXT, DARK_ACCENT, DARK_TRACK)
+    } else {
+        (
+            LIGHT_FILL,
+            LIGHT_BORDER,
+            LIGHT_TEXT,
+            LIGHT_ACCENT,
+            LIGHT_TRACK,
+        )
+    };
+
+    let outer = (0.5f32, 0.5f32, width as f32 - 0.5, height as f32 - 0.5);
+    let inner = (1.5f32, 1.5f32, width as f32 - 1.5, height as f32 - 1.5);
+    for y in 0..height {
+        for x in 0..width {
+            let px = x as f32 + 0.5;
+            let py = y as f32 + 0.5;
+            let outer_coverage = rounded_rect_coverage(px, py, outer, BUBBLE_RADIUS);
+            let inner_coverage =
+                rounded_rect_coverage(px, py, inner, (BUBBLE_RADIUS - 1.0).max(0.0));
+            let index = ((y * width + x) * 4) as usize;
+            if outer_coverage > 0.0 {
+                blend_argb(&mut pixels, index, border, outer_coverage);
+            }
+            if inner_coverage > 0.0 {
+                blend_argb(&mut pixels, index, fill, inner_coverage);
+            }
+        }
+    }
+
+    let bar_left = BUBBLE_PADDING_X as i32;
+    let bar_top = height - BUBBLE_PROGRESS_HEIGHT - 3;
+    let bar_width = (width - (BUBBLE_PADDING_X as i32 * 2)).max(0);
+    fill_rect_argb(
+        &mut pixels,
+        width,
+        bar_left,
+        bar_top,
+        bar_width,
+        BUBBLE_PROGRESS_HEIGHT,
+        track,
+    );
+    fill_rect_argb(
+        &mut pixels,
+        width,
+        bar_left,
+        bar_top,
+        ((bar_width as f32) * progress).round() as i32,
+        BUBBLE_PROGRESS_HEIGHT,
+        accent,
+    );
+
+    let layout_width = width as f32 - BUBBLE_PADDING_X * 2.0;
+    let layout_height =
+        height as f32 - BUBBLE_PADDING_Y * 2.0 - BUBBLE_PROGRESS_HEIGHT as f32 - 2.0;
+    let _ = gdi_text::draw(
+        &mut pixels,
+        width,
+        height,
+        BUBBLE_PADDING_X,
+        BUBBLE_PADDING_Y,
+        layout_width,
+        layout_height,
+        text,
+        BUBBLE_FONT_PX,
+        text_color,
+    );
+
+    Some((pixels, width, height))
+}
+
+/// Signed-distance coverage for an anti-aliased rounded rectangle.
+fn rounded_rect_coverage(px: f32, py: f32, rect: (f32, f32, f32, f32), radius: f32) -> f32 {
+    let (left, top, right, bottom) = rect;
+    let cx = (left + right) * 0.5;
+    let cy = (top + bottom) * 0.5;
+    let half_w = ((right - left) * 0.5 - radius).max(0.0);
+    let half_h = ((bottom - top) * 0.5 - radius).max(0.0);
+    let qx = (px - cx).abs() - half_w;
+    let qy = (py - cy).abs() - half_h;
+    let ax = qx.max(0.0);
+    let ay = qy.max(0.0);
+    let distance = (ax * ax + ay * ay).sqrt() + qx.max(qy).min(0.0) - radius;
+    (0.5 - distance).clamp(0.0, 1.0)
+}
+
+/// Source-over blend of an ARGB colour into a premultiplied BGRA buffer.
+fn blend_argb(pixels: &mut [u8], index: usize, argb: u32, coverage: f32) {
+    let alpha = ((argb >> 24) & 0xFF) as f32 * coverage.clamp(0.0, 1.0);
+    if alpha <= 0.0 {
+        return;
+    }
+    let r = ((argb >> 16) & 0xFF) as f32;
+    let g = ((argb >> 8) & 0xFF) as f32;
+    let b = (argb & 0xFF) as f32;
+    let inverse = 1.0 - alpha / 255.0;
+    pixels[index] = ((b * alpha / 255.0) + pixels[index] as f32 * inverse)
+        .round()
+        .clamp(0.0, 255.0) as u8;
+    pixels[index + 1] = ((g * alpha / 255.0) + pixels[index + 1] as f32 * inverse)
+        .round()
+        .clamp(0.0, 255.0) as u8;
+    pixels[index + 2] = ((r * alpha / 255.0) + pixels[index + 2] as f32 * inverse)
+        .round()
+        .clamp(0.0, 255.0) as u8;
+    pixels[index + 3] = (alpha + pixels[index + 3] as f32 * inverse)
+        .round()
+        .clamp(0.0, 255.0) as u8;
+}
+
+#[allow(clippy::too_many_arguments)]
+fn fill_rect_argb(
+    pixels: &mut [u8],
+    buffer_width: i32,
+    x: i32,
+    y: i32,
+    width: i32,
+    height: i32,
+    argb: u32,
+) {
+    let buffer_height = (pixels.len() / (buffer_width as usize * 4)) as i32;
+    for row in y..(y + height) {
+        for column in x..(x + width) {
+            if column < 0 || row < 0 || column >= buffer_width || row >= buffer_height {
+                continue;
+            }
+            let index = ((row * buffer_width + column) * 4) as usize;
+            blend_argb(pixels, index, argb, 1.0);
+        }
+    }
+}
+
+/// Above the pet by default, below when there is no room; clamped to work.
+unsafe fn position_bubble(pet: RECT, width: i32, height: i32) -> (i32, i32) {
+    let pet_width = pet.right - pet.left;
+    let mut x = pet.left + (pet_width - width) / 2;
+    let mut y = pet.top - height - BUBBLE_GAP;
+
+    let mut info: MONITORINFO = std::mem::zeroed();
+    info.cbSize = std::mem::size_of::<MONITORINFO>() as u32;
+    let monitor = MonitorFromRect(&pet, MONITOR_DEFAULTTONEAREST);
+    let work_top = if !monitor.is_null() && GetMonitorInfoW(monitor, &mut info) != 0 {
+        info.rcWork.top
+    } else {
+        0
+    };
+    if y < work_top + EDGE_MARGIN {
+        y = pet.bottom + BUBBLE_GAP;
+    }
+
+    let desired = RECT {
+        left: x,
+        top: y,
+        right: x + width,
+        bottom: y + height,
+    };
+    let clamped = clamp_to_work_area(desired);
+    x = clamped.left;
+    y = clamped.top;
+    (x, y)
 }
 
 fn wide(text: &str) -> Vec<u16> {

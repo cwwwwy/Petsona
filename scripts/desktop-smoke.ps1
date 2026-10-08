@@ -92,6 +92,12 @@ function Get-SettingsWindow([int]$ProcessId) {
     return $candidate
 }
 
+function Get-BubbleWindow {
+    $hwnd = [SmokeNative]::FindWindowW('PetsonaOverlayWindow', [NullString]::Value)
+    if ($hwnd -eq [IntPtr]::Zero) { return $null }
+    return $hwnd
+}
+
 function Stop-Petsona {
     Get-Process petsona-desktop -ErrorAction SilentlyContinue | Stop-Process -Force
     Start-Sleep -Milliseconds 400
@@ -271,9 +277,30 @@ while ($watch.ElapsedMilliseconds -lt 2000) {
     Start-Sleep -Milliseconds 100
 }
 Write-Host ("  state after POST: {0}" -f $stateNow)
+
+# the speech bubble window must be visible while the message is alive
+# (the runtime keeps protocol bubbles for a fixed 8 s, independent of ttlMs)
+$bubbleSeen = $false
+$watch = [System.Diagnostics.Stopwatch]::StartNew()
+while ($watch.ElapsedMilliseconds -lt 2500) {
+    $bubble = Get-BubbleWindow
+    if ($bubble -and [SmokeNative]::IsWindowVisible($bubble)) { $bubbleSeen = $true; break }
+    Start-Sleep -Milliseconds 100
+}
+Write-Host ("  bubble visible after POST: {0}" -f $bubbleSeen)
+
 Start-Sleep -Milliseconds 2800
 $h3 = Get-Health $PetPort
 Write-Host ("  state after TTL:  {0}  (expected idle)" -f $h3.state)
+
+$bubbleGone = $false
+$watch = [System.Diagnostics.Stopwatch]::StartNew()
+while ($watch.ElapsedMilliseconds -lt 12000) {
+    $bubble = Get-BubbleWindow
+    if (-not $bubble -or -not [SmokeNative]::IsWindowVisible($bubble)) { $bubbleGone = $true; break }
+    Start-Sleep -Milliseconds 200
+}
+Write-Host ("  bubble hidden after its ~8s lifetime: {0}" -f $bubbleGone)
 
 $invalid = 0
 try {
@@ -331,6 +358,8 @@ Write-Host '  - position memory: drag, quit, relaunch -> pet returns to the last
 Write-Host '  - cursor over the pet stays the normal arrow (no busy ring)'
 Write-Host '  - gaze: look follows the cursor in all 16 directions (including above the pet),'
 Write-Host '    stays neutral very close to the centre, and does not jitter near the boundary'
+Write-Host '  - bubble: hover pauses the progress bar and resume continues from the remaining time;'
+Write-Host '    near the top of the screen the bubble flips below the pet; fade-in is visible'
 Write-Host '  - tray: settings / show-hide / quit'
 
 Write-Host '== smoke finished =='
