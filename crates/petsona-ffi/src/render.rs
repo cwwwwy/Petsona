@@ -100,7 +100,54 @@ pub fn text_field(field: u32) -> Option<(PetsonaTextField, RuntimeTextField)> {
             PetsonaTextField::BubbleTiming,
             RuntimeTextField::BubbleTiming,
         ),
+        x if x == PetsonaTextField::WindowPosition as u32 => (
+            PetsonaTextField::WindowPosition,
+            RuntimeTextField::WindowPosition,
+        ),
+        x if x == PetsonaTextField::Conversation as u32 => (
+            PetsonaTextField::Conversation,
+            RuntimeTextField::Conversation,
+        ),
+        x if x == PetsonaTextField::PersonaSource as u32 => (
+            PetsonaTextField::PersonaSource,
+            RuntimeTextField::PersonaSource,
+        ),
+        x if x == PetsonaTextField::PersonaDraft as u32 => (
+            PetsonaTextField::PersonaDraft,
+            RuntimeTextField::PersonaDraft,
+        ),
+        x if x == PetsonaTextField::PersonaPreview as u32 => (
+            PetsonaTextField::PersonaPreview,
+            RuntimeTextField::PersonaPreview,
+        ),
         _ => return None,
     };
     Some(field)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn display_position_uses_an_appended_text_field_without_changing_legacy_position() {
+        assert_eq!(
+            text_field(PetsonaTextField::Position as u32),
+            Some((PetsonaTextField::Position, RuntimeTextField::Position))
+        );
+        assert_eq!(
+            text_field(PetsonaTextField::WindowPosition as u32),
+            Some((
+                PetsonaTextField::WindowPosition,
+                RuntimeTextField::WindowPosition
+            ))
+        );
+        assert_eq!(
+            text_field(PetsonaTextField::Conversation as u32),
+            Some((
+                PetsonaTextField::Conversation,
+                RuntimeTextField::Conversation
+            ))
+        );
+    }
 }

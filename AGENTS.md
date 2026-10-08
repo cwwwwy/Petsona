@@ -3,9 +3,8 @@
 ## 项目速览
 
 Petsona 是 Windows / macOS 桌宠：共享 Rust 核心与运行时，配合各端原生前端（当前 macOS
-使用 SwiftUI / AppKit，Windows 目标为 C# / WinUI 3 + Win32）。旧 egui 入口在迁移完成前保留，
-但不属于最终产品架构。读取 Codex 宠物包（`pet.json` + 8×9 / 8×11 图集），
-播放官方动画，支持人格、轻量 JSON 记忆、DeepSeek 短问候和本地状态协议。
+使用 SwiftUI / AppKit，Windows 目标为 C# / WinUI 3 + Win32）。旧 egui 入口与平台 shell 已删除。读取 Codex 宠物包（`pet.json` + 8×9 / 8×11 图集），
+按锁定的 Codex 资源基准播放动画，支持流式聊天、本地历史、偏好与习惯记忆、人格塑造和本地状态协议。
 
 平台现状：**Windows 是主要实测平台**；macOS 后端已接入，仍需在 mac 上人工验收
 （`docs/MACOS_VERIFICATION.md`）。CI 绿灯 ≠ macOS 可用。
@@ -19,7 +18,6 @@ Petsona 是 Windows / macOS 桌宠：共享 Rust 核心与运行时，配合各�
 | `crates/petsona-ffi/` | 原生前端 C ABI 雏形，稳定性与生命周期尚未验收 |
 | `apps/macos/` | SwiftUI / AppKit 原生 macOS 前端（迁移中） |
 | `docs/` | 平台架构、两端实机验收清单、`plans/` `execution/` 跨对话工作流文档 |
-| `docs/archive/` | 冻结的历史文档：旧 egui 入口验收清单（`WINDOWS_VERIFICATION-legacy-egui.md`）、Windows 问题跟踪（`WINDOWS_ISSUES.md`） |
 
 ## 常用命令
 
@@ -35,7 +33,7 @@ cargo fmt --check
 
 ```text
 Windows 快速: powershell -ExecutionPolicy Bypass -File scripts\verify-windows.ps1
-Windows 完整: powershell -ExecutionPolicy Bypass -File scripts\verify-windows.ps1 -Full   # 20 项 smoke
+Windows 完整: powershell -ExecutionPolicy Bypass -File scripts\verify-windows.ps1 -Full   # 完整原生 smoke
 macOS   完整: bash scripts/verify-macos-all.sh
 macOS   门禁: bash scripts/verify-macos-all.sh --gates-only
 ```
@@ -46,7 +44,7 @@ macOS   门禁: bash scripts/verify-macos-all.sh --gates-only
 - 窗口、托盘、菜单、穿透的肉眼部分仍按 `docs/*_VERIFICATION.md` 检查。
 
 macOS 原生工程需要完整 Xcode；修改工程 spec 时需要 XcodeGen，版本与生成工程须同步记录。
-旧 Windows 入口需要 VS Build Tools（含 C++ 桌面开发），未来 WinUI 前端另需 .NET/Windows SDK。
+Windows 原生前端需要 .NET、Windows SDK 与 Rust MSVC 链接工具。
 MSVC 缺 `link.exe` 的 GNU 回退写在 `docs/WINDOWS_VERIFICATION.md`。
 
 ## 协作偏好（硬规则）
@@ -78,64 +76,24 @@ MSVC 缺 `link.exe` 的 GNU 回退写在 `docs/WINDOWS_VERIFICATION.md`。
 - **完成**：所有本次范围内必需项通过、有证据、无未解决审查项才可宣布完成。必需测试受阻/跳过、人工检查未做时写“未完成/待验收”，不自行降低标准。
 - 新测试必须隔离数据目录、网络端口、自启项和凭据；应用宿主测试也必须在入口初始化前隔离。不得让测试启动默认用户实例。
 
-## 当前状态（2026-09-21）
+## 当前状态（2026-10-04）
 
-- 用户确认最终方向是共享 Rust 核心 + 原生前端：macOS SwiftUI/AppKit，Windows C#/WinUI 3/Win32；2026-09-20 确认两线并行推进（Windows 按 windows-native-rewrite 启动），Linux 不在范围。
-- Git HEAD 由 `git log` 为准（2026-09-21 最近提交：`1b2c2c1` 收口 W 矩阵、`6cdfaef` 修窗口光标）。计划与执行记录见上，文档版本不能替代 Git/工作区基线。
-- 文档布局（2026-09-21 清理）：现行清单只有 `docs/WINDOWS_VERIFICATION.md`（0/W/D/F），旧 egui 清单与旧问题跟踪在 `docs/archive/`；手动诊断脚本在 `scripts/diagnostics/`（隔离 home，不入门禁）。
-- **Windows 发布准备（2026-09-22）**：版本 `0.1.0-rc.1`（`Cargo.toml` 唯一来源，tag `windows-v*`）；发布包为 **self-contained**
-  （`WindowsAppSDKSelfContained` + `SelfContained`，解压即用，目录约 238 MB）；`mt.exe` **不能读 UNC 路径**，所以自包含产物只能在本地副本或 CI 构建，
-  UNC 下脚本自动回退 framework-dependent 并告警；release workflow 已补 `gh release create`（W-28，`-rc.` → pre-release）。
-  发布清单 §R 见 `docs/WINDOWS_VERIFICATION.md`，证据见 `docs/execution/windows-release-0.1.0-rc.1.md`。
-- Windows 线：**原生前端自动门禁 + 人工矩阵已闭合**（W1–W11 / W13 / W14 于 2026-09-21 通过，W12 多屏 / 重力 / 活动提醒 / 透明度 / 协议设置界面 / 托盘化 / 影子动画按计划 v1.1 §3.1 暂缓）；CR-W1 启动性能选 C（只记基线，不优化）、CR-W2 协议粘滞状态选 A（`action:"clear"` 已实现，smoke N25）。**剩余发布项**：D1–D6（release exe / 图标 / 打包 / tag / 干净机器 / 登录自启）、CI 首次运行、`-Full` 在桌面空闲时的干净复跑。旧入口（egui/Win32）冻结、保持可构建。
-- 当前 macOS 原生入口已从骨架推进到可构建/可测试/可协议 smoke 的实施状态，但**仍未完成完整原生验收**；剩余功能和人工项以执行记录 REV-02/04/05/07/08 及 M-01～M-06 为准。旧入口暂留作行为对照；Windows 旧验证结论不代表新原生实现已通过。
-- 2026-09-23 用户确认 macOS 后续版本最低支持 macOS 26；现行 SwiftUI/AppKit 设置窗口按 macOS 26+ 设计。最低版本由 `apps/macos/project.yml` 管理，XcodeGen 生成工程后必须同步记录并验证打包 `LSMinimumSystemVersion`。
-- 2026-09-26 用户决定：两端本地宠物列表单击只选择、双击才切换，Codex 候选双击导入；macOS 模型拉取期间显示加载状态，设置窗口打开期间显示 Dock 图标、关闭后恢复菜单栏模式。设置页继续使用系统原生 `NavigationSplitView`、`Form`、`List` 等控件，由 macOS 27 呈现对应系统外观，最低支持版本仍为 macOS 26。整体验收与交付在全部任务完成后集中进行；Windows W33 与 Mac A4/A5/A6/A11 的新交互仍待人工。
-- 2026-09-20 执行：在已有 runtime worker + ABI3 FFI、原生 SwiftUI/AppKit 宠物窗/气泡/Composer/设置/宠物库命令基础上，完成 DeepSeek 全配置、记忆管理、人格 CRUD/模板/导入导出、明确偏好提取、重复导入确认、拖放导入和固定缩放档位/状态栏菜单；Rust workspace、原生 XCTest 5/5、native smoke 6/6、Release 静态链接与 arm64 打包门禁通过，但不等于窗口视觉、IME、Keychain/LaunchAgent 真实行为、多屏、签名、公证人工通过。
-
-### 旧入口历史记录（非当前原生验收结论）
-
-- 历史基线 `664cde2`，后续 `eb99f71` 已包含批次 4–7，`ad045bb` 补空库问候/气泡修复；以下测试数字均为当时旧入口记录。
-- 决策（2026-09-18）：**Windows 优先**——先把 `docs/archive/WINDOWS_ISSUES.md`（当时为 `docs/WINDOWS_ISSUES.md`）全部问题修完并实机确认，
-  再开 Linux 端；Linux 可行性与范围决策要点见该文档附录，本轮不做。
-- 已合入：删除旧 `legacy/` 树、`petsona-app` UI 模块化、CJK 字体路径经 `PlatformHost` 注入、
-  Windows `autostart.rs` / `no_activate.rs` 分拆、方向姿势注视与影子 / 对话输入框动画。
-- 2026-09-17 本轮新增：macOS 设置页 LaunchAgent 开关、以 `NSScreen.visibleFrame` 计算工作区，
-  用临时目录 smoke 验证 LaunchAgent plist 开 / 关。
-- 2026-09-17 的完整 `bash scripts/verify-macos-all.sh` 曾通过：fmt / clippy / workspace 测试（app 14、core 58、
-  runtime 1、macOS shell 7）/ release 构建、34 项运行 smoke 和打包结构检查。当前运行会话没有可枚举的
-  winit 显示器，所以 visibleFrame runtime 检查明确 `[SKIP]`；坐标换算单测通过，真实可用区边缘行为与注销后自启仍待实机。
-- 2026-09-18 已提交（67c8b7f）：影子中心位于宠物窗口下方 22pt、40pt 交互窗完全避开宠物；编辑按钮与输入框共享
-  34pt 锚点并原位横向展开；注视改为宠物附近的椭圆触发区（短边额外留白 25%，退出迟滞 35%），左右换行先经过
-  对应的上 / 下边缘姿势；注视姿势间隔与活动采样均为 40ms。fmt / clippy / release 和 workspace 测试通过
-  （app 19、core 59、runtime 1、macOS shell 7）；33 项 macOS runtime smoke 与打包结构检查通过。
-  当前会话没有可枚举的显示器，NSScreen 工作区与设置 Key Window 两项明确 `[SKIP]`；影子 / 输入框过渡和注视观感仍需人工确认。
-- GitHub 仓库：`https://github.com/cwwwwy/Petsona.git`（2026-09-16 由 bytepet 改名；
-  旧地址自动重定向，其他机器仍需 `git remote set-url origin ...` 更新一次）。
-- 测试基线：`cargo test --workspace` 全绿（core / app / runtime / shell-windows；
-  macOS 外壳另有几何单测，mac 上跑）。
-- Windows 自动化：`verify-windows.ps1 -Full` 全绿，20 项 smoke：T1–T4、A1/A4/A8/A9/A11/A13、
-  B7–B9/B11–B14、C3/C6/C7；受限会话无法写 HKCU 时 T4 明确 `[SKIP]`。
-- Windows 实机：A1–A7、A10–A12、B1–B6、B9、B12–B14、C1 已通过（B7 自动化 + 真实 SendInput 通过）；
-  B5/B8/B10/B15/C4/C5 与 H1–H5 仍需实机确认，细节以 `docs/WINDOWS_VERIFICATION.md` 为准。
-- macOS 实机：此前 A3、B1–B4、B6–B7 曾通过；本批次新增 A4/A6/A11、B8/B9 的完整设置和交互代码，仍需用户人工复验 DeepSeek/人格/记忆、拖放冲突确认、固定缩放菜单和 Keychain；B5 注视视觉、B11 Activity Monitor、A12 下一次登录启动仍待确认；多屏 / Retina 按用户决定暂缓，签名 / 公证待凭据。
-
-### 旧入口阶段 7 剩余（历史待办）
-
-1. **Windows 问题清零（原主线，当前以任务计划为准）**：`docs/archive/WINDOWS_ISSUES.md` 批次 1–7 代码已完成（含移除内置宠物、
-   首启设置窗、立即活动、注视流畅、缩放过渡、右键回馈、子窗白线 / 闪框修复）；剩余是**实机复测**与 D 组打包交付。
-2. **Windows 首次发布**：清单清零后定版本 → 先 `workflow_dispatch` 试跑 → 再打 `windows-v*` tag；
-   发布前必须解决 GitHub Release 通道（W-28）；W-27 已通过移除内置宠物解决；
-   macOS 拿到 Developer ID 后走 `sign-macos.sh` / `notarize-macos.sh`。
-3. **macOS 人工验收**：确认 A12 LaunchAgent 在下一次登录启动、`NSScreen.visibleFrame` 的窗口夹取 / 重力落点、
-   B5 注视视觉、B8 缩放、B9 caret gaze、B11 Activity Monitor、A11 Keychain、真实签名 / 公证；多屏 / Retina 暂缓。
+- Git HEAD 与工作区以只读查询为准；当前四阶段工作基于 `07400ce`，大量实现仍未提交。不得覆盖或还原已有改动。
+- 最终架构为共享 Rust core/runtime/ABI3 + macOS SwiftUI/AppKit + Windows C#/WinUI 3/Win32；旧 egui 与 shell 已于 2026-09-22 删除，历史可从 Git 查阅。
+- macOS 最低版本为 26，统一由 `apps/macos/project.yml` 管理；XcodeGen 生成工程后同步记录工具版本，并验证包内 `LSMinimumSystemVersion`。
+- 本地宠物单击只选择、双击才切换，Codex 候选双击导入；设置使用系统原生控件，打开时显示 Dock 图标，关闭后恢复菜单栏模式。
+- macOS 桌面陪伴主线见 `docs/plans/macos-companion-evolution.md` 与同名执行记录。聊天、历史、记忆、人格来源已落地；完整 Codex 桌面一致性、macOS 26 实机、Windows 共享回归仍待验收，自动门禁通过不能关闭这些项。
+- 2026-10-04 用户要求修复注视、对齐浮层 UI、减少高级设置并清理旧代码/参考文件/缓存。macOS 设置只暴露模型连接、人格、记忆与历史控制，以及必要桌面行为；隐藏调参的已有配置保留，界面仅提交可见字段，客户端合并完整投影和未确认修改再发送。
+- 自动 XCTest/smoke 使用隔离 home、端口、自启目录与假 API Key 环境变量，入口初始化前完成隔离，避免正式 Keychain 授权弹窗。真实 Keychain 与登录自启只在专门人工验收时测试。
+- 已清理旧 `docs/archive/`、无入口的 Windows `.rc`、旧构建副本及一次性光标/启动计时脚本；macOS 构建说明集中到 README，验收步骤集中到平台清单。当前计划、执行证据、测试夹具和用户数据保留。
+- Windows 原生已完成早期人工 W 矩阵；新增 W33、发布/登录/干净机器项仍以 `docs/WINDOWS_VERIFICATION.md` 和执行记录为准，macOS 证据不能替代 Windows 证据。
 
 ## 架构约定
 
 - 一个仓库、一个 workspace、共享 `petsona-core` / `petsona-runtime` / `petsona-ffi`；Windows 与
   macOS 各自拥有原生前端，可独立发布（tag `windows-v*` / `macos-v*`），不长期维护平台分支。
 - 最终前端不依赖 egui、eframe 或 winit。**旧 egui UI 与两个旧 shell 已于 2026-09-22 删除**（REQ-W15）；
-  需要行为对照时用 `git checkout <删除前 commit> -- crates/petsona-app crates/petsona-shell-windows crates/petsona-shell-macos` 取回。
+  需要历史对照时用只读 `git show` 查询，不恢复死代码。
 - Rust 负责业务状态、动画与平台无关几何；原生前端负责 UI 主线程、窗口、输入、托盘、菜单和渲染。
 - `contracts/petsona.h` 是跨语言边界；不跨边界传递 Rust 引用、容器或分配器所有权。
 - `PhysicalRect` 是跨混合 DPI 的唯一几何单位（物理像素）；逻辑点只在平台前端边界换算。
@@ -169,9 +127,9 @@ MSVC 缺 `link.exe` 的 GNU 回退写在 `docs/WINDOWS_VERIFICATION.md`。
 - 日志：数据目录 `logs/petsona.log`；单实例锁：数据目录 `petsona.lock`。
 - 启动耗时基线（2026-09-21，Release，隔离 home，同一构建）：`Start-Process` → 宠物窗可见
   本地热启动约 0.55 s、本地冷启动约 3.2 s、从 `\\wsl.localhost` UNC 路径启动约 4.2 s；
-  慢在 WinUI/WindowsAppSDK 宿主与托管依赖初始化，不在宠物窗创建（`.scratch/startup-timing.ps1`）。
+  慢在 WinUI/WindowsAppSDK 宿主与托管依赖初始化，不在宠物窗创建；历史证据见 `docs/execution/windows-native-rewrite.md` E-W15d。
 - 当前 release profile：`lto = "thin"`、`codegen-units = 1`、`strip = true`、`panic = "unwind"`。
-  旧入口曾使用 abort；新 FFI 的 panic 终止处理尚有 REV-05，不能把 unwind 当作已完成的故障隔离。
+  FFI 的 panic 隔离以具体测试和人工验收记录为准，不能仅因配置为 unwind 就宣布通过。
 - Windows 打包产物：`dist\Petsona-windows-x64-<version>.zip`（含 exe、图标、VERSION、README）；
   exe 图标由 `apps/windows/Petsona/Petsona.csproj` 的 `<ApplicationIcon>` 直接内嵌
   `packaging\windows\Petsona.ico`（旧 Rust build.rs 已随旧外壳删除）；窗口/任务栏图标由
@@ -180,46 +138,10 @@ MSVC 缺 `link.exe` 的 GNU 回退写在 `docs/WINDOWS_VERIFICATION.md`。
 ## 坑与教训（别再重新推导）
 
 - **拥有窗口的线程必须抽消息**：跨线程 `GetWindowTextW` 是同步 `SendMessage`，会永久阻塞。
-  `style_popup_window` 只处理本线程窗口 + 菜单线程跑 `GetMessageW` 循环（`WM_APP+1` 唤醒），缺一不可。
-- **Win32 菜单要能 Esc / 点外关闭**：owner 必须是能成为前台的顶层窗口；弹出前
-  `SetForegroundWindow(owner)`，结束后 `PostMessage(WM_NULL)` 并把前台还给原窗口。B7 因此不受影响。
-- **菜单连点会排队叠加**：`show()` 里若菜单已打开先 `PostMessage(WM_CANCELMODE)`，
-  菜单线程每次关闭后只取最新请求。守卫：smoke T3。
-- **气泡 / 输入框“从侧面滑入”是 DWM 显示过渡**：必须在窗口第一次显示前设置
-  `DWMWA_TRANSITIONS_FORCEDISABLED`（先隐藏创建 warm-up → 设属性 → 再显示）。该属性读不回来，
-  自动化靠探针 + smoke B9。
-- **进场动画是自绘的**：气泡从下往上 8px / 160ms；影子悬停 180ms 变为编辑按钮，
-  输入框从按钮位置展开、关闭时缩回（220ms / 180ms）。不再通过移动 / 改变窗口几何做输入框动画。
-  气泡底部 `BUBBLE_BOTTOM_PADDING` 与窗口 `BUBBLE_WINDOW_GAP` 是成对常量，改一处必须改另一处。
-- **winit 会重设整份窗口样式**：鼠标穿透 / 显示等 flag 变化时，winit 按自己的 flag 重算 GWL_STYLE，把
-  `WS_CAPTION` / `WS_THICKFRAME` 加回来（透明子窗闪现一次系统边框）。修法：窗口过程拦截 `WM_STYLECHANGING`
-  就地剥掉这些位（frameless 子类也要拦，不只是 NOACTIVATE），配合隐藏 warm-up + 每帧/显示后重申；
-  守卫：连续 12 轮开关输入框，可见帧样式必须始终是 `0x96000000`。
-- **子窗保留 1px 非客户区（透明窗顶部白线的真根因）**：egui viewport 窗口的客户区原点比窗口低 1px ——
-  顶部 1px 被系统画白、底部 1px 被裁（表现为「输入框下方被横切」）。SWP_FRAMECHANGED 与 DWM 边框属性都无效；
-  修法：窗口过程 `WM_NCCALCSIZE`（wparam!=0 → 返回 0，客户区=整窗）+ `WM_NCPAINT` → 0，安装子类后
-  强制一次 `SetWindowPos(SWP_FRAMECHANGED)`；可激活窗口用 frameless-only 子类（不强制 NOACTIVATE）。
-- **egui 子窗不能停止渲染**：未渲染的 viewport 会被销毁，下次显示是新窗口（肉眼即「偶发重启」）。
-  子窗必须每帧 `show_viewport_immediate`，隐藏用 `with_visible(false)` + 空内容。
-- **按精灵尺寸缩放**：`pet_window_size()` 宽度有 `PET_WINDOW_MIN_WIDTH` 钳制，小档位不缩；
-  影子 / 注视这类跟随精灵的量要用 `pet_size()`。
+  原生窗口查询必须确认所属线程和消息循环，避免跨线程同步消息死锁。
 - **Win11 会给顶层窗口画系统边框 / 圆角**：剥掉所有经典 frame 样式后仍有一条 1px 边框（透明子窗上就是顶部白线）。
   修法：`DWMWA_BORDER_COLOR = DWMWA_COLOR_NONE` + `DWMWA_WINDOW_CORNER_PREFERENCE = DWMWCP_DONOTROUND`，
   宠物 / 气泡 / 影子 / 输入框都要设；旧系统会拒绝属性，失败无害。
-- **winit 忽略非 resizable 窗口的运行时 resize**：`.with_resizable(false)` + `.with_inner_size()` 改不动尺寸；
-  需要动态尺寸的窗口要一次给最大尺寸、内容在里面缩放。
-- **`TextEdit::frame(Frame::NONE)` 会忽略 `.margin()`**：margin 仅默认 frame 生效；撑高用 `.min_size()` +
-  `.vertical_align()`。
-- **egui 会回收未渲染的 viewport**：气泡 / 影子 / 输入框被隐藏后若停止渲染，下次出现是**新建 Win32 窗口**，
-  `warm-up → 设属性 → 显示` 只对首次有效，之后会带一帧默认边框并播放 DWM 滑入。修法：隐藏时重置 warm-up 标志，
-  每次重建都重做 warm-up；`style_popup_window` 需同时禁用 DWM 非客户区渲染。
-- **旧 egui 输入框是单一轻量组件**：固定小影子始终显示在宠物下方；悬停变为圆形编辑按钮；点击按钮展开
-  小型输入框，只保留输入框和向上箭头发送按钮。输入框宽度约 300pt，文字自动换行并增高；
-  Enter 发送、Shift+Enter 换行、Esc 关闭。该记录只约束旧 egui 入口；最终原生前端使用平台文本控件，
-  但必须保持相同快捷键和 IME 行为。
-- **Win32 菜单打开设置时不能恢复旧前台**：菜单线程在 `打开设置` / `更换宠物` 命令后跳过
-  `SetForegroundWindow(previous)`；`WindowsHost::confirm_settings_focus` 在设置窗出现后重新确认前台，
-  避免“聚焦后立刻失去焦点”。后台脚本会话受 Windows 前台锁限制，焦点观感仍需实机确认。
 - **V2 注视是方向姿势表**：look-row-9/10 每帧是目标姿势，不是 turn/return 时间线；
   同一行内从中性 / 当前帧沿帧序移动到目标，跨左右行先经过旧行对应的上 / 下边缘姿势，再从新行同侧边缘进入目标；
   触发区是椭圆，半径为宠物半尺寸 + 短边 25% 留白，退出留白 35%，姿势步进 16ms（`Turning`/`Returning` 期间按 16ms 请求重绘），
@@ -233,17 +155,8 @@ macOS 活动指针采样 40ms，离开触发区回中性帧。
   `monitor_for_point` + 单测），显示器不存在时回落到最近可见工作区；
   macOS 通过 `NSScreen.visibleFrame` 排除 Dock / 菜单栏；真实多屏 / Retina 仍待人工验收。
 - **HKCU Run 在受限会话会 ACCESS_DENIED（错误 5）**：smoke T4 此时明确 `[SKIP]`，不误报失败。
-- **winit `decorations(false)` 不是真无边框**：窗口仍带 `WS_CAPTION | WS_BORDER | WS_DLGFRAME |
-  WS_SYSMENU | WS_MINIMIZEBOX | WS_MAXIMIZEBOX`，任何状态变化都会画出边框（就是“闪现”）。
-  修法：去掉这些位 + `WS_POPUP` + `SetWindowPos(SWP_FRAMECHANGED)`，再重新
-  `DwmEnableBlurBehindWindow` 恢复透明。实测 `style=0x96000000`。
-- **子 viewport 不会经过根窗口的 `present_window`**：气泡 / 对话窗要各自处理 Win32 风格。
-  对话窗需要键盘焦点，所以用 `prepare_activatable_popup_window` 去边框但保留可激活；
-  每帧重新确认，避免 winit patch 鼠标穿透 / 尺寸时把标题栏加回来。smoke B9 已验证。
 - **不要每帧重复发 `InnerSize` / `WindowLevel`**：会反复 `SetWindowPos` 导致闪；
   用 `applied_window_size` / `applied_always_on_top` 缓存。
-- **`tray-icon` 原生菜单在 Windows 事件循环上会卡死**：Windows 用专用 Win32 菜单线程，
-  macOS 用 AppKit 原生菜单。
 - **窗口类不设光标 = 光标形状被"冻住"**：`WNDCLASSEXW.HCursor` 为 NULL 且窗口过程不处理 `WM_SETCURSOR` 时，Windows 不安装光标，
   窗口上会保留进入前的形状 —— shell 启动程序时设的 `IDC_APPSTARTING`（忙碌圈）就卡在宠物上，直到鼠标移进别的有光标的窗口。
   修法：注册窗口类时设 `HCursor = LoadCursor(NULL, IDC_ARROW)`，并在 `WM_SETCURSOR` + `HTCLIENT` 时 `SetCursor` 后返回 1；托盘 owner 窗口同样补。
@@ -257,7 +170,6 @@ macOS 活动指针采样 40ms，离开触发区回中性帧。
   accept 后显式 `set_nonblocking(false)`（`every_request_gets_a_response` 回归测试）。
 - **HTTRANSPARENT 只在同线程窗口可靠转发**：跨进程需要 `WS_EX_TRANSPARENT`，但会引入抖动——
   “像素级穿透”和“零闪烁”要权衡。
-- **macOS 只靠 egui 事件拿不到窗口外全局光标**：转头、拖拽、点击穿透都要走 NSEvent / CoreGraphics。
 - **WSL 起来的 PowerShell 会污染 `PATHEXT`**（本机实测只剩 `.CPL`）：`Get-Command dotnet` / `rustc` 找不到，`& "C:\...\dotnet.exe"` 也会**静默失败**
   （无输出、无退出码）。`verify-windows.ps1` / `package-windows.ps1` 已在开头把它恢复成 Windows 默认值，新脚本照抄那段防护。
 - **PowerShell 5.1**：含中文的 `.ps1` 必须 UTF-8 **BOM**；`Compress-Archive` 会写反斜杠条目名，

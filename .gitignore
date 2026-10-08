@@ -14,3 +14,9 @@
 apps/windows/**/bin/
 apps/windows/**/obj/
 .vs/
+
+# Xcode local state and build caches
+apps/macos/**/xcuserdata/
+apps/macos/**/DerivedData/
+apps/macos/build/
+apps/macos/.build/

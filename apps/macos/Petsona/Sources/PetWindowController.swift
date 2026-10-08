@@ -49,8 +49,16 @@ final class PetWindowController: NSObject {
 
     func update() {
         let snapshot = engine.snapshot
-        let width = CGFloat(max(snapshot.cell_width, 1)) * CGFloat(max(snapshot.scale, 0.1))
-        let height = CGFloat(max(snapshot.cell_height, 1)) * CGFloat(max(snapshot.scale, 0.1))
+        let savedPosition = engine.savedWindowPosition()
+        let savedScreen = PetDisplayGeometry.screen(for: savedPosition,
+                                                   current: window.screen,
+                                                   screens: NSScreen.screens)
+        let screen = hasAppliedInitialPosition ? (window.screen ?? savedScreen) : savedScreen
+        let backingScale = max(screen?.backingScaleFactor ?? 1, 1)
+        let width = CGFloat(max(snapshot.cell_width, 1))
+            * CGFloat(max(snapshot.scale, 0.1)) / backingScale
+        let height = CGFloat(max(snapshot.cell_height, 1))
+            * CGFloat(max(snapshot.scale, 0.1)) / backingScale
         let requestedSize = NSSize(width: width, height: height)
         if !hasAppliedInitialSize {
             window.setContentSize(requestedSize)
@@ -60,7 +68,7 @@ final class PetWindowController: NSObject {
             targetSize = requestedSize
             let currentFrame = window.frame
             let targetFrame = NSRect(x: currentFrame.midX - requestedSize.width * 0.5,
-                                     y: currentFrame.minY,
+                                     y: currentFrame.midY - requestedSize.height * 0.5,
                                      width: requestedSize.width,
                                      height: requestedSize.height)
             NSAnimationContext.runAnimationGroup { context in
@@ -69,12 +77,25 @@ final class PetWindowController: NSObject {
                 window.animator().setFrame(targetFrame, display: true)
             }
         }
-        if !hasAppliedInitialPosition, snapshot.ready != 0,
-           let (x, y) = engine.savedPosition() {
-            let scale = max(window.backingScaleFactor, 0.1)
-            let maxY = NSScreen.screens.map(\.frame.maxY).max() ?? 900
-            window.setFrameOrigin(NSPoint(x: x / scale,
-                                          y: maxY - y / scale - height))
+        if !hasAppliedInitialPosition, snapshot.ready != 0, let screen {
+            let frame: NSRect
+            if let savedPosition {
+                frame = PetDisplayGeometry.restoredFrame(position: savedPosition,
+                                                         size: requestedSize,
+                                                         screen: screen)
+            } else if let (x, y) = engine.savedPosition(),
+                      let legacyFrame = PetDisplayGeometry.restoredLegacyFrame(
+                        x: x,
+                        y: y,
+                        size: requestedSize,
+                        backingScale: window.backingScaleFactor,
+                        screenFrames: NSScreen.screens.map(\.frame),
+                        visibleFrames: NSScreen.screens.map(\.visibleFrame)) {
+                frame = legacyFrame
+            } else {
+                frame = MacOverlayLayout.clamp(window.frame, to: screen.visibleFrame)
+            }
+            window.setFrame(frame, display: true)
             hasAppliedInitialPosition = true
         }
         window.alphaValue = snapshot.ready != 0 && snapshot.pet_visible != 0 && snapshot.has_pet != 0 ? 1 : 0
@@ -195,6 +216,16 @@ private final class PetView: NSView {
     override func mouseUp(with event: NSEvent) {
         let dragged = isDragging
         if dragged {
+            if let window {
+                let targetScreen = PetDisplayGeometry.screen(for: window.frame,
+                                                             current: window.screen,
+                                                             screens: NSScreen.screens)
+                if let targetScreen {
+                    window.setFrame(MacOverlayLayout.clamp(window.frame,
+                                                           to: targetScreen.visibleFrame),
+                                    display: true)
+                }
+            }
             engine.send(kind: PETSONA_COMMAND_SET_STATE, ttlMilliseconds: 1, text: "idle")
             onDragEnded?()
         }
@@ -211,9 +242,11 @@ private final class PetView: NSView {
     private func rememberPosition() {
         guard let window, let screen = window.screen else { return }
         let scale = max(window.backingScaleFactor, 0.1)
-        let maxY = NSScreen.screens.map(\.frame.maxY).max() ?? screen.frame.maxY
+        let globalTop = NSScreen.screens.map(\.frame.maxY).max() ?? screen.frame.maxY
         engine.sendPosition(x: window.frame.minX * scale,
-                            y: (maxY - window.frame.maxY) * scale)
+                            y: (globalTop - window.frame.maxY) * scale)
+        engine.sendWindowPosition(PetDisplayGeometry.savedPosition(frame: window.frame,
+                                                                   screen: screen))
     }
 
     private func loadAtlasIfNeeded() {

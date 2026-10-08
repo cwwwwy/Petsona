@@ -8,6 +8,7 @@ PETSONA_APP="${PETSONA_NATIVE_APP:-$PETSONA_ROOT/.scratch/macos-native-gates/Bui
 PETSONA_BINARY="$PETSONA_APP/Contents/MacOS/Petsona"
 PETSONA_SMOKE_HOME="$(mktemp -d "${TMPDIR:-/tmp}/petsona-native-smoke.XXXXXX")"
 PETSONA_STATE_PORT="${PETSONA_SMOKE_STATE_PORT:-17872}"
+PETSONA_SMOKE_DUMMY_KEY="smoke-test-placeholder"
 PETSONA_PID=""
 PETSONA_SECOND_PID=""
 PETSONA_PASS_COUNT=0
@@ -81,9 +82,14 @@ PET_ID="$(plutil -extract id raw -o - - <<< "$(cat "$FIXTURE/pet.json")" 2>/dev/
 mkdir -p "$PETSONA_SMOKE_HOME/pets"
 cp -R "$FIXTURE" "$PETSONA_SMOKE_HOME/pets/$PET_ID"
 cat > "$PETSONA_SMOKE_HOME/config.json" <<EOF
-{"activePet":"$PET_ID","firstRun":false,"greeting":{"enabled":false},"window":{"autoWalk":{"enabled":false}},"stateServer":{"enabled":true,"port":$PETSONA_STATE_PORT}}
+{"activePet":"$PET_ID","firstRun":false,"greeting":{"enabled":false},"deepseek":{"apiKeyEnv":"PETSONA_MACOS_SMOKE_API_KEY"},"window":{"autoWalk":{"enabled":false}},"stateServer":{"enabled":true,"port":$PETSONA_STATE_PORT}}
 EOF
+grep -Fq '"apiKeyEnv":"PETSONA_MACOS_SMOKE_API_KEY"' "$PETSONA_SMOKE_HOME/config.json" || \
+  fail 'smoke 配置没有指向隔离的凭据环境变量'
+[[ -n "$PETSONA_SMOKE_DUMMY_KEY" ]] || fail 'smoke 凭据环境变量为空'
+pass 'runtime smoke 使用测试 API Key 环境变量，不访问系统钥匙串'
 
+PETSONA_MACOS_SMOKE_API_KEY="$PETSONA_SMOKE_DUMMY_KEY" \
 PETSONA_HOME="$PETSONA_SMOKE_HOME" RUST_LOG=info "$PETSONA_BINARY" \
   >"$PETSONA_SMOKE_HOME/stdout.log" 2>"$PETSONA_SMOKE_HOME/stderr.log" &
 PETSONA_PID=$!
@@ -93,6 +99,9 @@ for _ in {1..80}; do
   curl -fsS --connect-timeout 1 "http://127.0.0.1:$PETSONA_STATE_PORT/health" >/dev/null 2>&1 && break
   sleep 0.1
 done
+
+[[ "$(plutil -extract deepseek.apiKeyEnv raw -o - "$PETSONA_SMOKE_HOME/config.json")" == 'PETSONA_MACOS_SMOKE_API_KEY' ]] || \
+  fail '运行时配置未保留隔离凭据（请检查 deepseek 字段拼写）'
 kill -0 "$PETSONA_PID" 2>/dev/null || fail '原生 Petsona app 未保持运行'
 pass '原生 SwiftUI/AppKit app 进程保持运行'
 
@@ -116,6 +125,7 @@ pass '原生入口执行 TTL 回退'
 
 PETSONA_FIRST_HOME="$PETSONA_SMOKE_HOME"
 PETSONA_SECOND_STDERR="$PETSONA_SMOKE_HOME/second-stderr.log"
+PETSONA_MACOS_SMOKE_API_KEY="$PETSONA_SMOKE_DUMMY_KEY" \
 PETSONA_HOME="$PETSONA_FIRST_HOME" RUST_LOG=info "$PETSONA_BINARY" \
   >"$PETSONA_SMOKE_HOME/second-stdout.log" 2>"$PETSONA_SECOND_STDERR" &
 PETSONA_SECOND_PID=$!

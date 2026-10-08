@@ -1,7 +1,6 @@
 > **当前产品线：原生前端（`apps/windows`，C# / WinUI 3 + Win32）。**
 > 本文件只维护原生线的准备（0）、人工验收（W）、打包发布（D）与自动化覆盖（F）；
-> 旧 egui/Win32 入口的清单已按用户决定冻结并移入
-> [`docs/archive/WINDOWS_VERIFICATION-legacy-egui.md`](archive/WINDOWS_VERIFICATION-legacy-egui.md)。
+> 旧 egui/Win32 清单已于 2026-10-04 清理，历史可通过 Git 查询。
 > 执行证据见 [`docs/execution/windows-native-rewrite.md`](execution/windows-native-rewrite.md)。
 
 # Petsona Windows 实机验收清单
@@ -20,8 +19,6 @@ powershell -ExecutionPolicy Bypass -File scripts\verify-windows.ps1 -Full
 $env:PETSONA_HOME = Join-Path $env:TEMP "petsona-win-test"
 & "apps\windows\Petsona\bin\x64\Release\net10.0-windows10.0.26100.0\win-x64\Petsona.exe"
 
-# 旧 egui 入口（已冻结，仅供历史对照）
-cargo run -p petsona-shell-windows
 ```
 
 本机环境（2026-09-21 核对）：**VS Build Tools 18（含 C++ 工具）已安装**，`verify-windows.ps1` 因此走
@@ -191,4 +188,4 @@ webp / 点击 / 动画帧 / 托盘菜单 / 聚焦 / 拖动动画 / 注视 / 光�
 
 运行注意：smoke 使用隔离 `PETSONA_HOME` 与空闲端口，但点击 / 拖动 / 注视类用例会**真实操作物理鼠标**——
 跑 `-Full` 或 `windows-smoke.ps1` 时不要同时使用鼠标，否则 smoke 会自报「物理光标被另一输入设备移动」
-（N15 `[SKIP]`）并连带 N18/N20/N21 假失败；这类失败重跑即可。旧 egui 入口的 20 项 smoke 清单见归档文档。
+（N15 `[SKIP]`）并连带 N18/N20/N21 假失败；这类失败重跑即可。旧 egui 入口与清单已删除，历史见 Git。

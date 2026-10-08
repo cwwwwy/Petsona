@@ -709,6 +709,8 @@ dependencies = [
  "time",
  "tracing",
  "tracing-subscriber",
+ "ureq",
+ "uuid",
 ]
 
 [[package]]

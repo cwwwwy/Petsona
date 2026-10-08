@@ -43,7 +43,6 @@ jobs:
         env:
           PETSONA_NATIVE_APP: dist/Petsona.app
           PETSONA_SMOKE_STATE_PORT: 17872
-          PETSONA_SMOKE_HOOK_PORT: 17873
         run: bash scripts/macos-smoke.sh
 
       - name: Upload macOS artifacts

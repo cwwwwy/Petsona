@@ -43,8 +43,34 @@ pub struct Persona {
     pub system_prompt: String,
     pub greeting: Option<String>,
     pub traits: PersonaTraits,
+    #[serde(default)]
+    pub style_profile: Option<PersonaStyleProfile>,
+    #[serde(default)]
+    pub source: Option<PersonaSource>,
     /// Built-in personas can be edited but not deleted.
     pub builtin: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+#[serde(rename_all = "camelCase", default)]
+pub struct PersonaStyleProfile {
+    pub personality: String,
+    pub expression_style: String,
+    pub response_habits: String,
+    pub relationship: String,
+    pub examples: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct PersonaSource {
+    pub kind: String,
+    pub label: String,
+    pub description: String,
+    pub sample_count: usize,
+    #[serde(default)]
+    pub target_speaker: Option<String>,
+    pub generated_at: i64,
 }
 
 impl Default for Persona {
@@ -58,6 +84,8 @@ impl Default for Persona {
                 .to_string(),
             greeting: Some("我在这儿呢，需要我陪你聊聊吗？".to_string()),
             traits: PersonaTraits::default(),
+            style_profile: None,
+            source: None,
             builtin: true,
         }
     }
@@ -103,6 +131,32 @@ impl Persona {
                     .unwrap_or_default()
             ));
         }
+        if let Some(profile) = &self.style_profile {
+            let mut authored_style = vec!["【人格设定】".to_string()];
+            for (label, value) in [
+                ("性格", profile.personality.as_str()),
+                ("表达方式", profile.expression_style.as_str()),
+                ("回应习惯", profile.response_habits.as_str()),
+                ("与用户的关系", profile.relationship.as_str()),
+            ] {
+                if !value.trim().is_empty() {
+                    authored_style.push(format!("{label}：{}", value.trim()));
+                }
+            }
+            if !profile.examples.is_empty() {
+                authored_style.push(format!(
+                    "表达示例（只作为风格参考）：{}",
+                    profile
+                        .examples
+                        .iter()
+                        .take(3)
+                        .map(String::as_str)
+                        .collect::<Vec<_>>()
+                        .join("；")
+                ));
+            }
+            parts.push(authored_style.join("\n"));
+        }
         parts.push(
             "只输出你要对用户说的话，不要描述自己的动作或心理活动，不要使用 Markdown 标题。"
                 .to_string(),
@@ -119,6 +173,26 @@ impl Persona {
         }
         if self.system_prompt.trim().is_empty() {
             return Err(Error::config("persona system prompt must not be empty"));
+        }
+        if let Some(profile) = &self.style_profile {
+            for value in [
+                &profile.personality,
+                &profile.expression_style,
+                &profile.response_habits,
+                &profile.relationship,
+            ] {
+                if value.chars().count() > 4000 {
+                    return Err(Error::config("persona style field exceeds 4000 characters"));
+                }
+            }
+            if profile.examples.len() > 8
+                || profile
+                    .examples
+                    .iter()
+                    .any(|example| example.chars().count() > 1000)
+            {
+                return Err(Error::config("persona examples exceed the supported size"));
+            }
         }
         Ok(())
     }

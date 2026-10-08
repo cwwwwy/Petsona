@@ -1,5 +1,22 @@
 import AppKit
 
+/// All inputs are AppKit screen points. Never mix atlas pixels into this rule.
+enum PetGazeGeometry {
+    static let centerDeadZone: CGFloat = 1
+
+    static func target(cursor: NSPoint, petFrame: NSRect, active: Bool) -> NSPoint? {
+        guard petFrame.width > 0, petFrame.height > 0 else { return nil }
+        let dx = cursor.x - petFrame.midX
+        let dy = petFrame.midY - cursor.y
+        let margin = min(petFrame.width, petFrame.height) * (active ? 0.35 : 0.25)
+        let radiusX = petFrame.width / 2 + margin
+        let radiusY = petFrame.height / 2 + margin
+        guard dx * dx / (radiusX * radiusX) + dy * dy / (radiusY * radiusY) <= 1,
+              hypot(dx, dy) > centerDeadZone else { return nil }
+        return NSPoint(x: dx, y: dy)
+    }
+}
+
 @MainActor
 final class GazeStabilizer {
     static let stepDegrees = 22.5

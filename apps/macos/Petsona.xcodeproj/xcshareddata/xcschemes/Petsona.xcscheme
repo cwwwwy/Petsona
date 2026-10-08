@@ -34,7 +34,7 @@
             ActionType = "Xcode.IDEStandardExecutionActionsCore.ExecutionActionType.ShellScriptAction">
             <ActionContent
                title = "Prepare isolated XCTest home"
-               scriptText = "set -euo pipefail&#10;test_root=&quot;${PROJECT_DIR}/../../.scratch/macos-native-tests&quot;&#10;mkdir -p &quot;$test_root/host-home&quot;&#10;rm -f &quot;$test_root/host-started&quot;&#10;printf &apos;%s\n&apos; &apos;{&quot;stateServer&quot;:{&quot;enabled&quot;:false},&quot;deepSeek&quot;:{&quot;apiKeyEnv&quot;:&quot;PETSONA_XCTEST_HOST_API_KEY&quot;}}&apos; &gt; &quot;$test_root/host-home/config.json&quot;&#10;: &gt; &quot;$test_root/host-active&quot;&#10;">
+               scriptText = "set -euo pipefail&#10;test_root=&quot;${PROJECT_DIR}/../../.scratch/macos-native-tests&quot;&#10;mkdir -p &quot;$test_root/host-home&quot;&#10;rm -f &quot;$test_root/host-started&quot;&#10;printf &apos;%s\n&apos; &apos;{&quot;stateServer&quot;:{&quot;enabled&quot;:false},&quot;deepseek&quot;:{&quot;apiKeyEnv&quot;:&quot;PETSONA_XCTEST_HOST_API_KEY&quot;}}&apos; &gt; &quot;$test_root/host-home/config.json&quot;&#10;: &gt; &quot;$test_root/host-active&quot;&#10;">
                <EnvironmentBuildable>
                   <BuildableReference
                      BuildableIdentifier = "primary"

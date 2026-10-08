@@ -38,11 +38,20 @@ public sealed class AbiTests
         Assert.Equal(0, (int)PetsonaTextField.State);
         Assert.Equal(16, (int)PetsonaTextField.ImportConflict);
         Assert.Equal(18, (int)PetsonaTextField.BubbleTiming);
+        Assert.Equal(19, (int)PetsonaTextField.WindowPosition);
+        Assert.Equal(20, (int)PetsonaTextField.Conversation);
         Assert.Equal(1u, (uint)PetsonaCommandKind.SetVisibility);
         Assert.Equal(10u, (uint)PetsonaCommandKind.SetAlwaysOnTop);
         Assert.Equal(20u, (uint)PetsonaCommandKind.SetGazeTarget);
         Assert.Equal(35u, (uint)PetsonaCommandKind.ClearImportConflict);
         Assert.Equal(43u, (uint)PetsonaCommandKind.SetBubblePaused);
+        Assert.Equal(44u, (uint)PetsonaCommandKind.SetWindowPosition);
+        Assert.Equal(48u, (uint)PetsonaCommandKind.ClearConversationHistory);
+        Assert.Equal(49u, (uint)PetsonaCommandKind.LoadEarlierConversationHistory);
+        Assert.Equal(50u, (uint)PetsonaCommandKind.ReviewMemoryCandidate);
+        Assert.Equal(55u, (uint)PetsonaCommandKind.PreviewPersonaDraft);
+        Assert.Equal(56u, (uint)PetsonaCommandKind.ApplyImportedPersona);
+        Assert.Equal(45u, (uint)PetsonaCommandKind.UpdateConversationConfig);
         Assert.Equal(0, (int)PetsonaStatus.Ok);
         Assert.Equal(7, (int)PetsonaStatus.Stopped);
     }

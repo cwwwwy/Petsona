@@ -32,7 +32,6 @@ private struct CodexPetChoice: Decodable, Identifiable {
     let spritesheet: String
     let cellWidth: Int
     let cellHeight: Int
-    let columns: Int
     let v2: Bool
 }
 
@@ -49,34 +48,6 @@ private struct PersonaTraitsProjection: Decodable {
         verbosity = try values.decodeIfPresent(String.self, forKey: .verbosity) ?? verbosity
         emoji = try values.decodeIfPresent(Bool.self, forKey: .emoji) ?? emoji
     }
-}
-
-private struct PersonaSamplingProjection: Decodable {
-    var temperature = 0.8
-    var maxTokens = 800
-}
-
-private struct PersonaMemoryProjection: Decodable {
-    var enabled = true
-    var windowTurns = 12
-    var longTerm = true
-    var summarizeAfterTurns = 20
-}
-
-private struct PersonaTTSProjection: Decodable {
-    var enabled = false
-    var voice: String?
-    var rate = 1.0
-}
-
-private struct PersonaProactiveProjection: Decodable {
-    var enabled = false
-    var idleMinutes = 30
-}
-
-private struct PersonaModelProjection: Decodable {
-    var provider = ""
-    var model: String?
 }
 
 private struct PersonaProjection: Decodable {
@@ -132,12 +103,6 @@ struct DeepSeekProjection: Decodable {
     var keyConfigured = false
     var baseUrl = "https://api.deepseek.com/v1"
     var model = "deepseek-v4-flash"
-    var apiKeyEnv = "DEEPSEEK_API_KEY"
-    var timeoutSeconds = 20
-    var maxTokens = 80
-    var temperature = 0.9
-    var thinkingDisabled = true
-
     var credentialStatusLabel: String {
         keyConfigured ? "已配置（密钥不会显示）" : "未配置"
     }
@@ -145,17 +110,11 @@ struct DeepSeekProjection: Decodable {
 
 private struct MemoryConfigProjection: Decodable {
     var enabled = true
-    var recentEvents = 5
-    var factLimit = 20
-    var eventRetentionDays = 0
-    var factCompress = true
 }
 
 private struct GreetingConfigProjection: Decodable {
     var enabled = true
     var idleMinutes = 30
-    var cooldownMinutes = 120
-    var maxChars = 40
 }
 
 private struct MemoryFactProjection: Decodable, Identifiable {
@@ -166,6 +125,23 @@ private struct MemoryFactProjection: Decodable, Identifiable {
     let createdAt: Int64
     let updatedAt: Int64
     var source: String?
+    var archived = false
+
+    enum CodingKeys: String, CodingKey {
+        case id, key, value, confidence, createdAt, updatedAt, source, archived
+    }
+
+    init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        id = try values.decode(String.self, forKey: .id)
+        key = try values.decode(String.self, forKey: .key)
+        value = try values.decode(String.self, forKey: .value)
+        confidence = try values.decodeIfPresent(Double.self, forKey: .confidence) ?? 0.0
+        createdAt = try values.decodeIfPresent(Int64.self, forKey: .createdAt) ?? 0
+        updatedAt = try values.decodeIfPresent(Int64.self, forKey: .updatedAt) ?? 0
+        source = try values.decodeIfPresent(String.self, forKey: .source)
+        archived = try values.decodeIfPresent(Bool.self, forKey: .archived) ?? false
+    }
 
     /// Where the fact came from (REQ-P06); older files have no source.
     var sourceLabel: String {
@@ -176,20 +152,43 @@ private struct MemoryFactProjection: Decodable, Identifiable {
         default: return "手动"
         }
     }
-}
 
-private struct MemoryEventProjection: Decodable, Identifiable {
-    let id: String
-    let kind: String
-    let text: String?
-    let createdAt: Int64
+    var updatedLabel: String {
+        guard updatedAt > 0 else { return "时间未知" }
+        return Date(timeIntervalSince1970: Double(updatedAt) / 1_000)
+            .formatted(date: .abbreviated, time: .shortened)
+    }
 }
 
 private struct MemoryProjection: Decodable {
     var config = MemoryConfigProjection()
     var greeting = GreetingConfigProjection()
     var facts: [MemoryFactProjection] = []
-    var events: [MemoryEventProjection] = []
+    var archivedFacts: [MemoryFactProjection] = []
+    var candidates: [MemoryCandidateProjection] = []
+    var learning = false
+}
+
+private struct MemoryCandidateProjection: Decodable, Identifiable {
+    let id: String
+    let key: String
+    let value: String
+    let confidence: Double
+    let evidence: [String]
+    let status: String
+}
+
+private extension MemoryProjection {
+    var allFacts: [MemoryFactProjection] {
+        facts + archivedFacts.map { fact in
+            var archived = fact
+            archived.archived = true
+            return archived
+        }
+    }
+    var pendingCandidates: [MemoryCandidateProjection] {
+        candidates.filter { $0.status == "pending" }
+    }
 }
 
 private struct ImportConflictProjection: Decodable {
@@ -291,7 +290,10 @@ private enum SettingsApplyKind: Hashable {
 struct SettingsView: View {
     @ObservedObject var engine: EngineClient
     @ObservedObject var navigation: SettingsNavigationState
+    var onOpenConversationHistory: (() -> Void)? = nil
 
+    @State private var showingPersonaSource = false
+    @State private var personaSourceMode = PersonaSourceMode.chatImport
     @State private var scale = 1.0
     @State private var clickThrough = true
     @State private var alwaysOnTop = true
@@ -312,23 +314,12 @@ struct SettingsView: View {
     @State private var deepSeekProvider = "deepseek"
     @State private var deepSeekBaseURL = "https://api.deepseek.com/v1"
     @State private var deepSeekModel = "deepseek-v4-flash"
-    @State private var deepSeekAPIKeyEnv = "DEEPSEEK_API_KEY"
-    @State private var deepSeekTimeout = 20
-    @State private var deepSeekMaxTokens = 80
-    @State private var deepSeekTemperature = 0.9
-    @State private var deepSeekThinkingDisabled = true
     @State private var deepSeekKey = ""
 
     @State private var memoryEnabled = true
-    @State private var memoryRecentEvents = 5
-    @State private var memoryFactLimit = 20
-    @State private var memoryRetentionDays = 0
-    @State private var memoryCompress = true
 
     @State private var greetingEnabled = true
     @State private var greetingIdleMinutes = 30
-    @State private var greetingCooldownMinutes = 120
-    @State private var greetingMaxChars = 40
 
     /// Signatures captured when the form is filled from the engine, so that a
     /// reload never looks like a user edit (instant apply, REQ-S05).
@@ -341,6 +332,7 @@ struct SettingsView: View {
     @State private var factValue = ""
     @State private var editingFactID = ""
     @State private var autostart = false
+    @State private var confirmClearConversationHistory = false
     private var pets: [PetChoice] { decode(PETSONA_TEXT_PETS, as: [PetChoice].self) ?? [] }
     private var codexPets: [CodexPetChoice] { decode(PETSONA_TEXT_CODEX_PETS, as: [CodexPetChoice].self) ?? [] }
     private var selectedPet: PetChoice? { pets.first { $0.id == selectedPetID } }
@@ -396,6 +388,9 @@ struct SettingsView: View {
             pendingApplies[.persona]?.cancel()
             resetFactEditor()
             reloadPersona()
+        }
+        .sheet(isPresented: $showingPersonaSource) {
+            PersonaSourceView(engine: engine, initialMode: personaSourceMode)
         }
     }
 
@@ -485,8 +480,7 @@ struct SettingsView: View {
                            let cellHeight = pet.cellHeight {
                             CodexPreview(path: spritesheet,
                                          cellWidth: cellWidth,
-                                         cellHeight: cellHeight,
-                                         columns: 8)
+                                         cellHeight: cellHeight)
                         } else {
                             Image(systemName: "pawprint.fill")
                                 .font(.title2)
@@ -579,8 +573,7 @@ struct SettingsView: View {
                         HStack {
                             CodexPreview(path: pet.spritesheet,
                                          cellWidth: pet.cellWidth,
-                                         cellHeight: pet.cellHeight,
-                                         columns: pet.columns)
+                                         cellHeight: pet.cellHeight)
                             VStack(alignment: .leading) {
                                 Text(pet.name)
                                 Text(pet.id).font(.caption).foregroundStyle(.secondary)
@@ -605,6 +598,16 @@ struct SettingsView: View {
     private var personaSection: some View {
         settingsCard("这只宠物的人格") {
             HStack {
+                Button("从聊天记录塑造…") {
+                    personaSourceMode = .chatImport
+                    showingPersonaSource = true
+                }
+                Button("参考人物…") {
+                    personaSourceMode = .publicFigure
+                    showingPersonaSource = true
+                }
+            }
+            HStack {
                 Button("导入…") { importPersona() }
                 Button("导出…") { exportPersona(engine.text(PETSONA_TEXT_PERSONA_ID)) }
                 Button("重置为内置") {
@@ -618,19 +621,23 @@ struct SettingsView: View {
                     }
                 }
             }
-            settingsRow("语气", description: "直接描述宠物希望采用的说话方式。") {
-                TextField("例如：毒舌但温柔", text: $personaTone)
-                    .textFieldStyle(.roundedBorder)
-                    .frame(maxWidth: 360)
-            }
-            settingsRow("语气预设", description: "预设会同时调整回答的长短。") {
-                Picker("语气预设", selection: $personaTonePreset) {
-                    Text("自定义…").tag("")
-                    ForEach(TonePreset.all) { preset in
-                        Text(preset.label).tag(preset.tone)
+            settingsRow("说话方式", description: personaTonePreset.isEmpty
+                        ? "描述宠物希望采用的说话方式。"
+                        : "预设会同时调整回答的长短。") {
+                VStack(alignment: .leading, spacing: 8) {
+                    Picker("说话方式", selection: $personaTonePreset) {
+                        Text("自定义…").tag("")
+                        ForEach(TonePreset.all) { preset in
+                            Text(preset.label).tag(preset.tone)
+                        }
+                    }
+                    .frame(maxWidth: 240)
+                    if personaTonePreset.isEmpty {
+                        TextField("例如：毒舌但温柔", text: $personaTone)
+                            .textFieldStyle(.roundedBorder)
+                            .frame(maxWidth: 360)
                     }
                 }
-                .frame(maxWidth: 240)
                 .onChange(of: personaTonePreset) { _, tone in
                     guard !tone.isEmpty else { return }
                     personaTone = tone
@@ -648,15 +655,15 @@ struct SettingsView: View {
                     TextEditor(text: $systemPrompt)
                         .frame(minHeight: 120)
                         .frame(maxWidth: .infinity)
-                        .accessibilityLabel("系统提示词")
-                    Text("语气 / emoji 会由上面的设置自动追加，不需要在这里重复。")
+                        .accessibilityLabel("性格与回应习惯")
+                    Text("说话方式会自动结合这里的设定。导入或生成的人格也可以在这里调整。")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                 }
             } label: {
                 VStack(alignment: .leading, spacing: 3) {
-                    Text("高级").font(.headline)
-                    Text("系统提示词：模型的核心指令。")
+                    Text("性格与回应习惯").font(.headline)
+                    Text("补充性格、表达风格和你们的相处方式。")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                 }
@@ -747,41 +754,6 @@ struct SettingsView: View {
             }
         }
 
-        settingsCard("高级") {
-            settingsRow("API Key 环境变量", description: "优先使用该环境变量；为空时默认 DEEPSEEK_API_KEY。") {
-                TextField("环境变量名", text: $deepSeekAPIKeyEnv)
-                    .textFieldStyle(.roundedBorder)
-                    .frame(maxWidth: 240)
-            }
-            settingsRow("超时", description: "单次请求的最长等待时间。") {
-                Stepper("\(deepSeekTimeout) 秒", value: $deepSeekTimeout, in: 5...120)
-                    .frame(width: 160, alignment: .trailing)
-            }
-            settingsRow("最大 token", description: "对话回复的长度上限。") {
-                Stepper("\(deepSeekMaxTokens)", value: $deepSeekMaxTokens, in: 16...4000, step: 16)
-                    .frame(width: 160, alignment: .trailing)
-            }
-            settingsRow("温度", description: "越高越随机；0.7 左右比较自然。") {
-                HStack {
-                    Slider(value: $deepSeekTemperature, in: 0...2, step: 0.1)
-                        .frame(maxWidth: 220)
-                    Text(String(format: "%.1f", deepSeekTemperature))
-                        .frame(width: 40, alignment: .trailing)
-                }
-            }
-            if deepSeekProvider == "custom" {
-                Text("自定义端点不会收到 DeepSeek 专有的 thinking 字段。")
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-            } else {
-                settingsRow("思考模式", description: "关闭思考链以缩短短回复的延迟。") {
-                    Toggle("", isOn: $deepSeekThinkingDisabled)
-                        .labelsHidden()
-                        .toggleStyle(.switch)
-                        .accessibilityLabel("关闭思考模式")
-                }
-            }
-        }
         .onChange(of: deepSeekSignature) { _, value in
             guard value != loadedDeepSeekSignature else { return }
             scheduleApply(.deepSeek, saveDeepSeekConfig)
@@ -791,29 +763,11 @@ struct SettingsView: View {
 
     private var memorySection: some View {
         settingsCard("记忆与用户偏好") {
-            settingsRow("启用记忆", description: "关闭后不再记录事件，也不会把已有记忆发送给模型。") {
+            settingsRow("启用记忆", description: "关闭后停止学习偏好和习惯，也不会把已有长期记忆发送给模型。") {
                 Toggle("", isOn: $memoryEnabled)
                     .labelsHidden()
                     .toggleStyle(.switch)
                     .accessibilityLabel("启用记忆")
-            }
-            settingsRow("保留最近事件", description: "参与上下文的最近互动数量。") {
-                Stepper("\(memoryRecentEvents)", value: $memoryRecentEvents, in: 1...100)
-                    .frame(width: 150, alignment: .trailing)
-            }
-            settingsRow("最多偏好", description: "超过上限时，旧偏好可合并为一条画像。") {
-                Stepper("\(memoryFactLimit)", value: $memoryFactLimit, in: 1...50)
-                    .frame(width: 150, alignment: .trailing)
-            }
-            settingsRow("事件保留", description: "0 表示永久保留。") {
-                Stepper("\(memoryRetentionDays) 天", value: $memoryRetentionDays, in: 0...3650)
-                    .frame(width: 180, alignment: .trailing)
-            }
-            settingsRow("自动压缩偏好", description: "超出上限时合并为一条画像，而不是直接丢弃。") {
-                Toggle("", isOn: $memoryCompress)
-                    .labelsHidden()
-                    .toggleStyle(.switch)
-                    .accessibilityLabel("自动压缩偏好")
             }
             Divider()
             Text("对话中的“我喜欢… / 我不喜欢… / 请叫我…”等明确表达会自动记录，并用于后续回复。")
@@ -832,14 +786,14 @@ struct SettingsView: View {
                     }
                 }
             }
-            if memory.facts.isEmpty {
+            if memory.allFacts.isEmpty {
                 ContentUnavailableView("暂无偏好", systemImage: "list.bullet",
                                        description: Text("对话中的明确偏好或手动添加的内容会显示在这里。"))
             } else {
-                List(memory.facts, selection: $selectedFactID) { fact in
+                List(memory.allFacts, selection: $selectedFactID) { fact in
                     VStack(alignment: .leading, spacing: 3) {
                         Text("\(fact.key)：\(fact.value)")
-                        Text("来源：\(fact.sourceLabel)")
+                        Text("\(fact.archived ? "归档 · " : "")来源：\(fact.sourceLabel) · 更新：\(fact.updatedLabel)")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
@@ -847,11 +801,11 @@ struct SettingsView: View {
                     .contentShape(Rectangle())
                     .tag(fact.id)
                 }
-                .frame(height: min(CGFloat(memory.facts.count) * 52 + 12, 180))
+                .frame(height: min(CGFloat(memory.allFacts.count) * 52 + 12, 240))
                 .accessibilityLabel("已记录的偏好")
                 .onChange(of: selectedFactID) { _, id in
                     guard let id,
-                          let fact = memory.facts.first(where: { $0.id == id }) else { return }
+                          let fact = memory.allFacts.first(where: { $0.id == id }) else { return }
                     editingFactID = fact.id
                     factKey = fact.key
                     factValue = fact.value
@@ -861,24 +815,39 @@ struct SettingsView: View {
                 }
                 .disabled(selectedFact == nil)
             }
-            if !memory.events.isEmpty {
-                DisclosureGroup("最近互动（\(memory.events.count)）") {
-                    ForEach(memory.events.suffix(12)) { event in
-                        Text(event.text ?? event.kind)
-                            .font(.footnote)
-                            .frame(maxWidth: .infinity, alignment: .leading)
+            if memory.learning {
+                ProgressView("正在整理近期习惯…")
+                    .controlSize(.small)
+            }
+            if !memory.pendingCandidates.isEmpty {
+                Divider()
+                Text("待确认的习惯").font(.headline)
+                ForEach(memory.pendingCandidates) { candidate in
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("\(candidate.key)：\(candidate.value)")
+                            .font(.body)
+                        Text("依据以下聊天内容推断")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        ForEach(candidate.evidence, id: \.self) { evidence in
+                            Text(evidence)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .textSelection(.enabled)
+                        }
+                        HStack {
+                            Button("记住") {
+                                engine.reviewMemoryCandidate(candidate.id, accept: true)
+                            }
+                            Button("忽略", role: .destructive) {
+                                engine.reviewMemoryCandidate(candidate.id, accept: false)
+                            }
+                        }
                     }
+                    .padding(.vertical, 6)
                 }
             }
             HStack {
-                Button("只清偏好", role: .destructive) {
-                    confirmMemoryClear(scope: 1, title: "清除偏好？",
-                                       message: "这会删除这只宠物保存的全部偏好，无法撤销。")
-                }
-                Button("只清事件", role: .destructive) {
-                    confirmMemoryClear(scope: 2, title: "清除互动记录？",
-                                       message: "这会删除这只宠物保存的全部互动事件，无法撤销。")
-                }
                 Button("清空这只宠物的记忆", role: .destructive) {
                     confirmMemoryClear(scope: 0, title: "清空记忆？",
                                        message: "这会删除这只宠物保存的全部偏好与互动事件，无法撤销。")
@@ -892,6 +861,36 @@ struct SettingsView: View {
                 .font(.footnote)
                 .foregroundStyle(.secondary)
                 .textSelection(.enabled)
+            Divider()
+            DisclosureGroup("聊天记录") {
+                settingsRow("保存聊天历史",
+                            description: "按宠物分别保存在本机。关闭后保留本次会话上下文，不删除已有记录。") {
+                    Toggle("",
+                           isOn: Binding(
+                            get: { engine.conversation.saveHistory },
+                            set: { engine.updateConversationConfig(saveHistory: $0) }
+                           ))
+                        .labelsHidden()
+                        .toggleStyle(.switch)
+                        .accessibilityLabel("保存聊天历史")
+                }
+                HStack {
+                    Button("查看聊天记录") { onOpenConversationHistory?() }
+                    Button("清除这只宠物的聊天记录", role: .destructive) {
+                        confirmClearConversationHistory = true
+                    }
+                }
+                .confirmationDialog("清除这只宠物的聊天记录？",
+                                    isPresented: $confirmClearConversationHistory,
+                                    titleVisibility: .visible) {
+                    Button("清除聊天记录", role: .destructive) {
+                        engine.clearConversationHistory()
+                    }
+                    Button("取消", role: .cancel) {}
+                } message: {
+                    Text("此操作不会清除宠物已保存的偏好和习惯。")
+                }
+            }
         }
         .onChange(of: memorySignature) { _, value in
             guard value != loadedMemorySignature else { return }
@@ -939,39 +938,18 @@ struct SettingsView: View {
                     .toggleStyle(.switch)
                     .accessibilityLabel("启用空闲问候")
             }
-            settingsRow("固定问候文案", description: "无 Key 时使用；留空则按时间自动选择。") {
-                TextField("问候文案", text: $greeting)
-                    .textFieldStyle(.roundedBorder)
-                    .frame(maxWidth: 360)
+            if greetingEnabled {
+                settingsRow("多久后问候", description: "连续没有点击、拖动或输入的时长。") {
+                    Stepper("\(greetingIdleMinutes) 分钟", value: $greetingIdleMinutes, in: 1...1440)
+                        .frame(width: 180, alignment: .trailing)
+                }
             }
-            settingsRow("空闲时长", description: "连续多久没有点击、拖动或输入后触发。") {
-                Stepper("\(greetingIdleMinutes) 分钟", value: $greetingIdleMinutes, in: 1...1440)
-                    .frame(width: 180, alignment: .trailing)
-            }
-            settingsRow("问候冷却", description: "两次问候之间的最短间隔；0 表示不限制。") {
-                Stepper("\(greetingCooldownMinutes) 分钟", value: $greetingCooldownMinutes, in: 0...1440)
-                    .frame(width: 180, alignment: .trailing)
-            }
-            settingsRow("问候最大字数", description: "模型回复超过该长度会被截断。") {
-                Stepper("\(greetingMaxChars) 字", value: $greetingMaxChars, in: 1...200)
-                    .frame(width: 160, alignment: .trailing)
-            }
-            Text("没有配置 DeepSeek 时使用人格里的固定问候；问候会显示为气泡并记入记忆。")
-                .font(.footnote)
-                .foregroundStyle(.secondary)
         }
         .onChange(of: greetingSignature) { _, value in
             guard value != loadedGreetingSignature else { return }
             scheduleApply(.greeting, saveGreetingConfig)
         }
 
-        settingsCard("测试") {
-            Button("测试问候") {
-                engine.send(kind: PETSONA_COMMAND_SHOW_BUBBLE,
-                            ttlMilliseconds: 5_000,
-                            text: "你好，我在这里")
-            }
-        }
     }
 
     @ViewBuilder
@@ -1044,26 +1022,15 @@ struct SettingsView: View {
         deepSeekProvider = deepSeek.provider == "custom" ? "custom" : "deepseek"
         deepSeekBaseURL = deepSeek.baseUrl
         deepSeekModel = deepSeek.model
-        deepSeekAPIKeyEnv = deepSeek.apiKeyEnv
-        deepSeekTimeout = deepSeek.timeoutSeconds
-        deepSeekMaxTokens = deepSeek.maxTokens
-        deepSeekTemperature = deepSeek.temperature
-        deepSeekThinkingDisabled = deepSeek.thinkingDisabled
         loadedDeepSeekSignature = deepSeekSignature
 
         let memory = memory
         memoryEnabled = memory.config.enabled
-        memoryRecentEvents = memory.config.recentEvents
-        memoryFactLimit = memory.config.factLimit
-        memoryRetentionDays = memory.config.eventRetentionDays
-        memoryCompress = memory.config.factCompress
         loadedMemorySignature = memorySignature
 
         let greeting = memory.greeting
         greetingEnabled = greeting.enabled
         greetingIdleMinutes = greeting.idleMinutes
-        greetingCooldownMinutes = greeting.cooldownMinutes
-        greetingMaxChars = greeting.maxChars
         loadedGreetingSignature = greetingSignature
     }
 
@@ -1100,19 +1067,15 @@ struct SettingsView: View {
     }
 
     private var deepSeekSignature: String {
-        [deepSeekProvider, deepSeekBaseURL, deepSeekModel, deepSeekAPIKeyEnv, String(deepSeekTimeout),
-         String(deepSeekMaxTokens), String(deepSeekTemperature),
-         deepSeekThinkingDisabled ? "1" : "0"].joined(separator: "\u{1F}")
+        [deepSeekProvider, deepSeekBaseURL, deepSeekModel].joined(separator: "\u{1F}")
     }
 
     private var memorySignature: String {
-        [memoryEnabled ? "1" : "0", String(memoryRecentEvents), String(memoryFactLimit),
-         String(memoryRetentionDays), memoryCompress ? "1" : "0"].joined(separator: "\u{1F}")
+        memoryEnabled ? "1" : "0"
     }
 
     private var greetingSignature: String {
-        [greetingEnabled ? "1" : "0", String(greetingIdleMinutes),
-         String(greetingCooldownMinutes), String(greetingMaxChars)].joined(separator: "\u{1F}")
+        [greetingEnabled ? "1" : "0", String(greetingIdleMinutes)].joined(separator: "\u{1F}")
     }
 
     private func reloadPersonaLater() {
@@ -1143,21 +1106,12 @@ struct SettingsView: View {
             "provider": deepSeekProvider,
             "baseUrl": deepSeekBaseURL,
             "model": deepSeekModel,
-            "apiKeyEnv": deepSeekAPIKeyEnv,
-            "timeoutSeconds": deepSeekTimeout,
-            "maxTokens": deepSeekMaxTokens,
-            "temperature": deepSeekTemperature,
-            "thinkingDisabled": deepSeekThinkingDisabled,
         ])
     }
 
     private func saveMemoryConfig() {
         engine.updateMemoryConfig([
             "enabled": memoryEnabled,
-            "recentEvents": memoryRecentEvents,
-            "factLimit": memoryFactLimit,
-            "eventRetentionDays": memoryRetentionDays,
-            "factCompress": memoryCompress,
         ])
     }
 
@@ -1165,8 +1119,6 @@ struct SettingsView: View {
         engine.updateGreetingConfig([
             "enabled": greetingEnabled,
             "idleMinutes": greetingIdleMinutes,
-            "cooldownMinutes": greetingCooldownMinutes,
-            "maxChars": greetingMaxChars,
         ])
     }
 
@@ -1333,13 +1285,9 @@ private struct CodexPreview: View {
     let path: String
     let cellWidth: Int
     let cellHeight: Int
-    let columns: Int
 
     var body: some View {
-        PreviewImage(path: path,
-                     cellWidth: cellWidth,
-                     cellHeight: cellHeight,
-                     columns: columns)
+        PreviewImage(path: path, cellWidth: cellWidth, cellHeight: cellHeight)
             .frame(width: 48, height: 48)
             .clipped()
     }
@@ -1349,7 +1297,6 @@ private struct PreviewImage: NSViewRepresentable {
     let path: String
     let cellWidth: Int
     let cellHeight: Int
-    let columns: Int
 
     func makeNSView(context: Context) -> PreviewImageView { PreviewImageView() }
 
@@ -1357,7 +1304,6 @@ private struct PreviewImage: NSViewRepresentable {
         view.image = PreviewImageCache.image(at: path)
         view.cellWidth = cellWidth
         view.cellHeight = cellHeight
-        view.columns = columns
         view.needsDisplay = true
     }
 }
@@ -1381,7 +1327,6 @@ private final class PreviewImageView: NSView {
     var image: NSImage?
     var cellWidth = 64
     var cellHeight = 64
-    var columns = 8
 
     override func draw(_ dirtyRect: NSRect) {
         guard let image else {

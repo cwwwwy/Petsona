@@ -64,3 +64,25 @@ import conflict. `value` carries the memory scope for the scoped clear
 array of model ids. These values are serialized as UTF-8 JSON or
 paths; the worker validates and persists them before publishing the next
 projection.
+
+Text field 19 (WindowPosition) exposes macOS display-relative physical
+position metadata as JSON while field 10 (Position) retains the legacy x,y
+projection. Command 44 (SetWindowPosition) accepts a WindowPosition JSON
+object. Command 7 and its original x,y text format remain supported. These
+appended enum values preserve the ABI 3 structure layout.
+
+Text field 20 (Conversation) is a non-secret JSON projection of the selected
+pet's history, save-history setting, active request and user-visible error.
+Command 45 changes the independent save-history setting; command 46 starts a
+streamed request; command 47 cancels a request; command 48 clears only the
+specified pet's saved history. These are append-only ABI 3 values.
+
+Text fields 21–23 project a parsed persona source, an editable persona draft,
+and the unsaved preview reply. Commands 51–55 parse a local source or pasted
+text, generate a draft, apply only that draft to the current pet, clear the
+temporary builder, and generate a preview without adding it to chat or memory.
+
+Command 56 (ApplyImportedPersona) imports a legacy persona JSON document into
+the current pet's stable persona identity, preserving its memory and per-pet
+binding. Command 33 retains the original persona-library import behavior for
+existing frontends.

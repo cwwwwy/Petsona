@@ -10,6 +10,7 @@ pub mod deepseek;
 pub mod error;
 pub mod memory;
 pub mod persona;
+pub mod persona_source;
 pub mod pet;
 pub mod secrets;
 pub mod state_server;

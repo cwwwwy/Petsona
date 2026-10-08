@@ -2,7 +2,7 @@
 # The single macOS verification entry point.
 #
 #   bash scripts/verify-macos-all.sh               # Rust gates + runtime smoke + package smoke
-#   bash scripts/verify-macos-all.sh --gates-only  # fmt / clippy / test / release build only
+#   bash scripts/verify-macos-all.sh --gates-only  # Rust gates + native build/XCTest
 #
 # The runtime smoke stays a separate file because it is long and also useful on
 # its own (scripts/macos-smoke.sh); everything else runs from here.
@@ -62,28 +62,24 @@ default_petsona_data_fingerprint() {
   done
 }
 
-choose_smoke_ports() {
-  if [[ -n "${PETSONA_SMOKE_STATE_PORT:-}" || -n "${PETSONA_SMOKE_HOOK_PORT:-}" ]]; then
+choose_smoke_port() {
+  if [[ -n "${PETSONA_SMOKE_STATE_PORT:-}" ]]; then
     PETSONA_VERIFY_STATE_PORT="${PETSONA_SMOKE_STATE_PORT:-17872}"
-    PETSONA_VERIFY_HOOK_PORT="${PETSONA_SMOKE_HOOK_PORT:-17873}"
     return
   fi
 
   PETSONA_VERIFY_STATE_PORT=17872
-  PETSONA_VERIFY_HOOK_PORT=17873
   if ! command -v lsof >/dev/null 2>&1; then
     return
   fi
 
   for _ in {1..40}; do
-    if ! lsof -nP -iTCP:"$PETSONA_VERIFY_STATE_PORT" -sTCP:LISTEN -t 2>/dev/null | grep -q . \
-      && ! lsof -nP -iTCP:"$PETSONA_VERIFY_HOOK_PORT" -sTCP:LISTEN -t 2>/dev/null | grep -q .; then
+    if ! lsof -nP -iTCP:"$PETSONA_VERIFY_STATE_PORT" -sTCP:LISTEN -t 2>/dev/null | grep -q .; then
       return
     fi
-    PETSONA_VERIFY_STATE_PORT=$((PETSONA_VERIFY_STATE_PORT + 2))
-    PETSONA_VERIFY_HOOK_PORT=$((PETSONA_VERIFY_HOOK_PORT + 2))
+    PETSONA_VERIFY_STATE_PORT=$((PETSONA_VERIFY_STATE_PORT + 1))
   done
-  printf 'Could not find two free smoke ports. Set PETSONA_SMOKE_STATE_PORT and PETSONA_SMOKE_HOOK_PORT.\n' >&2
+  printf 'Could not find a free smoke port. Set PETSONA_SMOKE_STATE_PORT.\n' >&2
   exit 1
 }
 
@@ -146,6 +142,7 @@ xcodebuild \
   -derivedDataPath "$PETSONA_NATIVE_TEST_DATA" \
   -only-testing:PetsonaTests/EngineClientTests \
   -only-testing:PetsonaTests/AbiTests \
+  -only-testing:PetsonaTests/DisplayGeometryTests \
   -only-testing:PetsonaTests/GazeStabilizerTests \
   -only-testing:PetsonaTests/PetResourceTests \
   -only-testing:PetsonaTests/NativeLifecycleTests \
@@ -181,11 +178,10 @@ if [[ "$PETSONA_GATES_ONLY" == "1" ]]; then
   exit 0
 fi
 
-choose_smoke_ports
-step "macOS runtime smoke (ports $PETSONA_VERIFY_STATE_PORT/$PETSONA_VERIFY_HOOK_PORT)"
+choose_smoke_port
+step "macOS runtime smoke (port $PETSONA_VERIFY_STATE_PORT)"
 PETSONA_SMOKE_STATE_PORT="$PETSONA_VERIFY_STATE_PORT" \
 PETSONA_NATIVE_APP="$PETSONA_NATIVE_DERIVED_DATA/Build/Products/Release/Petsona.app" \
-PETSONA_SMOKE_HOOK_PORT="$PETSONA_VERIFY_HOOK_PORT" \
 bash "$PETSONA_ROOT/scripts/macos-smoke.sh"
 
 # Bundle / zip / LaunchAgent structure. Nothing is installed here: the app

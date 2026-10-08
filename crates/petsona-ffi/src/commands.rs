@@ -1,11 +1,12 @@
 use std::path::PathBuf;
 use std::time::Duration;
 
-use petsona_core::config::{DeepSeekConfig, GreetingConfig, MemoryConfig};
+use petsona_core::config::{ConversationConfig, DeepSeekConfig, GreetingConfig, MemoryConfig};
 use petsona_core::pet::PetState;
 use petsona_runtime::commands::{
-    MemoryFactInput, MemoryFactUpdate, MemoryScope, PersonaCreate, PersonaDuplicate, PersonaPatch,
-    RuntimeCommand,
+    ApplyPersonaDraftRequest, ConversationRequest, MemoryCandidateReview, MemoryFactInput,
+    MemoryFactUpdate, MemoryScope, PersonaCreate, PersonaDuplicate, PersonaPatch,
+    PersonaPreviewRequest, PersonaProfileRequest, PersonaSourceParseRequest, RuntimeCommand,
 };
 
 use crate::buffers::view_string;
@@ -60,6 +61,26 @@ pub fn convert(command: &PetsonaCommand) -> Result<RuntimeCommand, (PetsonaStatu
                 ));
             }
             Ok(RuntimeCommand::SetPosition { x, y })
+        }
+        x if x == PetsonaCommandKind::SetWindowPosition as u32 => {
+            let position: petsona_core::config::WindowPosition = serde_json::from_str(&text)
+                .map_err(|error| {
+                    (
+                        PetsonaStatus::InvalidArgument,
+                        format!("window position is not valid JSON: {error}"),
+                    )
+                })?;
+            if !position.x.is_finite()
+                || !position.y.is_finite()
+                || !position.backing_scale.is_finite()
+                || position.backing_scale <= 0.0
+            {
+                return Err((
+                    PetsonaStatus::InvalidArgument,
+                    "window position coordinates and scale must be finite".to_string(),
+                ));
+            }
+            Ok(RuntimeCommand::SetWindowPosition(position))
         }
         x if x == PetsonaCommandKind::SetAutoWalk as u32 => {
             Ok(RuntimeCommand::SetAutoWalk(command.value >= 0.5))
@@ -225,6 +246,15 @@ pub fn convert(command: &PetsonaCommand) -> Result<RuntimeCommand, (PetsonaStatu
             })?;
             Ok(RuntimeCommand::UpdateMemoryConfig(config))
         }
+        x if x == PetsonaCommandKind::UpdateConversationConfig as u32 => {
+            let config: ConversationConfig = serde_json::from_str(&text).map_err(|error| {
+                (
+                    PetsonaStatus::InvalidArgument,
+                    format!("conversation config is not valid JSON: {error}"),
+                )
+            })?;
+            Ok(RuntimeCommand::UpdateConversationConfig(config))
+        }
         x if x == PetsonaCommandKind::RememberFact as u32 => {
             let input: MemoryFactInput = serde_json::from_str(&text).map_err(|error| {
                 (
@@ -261,9 +291,169 @@ pub fn convert(command: &PetsonaCommand) -> Result<RuntimeCommand, (PetsonaStatu
         x if x == PetsonaCommandKind::SendConversation as u32 => {
             Ok(RuntimeCommand::SendConversation(text))
         }
+        x if x == PetsonaCommandKind::StartConversation as u32 => {
+            let request: ConversationRequest = serde_json::from_str(&text).map_err(|error| {
+                (
+                    PetsonaStatus::InvalidArgument,
+                    format!("conversation request is not valid JSON: {error}"),
+                )
+            })?;
+            Ok(RuntimeCommand::StartConversation(request))
+        }
+        x if x == PetsonaCommandKind::CancelConversation as u32 => {
+            Ok(RuntimeCommand::CancelConversation(text))
+        }
+        x if x == PetsonaCommandKind::ClearConversationHistory as u32 => {
+            Ok(RuntimeCommand::ClearConversationHistory(text))
+        }
+        x if x == PetsonaCommandKind::LoadEarlierConversationHistory as u32 => {
+            Ok(RuntimeCommand::LoadEarlierConversationHistory(text))
+        }
+        x if x == PetsonaCommandKind::ReviewMemoryCandidate as u32 => {
+            let review: MemoryCandidateReview = serde_json::from_str(&text).map_err(|error| {
+                (
+                    PetsonaStatus::InvalidArgument,
+                    format!("memory candidate review is not valid JSON: {error}"),
+                )
+            })?;
+            Ok(RuntimeCommand::ReviewMemoryCandidate(review))
+        }
+        x if x == PetsonaCommandKind::ParsePersonaSource as u32 => {
+            let request: PersonaSourceParseRequest =
+                serde_json::from_str(&text).map_err(|error| {
+                    (
+                        PetsonaStatus::InvalidArgument,
+                        format!("persona source request is not valid JSON: {error}"),
+                    )
+                })?;
+            Ok(RuntimeCommand::ParsePersonaSource(request))
+        }
+        x if x == PetsonaCommandKind::GeneratePersonaProfile as u32 => {
+            let request: PersonaProfileRequest = serde_json::from_str(&text).map_err(|error| {
+                (
+                    PetsonaStatus::InvalidArgument,
+                    format!("persona generation request is not valid JSON: {error}"),
+                )
+            })?;
+            Ok(RuntimeCommand::GeneratePersonaProfile(request))
+        }
+        x if x == PetsonaCommandKind::ApplyPersonaDraft as u32 => {
+            let request: ApplyPersonaDraftRequest =
+                serde_json::from_str(&text).map_err(|error| {
+                    (
+                        PetsonaStatus::InvalidArgument,
+                        format!("persona draft is not valid JSON: {error}"),
+                    )
+                })?;
+            Ok(RuntimeCommand::ApplyPersonaDraft(request))
+        }
+        x if x == PetsonaCommandKind::ClearPersonaDraft as u32 => {
+            Ok(RuntimeCommand::ClearPersonaDraft)
+        }
+        x if x == PetsonaCommandKind::PreviewPersonaDraft as u32 => {
+            let request: PersonaPreviewRequest = serde_json::from_str(&text).map_err(|error| {
+                (
+                    PetsonaStatus::InvalidArgument,
+                    format!("persona preview request is not valid JSON: {error}"),
+                )
+            })?;
+            Ok(RuntimeCommand::PreviewPersonaDraftRequest(request))
+        }
+        x if x == PetsonaCommandKind::ApplyImportedPersona as u32 => {
+            Ok(RuntimeCommand::ApplyImportedPersona(PathBuf::from(text)))
+        }
         _ => Err((
             PetsonaStatus::InvalidArgument,
             format!("unknown command kind: {}", command.kind),
         )),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::types::PetsonaStringView;
+
+    #[test]
+    fn display_position_command_decodes_physical_offset_and_monitor_identity() {
+        let bytes = br#"{"x":240,"y":360,"displayId":"display-a","backingScale":2}"#;
+        let command = PetsonaCommand {
+            kind: PetsonaCommandKind::SetWindowPosition as u32,
+            reserved: 0,
+            value: 0.0,
+            ttl_ms: 0,
+            text: PetsonaStringView {
+                ptr: bytes.as_ptr(),
+                len: bytes.len(),
+            },
+        };
+        let parsed = convert(&command).expect("position payload");
+        let RuntimeCommand::SetWindowPosition(position) = parsed else {
+            panic!("wrong command");
+        };
+        assert_eq!(position.x, 240.0);
+        assert_eq!(position.y, 360.0);
+        assert_eq!(position.display_id.as_deref(), Some("display-a"));
+        assert_eq!(position.backing_scale, 2.0);
+    }
+
+    #[test]
+    fn display_position_command_rejects_nonpositive_scale() {
+        let bytes = br#"{"x":240,"y":360,"displayId":"display-a","backingScale":0}"#;
+        let command = PetsonaCommand {
+            kind: PetsonaCommandKind::SetWindowPosition as u32,
+            reserved: 0,
+            value: 0.0,
+            ttl_ms: 0,
+            text: PetsonaStringView {
+                ptr: bytes.as_ptr(),
+                len: bytes.len(),
+            },
+        };
+        assert!(convert(&command).is_err());
+    }
+
+    #[test]
+    fn start_conversation_payload_keeps_the_request_and_retry_identity() {
+        let json =
+            r#"{"requestId":"req-1","petId":"pet-a","text":"继续刚才的话","retryTurnId":"turn-1"}"#;
+        let bytes = json.as_bytes();
+        let command = PetsonaCommand {
+            kind: PetsonaCommandKind::StartConversation as u32,
+            reserved: 0,
+            value: 0.0,
+            ttl_ms: 0,
+            text: PetsonaStringView {
+                ptr: bytes.as_ptr(),
+                len: bytes.len(),
+            },
+        };
+        let parsed = convert(&command).expect("conversation payload");
+        let RuntimeCommand::StartConversation(request) = parsed else {
+            panic!("wrong command");
+        };
+        assert_eq!(request.request_id, "req-1");
+        assert_eq!(request.pet_id, "pet-a");
+        assert_eq!(request.text, "继续刚才的话");
+        assert_eq!(request.retry_turn_id.as_deref(), Some("turn-1"));
+    }
+
+    #[test]
+    fn conversation_history_config_defaults_to_saving_history() {
+        let bytes = br#"{}"#;
+        let command = PetsonaCommand {
+            kind: PetsonaCommandKind::UpdateConversationConfig as u32,
+            reserved: 0,
+            value: 0.0,
+            ttl_ms: 0,
+            text: PetsonaStringView {
+                ptr: bytes.as_ptr(),
+                len: bytes.len(),
+            },
+        };
+        assert!(matches!(
+            convert(&command).expect("conversation config"),
+            RuntimeCommand::UpdateConversationConfig(config) if config.save_history
+        ));
     }
 }

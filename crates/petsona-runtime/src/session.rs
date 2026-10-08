@@ -1,4 +1,6 @@
+use std::sync::atomic::AtomicBool;
 use std::sync::mpsc::{self, Receiver};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use anyhow::Result;
@@ -9,13 +11,50 @@ use petsona_core::pet::{PetEntry, PetLibrary};
 use petsona_core::state_server::{Health, StateEvent, StateServer};
 
 use crate::commands::ImportConflict;
+use crate::persona_source::{ActivePersonaGeneration, ActivePersonaPreview, PersonaDraft};
 use crate::pet::PetSession;
 
 /// Shared text bubble state. The platform shell decides how to render it.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase", default)]
 pub struct ConversationTurn {
+    pub id: String,
+    pub request_id: Option<String>,
     pub user: bool,
     pub text: String,
+    pub status: String,
+    pub created_at: i64,
+}
+
+impl Default for ConversationTurn {
+    fn default() -> Self {
+        Self {
+            id: String::new(),
+            request_id: None,
+            user: false,
+            text: String::new(),
+            status: "complete".to_string(),
+            created_at: 0,
+        }
+    }
+}
+
+pub struct ActiveConversation {
+    pub request_id: String,
+    pub pet_id: String,
+    pub persona_id: String,
+    pub persona_json: String,
+    pub assistant_turn_id: String,
+    pub cancel: Arc<AtomicBool>,
+}
+
+pub struct ActiveMemoryLearning {
+    pub request_id: String,
+    pub pet_id: String,
+    pub persona_id: String,
+    pub persona_json: String,
+    pub through_turn_id: String,
+    pub evidence_turn_ids: Vec<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -96,6 +135,23 @@ pub struct PetsonaRuntime {
     pub conversation_history: Vec<ConversationTurn>,
     pub conversation_rx: Option<Receiver<Result<String, String>>>,
     pub conversation_inflight: bool,
+    pub conversation_store: crate::conversation::ConversationStore,
+    pub macos_window_position: Option<petsona_core::config::WindowPosition>,
+    pub active_conversation: Option<ActiveConversation>,
+    pub conversation_error: String,
+    pub conversation_context_start: usize,
+    pub conversation_page_start: usize,
+    pub active_memory_learning: Option<ActiveMemoryLearning>,
+    pub persona_source: Option<petsona_core::persona_source::ParsedPersonaSource>,
+    pub persona_source_request_id: Option<String>,
+    pub persona_source_error: String,
+    pub active_persona_source_request: Option<String>,
+    pub active_persona_generation: Option<ActivePersonaGeneration>,
+    pub persona_draft: Option<PersonaDraft>,
+    pub persona_draft_error: String,
+    pub active_persona_preview: Option<ActivePersonaPreview>,
+    pub persona_preview: String,
+    pub persona_preview_error: String,
     pub import_conflict: Option<ImportConflict>,
 }
 
@@ -162,14 +218,58 @@ impl PetsonaRuntime {
             None => None,
         };
         if let Some(pet) = &pet {
-            memory.record_event(
-                &persona.id,
-                EventKind::AppStart,
-                Some(format!("Petsona 启动：{}", pet.entry.display_name)),
-            )?;
+            if config.memory.enabled {
+                memory.record_event(
+                    &persona.id,
+                    EventKind::AppStart,
+                    Some(format!("Petsona 启动：{}", pet.entry.display_name)),
+                )?;
+            }
         }
 
         let selected_pet = config.active_pet.clone();
+        let conversation_store =
+            crate::conversation::ConversationStore::new(paths.config_dir.join("conversations"));
+        let macos_window_position_path = paths.config_dir.join("macos-window-position.json");
+        let macos_window_position = if macos_window_position_path.is_file() {
+            match std::fs::read_to_string(&macos_window_position_path)
+                .and_then(|text| serde_json::from_str(&text).map_err(std::io::Error::other))
+            {
+                Ok(position) => Some(position),
+                Err(error) => {
+                    tracing::warn!(%error, "cannot load display-relative macOS window position");
+                    None
+                }
+            }
+        } else {
+            None
+        };
+        let mut conversation_history = selected_pet
+            .as_deref()
+            .map(|pet_id| match conversation_store.load(pet_id) {
+                Ok(turns) => turns,
+                Err(error) => {
+                    tracing::warn!(pet = %pet_id, %error, "cannot load conversation history");
+                    Vec::new()
+                }
+            })
+            .unwrap_or_default();
+        let mut interrupted = false;
+        for turn in &mut conversation_history {
+            if turn.status == "streaming" {
+                turn.status = "interrupted".to_string();
+                interrupted = true;
+            }
+        }
+        if interrupted && config.conversation.save_history {
+            if let Some(pet_id) = selected_pet.as_deref() {
+                if let Err(error) = conversation_store.save(pet_id, &conversation_history) {
+                    tracing::warn!(pet = %pet_id, %error, "cannot save interrupted conversation state");
+                }
+            }
+        }
+        let conversation_context_start = conversation_history.len();
+        let conversation_page_start = conversation_history.len().saturating_sub(50);
         config.save(&paths.config_file)?;
 
         let now = Instant::now();
@@ -209,9 +309,26 @@ impl PetsonaRuntime {
             models_inflight: false,
             greeting_inflight: false,
             last_greeting_at: None,
-            conversation_history: Vec::new(),
+            conversation_history,
             conversation_rx: None,
             conversation_inflight: false,
+            conversation_store,
+            macos_window_position,
+            active_conversation: None,
+            conversation_error: String::new(),
+            conversation_context_start,
+            conversation_page_start,
+            active_memory_learning: None,
+            persona_source: None,
+            persona_source_request_id: None,
+            persona_source_error: String::new(),
+            active_persona_source_request: None,
+            active_persona_generation: None,
+            persona_draft: None,
+            persona_draft_error: String::new(),
+            active_persona_preview: None,
+            persona_preview: String::new(),
+            persona_preview_error: String::new(),
             import_conflict: None,
         })
     }
@@ -339,14 +456,16 @@ impl PetsonaRuntime {
                     pet.last_state = current;
                 }
             }
-            let _ = self.memory.record_event(
-                &self.persona.id,
-                EventKind::CodexStatus,
-                Some(match &message {
-                    Some(text) => format!("{}：{}", state.name(), text),
-                    None => state.name().to_string(),
-                }),
-            );
+            if self.config.memory.enabled {
+                let _ = self.memory.record_event(
+                    &self.persona.id,
+                    EventKind::CodexStatus,
+                    Some(match &message {
+                        Some(text) => format!("{}：{}", state.name(), text),
+                        None => state.name().to_string(),
+                    }),
+                );
+            }
             self.last_user_action = Instant::now();
         }
         self.publish_health();

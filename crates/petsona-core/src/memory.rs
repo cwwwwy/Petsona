@@ -3,7 +3,7 @@
 //! This is deliberately not a chat transcript. It stores a small set of stable
 //! facts, recent interaction events and greeting state in one JSON file.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 use parking_lot::Mutex;
@@ -77,10 +77,74 @@ pub struct MemoryEvent {
     pub created_at: i64,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct MemoryCandidate {
+    pub id: String,
+    pub key: String,
+    pub value: String,
+    pub confidence: f32,
+    pub evidence: Vec<String>,
+    pub status: String,
+    pub created_at: i64,
+    pub updated_at: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct MemorySuggestion {
+    pub key: String,
+    pub value: String,
+    pub confidence: f32,
+    pub evidence_turn_ids: Vec<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct MemorySuggestionDocument {
+    #[serde(default)]
+    candidates: Vec<MemorySuggestion>,
+}
+
+pub fn parse_memory_suggestions(text: &str) -> Result<Vec<MemorySuggestion>> {
+    let document: MemorySuggestionDocument =
+        serde_json::from_str(text.trim()).map_err(|error| {
+            Error::config(format!("memory suggestions are not valid JSON: {error}"))
+        })?;
+    if document.candidates.len() > 12
+        || document.candidates.iter().any(|candidate| {
+            candidate.key.trim().is_empty()
+                || candidate.key.chars().count() > 32
+                || candidate.value.trim().is_empty()
+                || candidate.value.chars().count() > 160
+                || !candidate.confidence.is_finite()
+                || !(0.0..=1.0).contains(&candidate.confidence)
+                || candidate
+                    .evidence_turn_ids
+                    .iter()
+                    .map(|id| id.trim())
+                    .collect::<BTreeSet<_>>()
+                    .len()
+                    < 3
+        })
+    {
+        return Err(Error::config(
+            "memory suggestions contain invalid values or insufficient evidence",
+        ));
+    }
+    Ok(document.candidates)
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase", default)]
 pub struct PersonaMemory {
     pub facts: Vec<Fact>,
+    #[serde(default)]
+    pub archived_facts: Vec<Fact>,
+    #[serde(default)]
+    pub candidates: Vec<MemoryCandidate>,
+    #[serde(default)]
+    pub learning_cursor: Option<String>,
     pub events: Vec<MemoryEvent>,
     pub last_seen_at: Option<i64>,
     pub last_greeting_at: Option<i64>,
@@ -113,6 +177,12 @@ struct MemoryExport {
     #[serde(default)]
     facts: Vec<Fact>,
     #[serde(default)]
+    archived_facts: Vec<Fact>,
+    #[serde(default)]
+    candidates: Vec<MemoryCandidate>,
+    #[serde(default)]
+    learning_cursor: Option<String>,
+    #[serde(default)]
     events: Vec<MemoryEvent>,
 }
 
@@ -142,17 +212,27 @@ pub fn extract_preference(text: &str) -> Option<(String, String, f32)> {
         .trim()
         .trim_matches(|character: char| matches!(character, '。' | '！' | '，' | ',' | '.' | '!'));
     let chinese_patterns = [
+        ("我不太喜欢", "不喜欢"),
         ("我不喜欢", "不喜欢"),
         ("我讨厌", "不喜欢"),
         ("我不想要", "不想要"),
+        ("我更喜欢", "喜欢"),
+        ("我比较喜欢", "喜欢"),
         ("我喜欢", "喜欢"),
+        ("我更偏好", "偏好"),
         ("我偏好", "偏好"),
         ("我爱", "喜欢"),
         ("我想要", "想要"),
+        ("以后请叫我", "称呼"),
+        ("以后叫我", "称呼"),
         ("请叫我", "称呼"),
         ("我的名字是", "称呼"),
         ("我叫", "称呼"),
         ("我习惯", "习惯"),
+        ("我平时", "习惯"),
+        ("我通常", "习惯"),
+        ("我经常", "习惯"),
+        ("我每天", "习惯"),
     ];
     for (prefix, key) in chinese_patterns {
         if let Some(value) = text.strip_prefix(prefix).map(str::trim) {
@@ -167,9 +247,12 @@ pub fn extract_preference(text: &str) -> Option<(String, String, f32)> {
         ("i don't like ", "不喜欢"),
         ("i dislike ", "不喜欢"),
         ("i hate ", "不喜欢"),
-        ("i like ", "喜欢"),
         ("i prefer ", "偏好"),
+        ("i like ", "喜欢"),
         ("i love ", "喜欢"),
+        ("i usually ", "习惯"),
+        ("i often ", "习惯"),
+        ("i always ", "习惯"),
         ("call me ", "称呼"),
         ("my name is ", "称呼"),
     ];
@@ -301,7 +384,12 @@ impl PetMemory {
     pub fn open(path: &Path) -> Result<Self> {
         let inner = if path.is_file() {
             let text = std::fs::read_to_string(path)?;
-            serde_json::from_str(&text).unwrap_or_default()
+            serde_json::from_str(&text).map_err(|error| {
+                Error::config(format!(
+                    "cannot parse memory file {}: {error}",
+                    path.display()
+                ))
+            })?
         } else {
             MemoryFile::default()
         };
@@ -358,31 +446,44 @@ impl PetMemory {
         let now = now_ms();
         let mut memory = self.inner.lock();
         let persona = memory.personas.entry(persona_id.to_string()).or_default();
-        let existing = persona
+        let active_index = persona
             .facts
             .iter_mut()
-            .find(|fact| fact.key.eq_ignore_ascii_case(key));
-        let fact = match existing {
-            Some(fact) => {
-                fact.value = value.to_string();
-                fact.confidence = confidence;
-                fact.updated_at = now;
-                fact.source = source.to_string();
-                fact.clone()
-            }
-            None => {
-                let fact = Fact {
-                    id: uuid::Uuid::new_v4().to_string(),
-                    key: key.to_string(),
-                    value: value.to_string(),
-                    confidence,
-                    created_at: now,
-                    updated_at: now,
-                    source: source.to_string(),
-                };
-                persona.facts.push(fact.clone());
-                fact
-            }
+            .position(|fact| fact_matches(fact, key, value));
+        let archived_index = if active_index.is_none() {
+            persona
+                .archived_facts
+                .iter_mut()
+                .position(|fact| fact_matches(fact, key, value))
+        } else {
+            None
+        };
+        let fact = if let Some(index) = active_index {
+            let fact = &mut persona.facts[index];
+            fact.value = value.to_string();
+            fact.confidence = confidence;
+            fact.updated_at = now;
+            fact.source = source.to_string();
+            fact.clone()
+        } else if let Some(index) = archived_index {
+            let fact = &mut persona.archived_facts[index];
+            fact.value = value.to_string();
+            fact.confidence = confidence;
+            fact.updated_at = now;
+            fact.source = source.to_string();
+            fact.clone()
+        } else {
+            let fact = Fact {
+                id: uuid::Uuid::new_v4().to_string(),
+                key: key.to_string(),
+                value: value.to_string(),
+                confidence,
+                created_at: now,
+                updated_at: now,
+                source: source.to_string(),
+            };
+            persona.facts.push(fact.clone());
+            fact
         };
         persona
             .facts
@@ -392,6 +493,277 @@ impl PetMemory {
         Ok(fact)
     }
 
+    /// Store an explicitly stated preference without silently replacing facts
+    /// the user edited by hand. Multi-valued keys such as "喜欢" can coexist;
+    /// a new form of address replaces an older conversation-derived form, and
+    /// explicit positive/negative statements retract their conversation-derived
+    /// opposite for the same value.
+    pub fn remember_explicit_preference(
+        &self,
+        persona_id: &str,
+        key: &str,
+        value: &str,
+        confidence: f32,
+        evidence: &str,
+    ) -> Result<bool> {
+        let key = key.trim();
+        let value = value.trim();
+        if key.is_empty() || value.is_empty() {
+            return Ok(false);
+        }
+
+        let mut memory = self.inner.lock();
+        let persona = memory.personas.entry(persona_id.to_string()).or_default();
+        let exact_facts = persona.facts.iter().chain(persona.archived_facts.iter());
+        if exact_facts
+            .clone()
+            .any(|fact| fact_matches(fact, key, value) && fact.source == FACT_SOURCE_MANUAL)
+        {
+            return Ok(false);
+        }
+
+        let has_manual_conflict = persona
+            .facts
+            .iter()
+            .chain(persona.archived_facts.iter())
+            .any(|fact| {
+                fact.source == FACT_SOURCE_MANUAL && explicit_preference_conflicts(fact, key, value)
+            });
+        if has_manual_conflict {
+            let evidence = evidence.trim();
+            if evidence.is_empty() {
+                return Ok(false);
+            }
+            if let Some(candidate) = persona.candidates.iter_mut().find(|candidate| {
+                candidate.key.eq_ignore_ascii_case(key)
+                    && candidate.value.eq_ignore_ascii_case(value)
+            }) {
+                if candidate.status != "pending" {
+                    return Ok(false);
+                }
+                if !candidate.evidence.iter().any(|item| item == evidence) {
+                    candidate.evidence.push(evidence.to_string());
+                    candidate.evidence.truncate(12);
+                }
+                candidate.confidence = candidate.confidence.max(confidence.clamp(0.0, 1.0));
+                candidate.updated_at = now_ms();
+            } else {
+                persona.candidates.push(MemoryCandidate {
+                    id: uuid::Uuid::new_v4().to_string(),
+                    key: key.to_string(),
+                    value: value.to_string(),
+                    confidence: confidence.clamp(0.0, 1.0),
+                    evidence: vec![evidence.to_string()],
+                    status: "pending".to_string(),
+                    created_at: now_ms(),
+                    updated_at: now_ms(),
+                });
+                if persona.candidates.len() > 100 {
+                    persona.candidates.drain(0..persona.candidates.len() - 100);
+                }
+            }
+            self.save_locked(&memory)?;
+            return Ok(false);
+        }
+
+        persona.facts.retain(|fact| {
+            !(fact.source == FACT_SOURCE_CONVERSATION
+                && explicit_preference_conflicts(fact, key, value))
+        });
+        persona.archived_facts.retain(|fact| {
+            !(fact.source == FACT_SOURCE_CONVERSATION
+                && explicit_preference_conflicts(fact, key, value))
+        });
+
+        let now = now_ms();
+        if let Some(fact) = persona
+            .facts
+            .iter_mut()
+            .find(|fact| fact_matches(fact, key, value))
+        {
+            fact.confidence = confidence.clamp(0.0, 1.0);
+            fact.updated_at = now;
+            fact.source = FACT_SOURCE_CONVERSATION.to_string();
+        } else if let Some(fact) = persona
+            .archived_facts
+            .iter_mut()
+            .find(|fact| fact_matches(fact, key, value))
+        {
+            fact.confidence = confidence.clamp(0.0, 1.0);
+            fact.updated_at = now;
+            fact.source = FACT_SOURCE_CONVERSATION.to_string();
+        } else {
+            let fact = Fact {
+                id: uuid::Uuid::new_v4().to_string(),
+                key: key.to_string(),
+                value: value.to_string(),
+                confidence: confidence.clamp(0.0, 1.0),
+                created_at: now,
+                updated_at: now,
+                source: FACT_SOURCE_CONVERSATION.to_string(),
+            };
+            persona.facts.push(fact);
+        }
+        persona
+            .facts
+            .sort_by_key(|fact| std::cmp::Reverse(fact.updated_at));
+        persona.facts.truncate(MAX_FACTS);
+        self.save_locked(&memory)?;
+        Ok(true)
+    }
+
+    /// Add an inferred habit for confirmation. Rejected or confirmed
+    /// key/value pairs are not re-proposed; repeated proposals merge evidence.
+    pub fn propose_candidate(
+        &self,
+        persona_id: &str,
+        key: &str,
+        value: &str,
+        confidence: f32,
+        evidence: &[String],
+    ) -> Result<Option<MemoryCandidate>> {
+        let key = key.trim();
+        let value = value.trim();
+        let distinct_evidence = evidence
+            .iter()
+            .map(|item| item.trim())
+            .collect::<BTreeSet<_>>();
+        if key.is_empty() || value.is_empty() || distinct_evidence.len() < 3 {
+            return Ok(None);
+        }
+        let now = now_ms();
+        let mut memory = self.inner.lock();
+        let persona = memory.personas.entry(persona_id.to_string()).or_default();
+        if persona
+            .facts
+            .iter()
+            .chain(persona.archived_facts.iter())
+            .any(|fact| {
+                fact.key.eq_ignore_ascii_case(key) && fact.value.eq_ignore_ascii_case(value)
+            })
+        {
+            return Ok(None);
+        }
+        if let Some(candidate) = persona.candidates.iter_mut().find(|candidate| {
+            candidate.key.eq_ignore_ascii_case(key) && candidate.value.eq_ignore_ascii_case(value)
+        }) {
+            if candidate.status != "pending" {
+                return Ok(None);
+            }
+            for item in evidence
+                .iter()
+                .map(|item| item.trim())
+                .filter(|item| !item.is_empty())
+            {
+                if !candidate.evidence.iter().any(|old| old == item) {
+                    candidate.evidence.push(item.to_string());
+                }
+            }
+            candidate.confidence = candidate.confidence.max(confidence.clamp(0.0, 1.0));
+            candidate.updated_at = now;
+            let result = candidate.clone();
+            self.save_locked(&memory)?;
+            return Ok(Some(result));
+        }
+        let candidate = MemoryCandidate {
+            id: uuid::Uuid::new_v4().to_string(),
+            key: key.to_string(),
+            value: value.to_string(),
+            confidence: confidence.clamp(0.0, 1.0),
+            evidence: evidence
+                .iter()
+                .map(|item| item.trim().to_string())
+                .filter(|item| !item.is_empty())
+                .take(12)
+                .collect(),
+            status: "pending".to_string(),
+            created_at: now,
+            updated_at: now,
+        };
+        persona.candidates.push(candidate.clone());
+        if persona.candidates.len() > 100 {
+            persona.candidates.drain(0..persona.candidates.len() - 100);
+        }
+        self.save_locked(&memory)?;
+        Ok(Some(candidate))
+    }
+
+    pub fn review_candidate(
+        &self,
+        persona_id: &str,
+        candidate_id: &str,
+        accept: bool,
+    ) -> Result<Option<Fact>> {
+        let mut memory = self.inner.lock();
+        let Some(persona) = memory.personas.get_mut(persona_id) else {
+            return Ok(None);
+        };
+        let Some(index) = persona
+            .candidates
+            .iter()
+            .position(|candidate| candidate.id == candidate_id && candidate.status == "pending")
+        else {
+            return Ok(None);
+        };
+        let now = now_ms();
+        let candidate = &mut persona.candidates[index];
+        candidate.status = if accept { "confirmed" } else { "rejected" }.to_string();
+        candidate.updated_at = now;
+        let fact = if accept {
+            let candidate = candidate.clone();
+            let existing = persona.facts.iter_mut().find(|fact| {
+                fact.key.eq_ignore_ascii_case(&candidate.key)
+                    && fact.value.eq_ignore_ascii_case(&candidate.value)
+            });
+            let fact = match existing {
+                Some(fact) => {
+                    fact.confidence = candidate.confidence;
+                    fact.updated_at = now;
+                    fact.source = FACT_SOURCE_CONVERSATION.to_string();
+                    fact.clone()
+                }
+                None => Fact {
+                    id: uuid::Uuid::new_v4().to_string(),
+                    key: candidate.key,
+                    value: candidate.value,
+                    confidence: candidate.confidence,
+                    created_at: now,
+                    updated_at: now,
+                    source: FACT_SOURCE_CONVERSATION.to_string(),
+                },
+            };
+            if !persona.facts.iter().any(|existing| existing.id == fact.id) {
+                persona.facts.push(fact.clone());
+            }
+            Some(fact)
+        } else {
+            None
+        };
+        persona
+            .facts
+            .sort_by_key(|fact| std::cmp::Reverse(fact.updated_at));
+        if persona.facts.len() > MAX_FACTS {
+            persona.facts.truncate(MAX_FACTS);
+        }
+        self.save_locked(&memory)?;
+        Ok(fact)
+    }
+
+    pub fn learning_cursor(&self, persona_id: &str) -> Option<String> {
+        self.inner
+            .lock()
+            .personas
+            .get(persona_id)
+            .and_then(|persona| persona.learning_cursor.clone())
+    }
+
+    pub fn mark_learning_cursor(&self, persona_id: &str, turn_id: &str) -> Result<()> {
+        let mut memory = self.inner.lock();
+        let persona = memory.personas.entry(persona_id.to_string()).or_default();
+        persona.learning_cursor = Some(turn_id.to_string());
+        self.save_locked(&memory)
+    }
+
     pub fn forget_fact(&self, persona_id: &str, fact_id: &str) -> Result<bool> {
         let mut memory = self.inner.lock();
         let Some(persona) = memory.personas.get_mut(persona_id) else {
@@ -399,7 +771,10 @@ impl PetMemory {
         };
         let before = persona.facts.len();
         persona.facts.retain(|fact| fact.id != fact_id);
-        let removed = persona.facts.len() != before;
+        let archived_before = persona.archived_facts.len();
+        persona.archived_facts.retain(|fact| fact.id != fact_id);
+        let removed =
+            persona.facts.len() != before || persona.archived_facts.len() != archived_before;
         if removed {
             self.save_locked(&memory)?;
         }
@@ -421,13 +796,17 @@ impl PetMemory {
         let Some(persona) = memory.personas.get_mut(persona_id) else {
             return Ok(None);
         };
-        let Some(fact) = persona.facts.iter_mut().find(|fact| fact.id == fact_id) else {
-            return Ok(None);
-        };
+        let fact = persona
+            .facts
+            .iter_mut()
+            .chain(persona.archived_facts.iter_mut())
+            .find(|fact| fact.id == fact_id);
+        let Some(fact) = fact else { return Ok(None) };
         fact.key = key.to_string();
         fact.value = value.to_string();
         fact.confidence = confidence.clamp(0.0, 1.0);
         fact.updated_at = now;
+        fact.source = FACT_SOURCE_MANUAL.to_string();
         let updated = fact.clone();
         persona
             .facts
@@ -474,22 +853,37 @@ impl PetMemory {
         let mut sorted = persona.facts.clone();
         sorted.sort_by_key(|fact| std::cmp::Reverse(fact.updated_at));
         let (recent, old) = sorted.split_at(keep);
-        let merged = old
+        let new_archived = old
             .iter()
-            .map(|fact| format!("{}：{}", fact.key, fact.value))
+            .filter(|fact| !(fact.key == "画像" && fact.source == FACT_SOURCE_COMPRESSED))
+            .filter(|fact| !persona.archived_facts.iter().any(|old| old.id == fact.id))
+            .cloned()
+            .collect::<Vec<_>>();
+        let merged_count = new_archived.len();
+        persona.archived_facts.extend(new_archived);
+        persona
+            .archived_facts
+            .sort_by_key(|fact| std::cmp::Reverse(fact.updated_at));
+        let merged = persona
+            .archived_facts
+            .iter()
+            .take(30)
+            .map(|fact| format!("{}：{}（来源：{}）", fact.key, fact.value, fact.source))
             .collect::<Vec<_>>()
-            .join("；");
+            .join("；")
+            .chars()
+            .take(1800)
+            .collect::<String>();
 
-        let profile = persona
+        let previous_profile = persona
             .facts
             .iter()
             .find(|fact| fact.key == "画像" && fact.source == FACT_SOURCE_COMPRESSED)
             .cloned();
-        let merged_count = old.len();
         let now = now_ms();
-        let profile = match profile {
+        let profile = match previous_profile {
             Some(mut profile) => {
-                profile.value = format!("{}；{}", profile.value, merged);
+                profile.value = merged;
                 profile.updated_at = now;
                 profile
             }
@@ -515,6 +909,7 @@ impl PetMemory {
         persona
             .facts
             .sort_by_key(|fact| std::cmp::Reverse(fact.updated_at));
+        persona.facts.truncate(keep.saturating_add(1));
         self.save_locked(&memory)?;
         Ok(merged_count)
     }
@@ -526,8 +921,11 @@ impl PetMemory {
         let Some(persona) = memory.personas.get_mut(persona_id) else {
             return Ok(0);
         };
-        let removed = persona.facts.len();
+        let removed = persona.facts.len() + persona.archived_facts.len() + persona.candidates.len();
         persona.facts.clear();
+        persona.archived_facts.clear();
+        persona.candidates.clear();
+        persona.learning_cursor = None;
         if removed > 0 {
             self.save_locked(&memory)?;
         }
@@ -556,6 +954,9 @@ impl PetMemory {
             version: MEMORY_VERSION,
             persona_id: persona_id.to_string(),
             facts: exported.facts.clone(),
+            archived_facts: exported.archived_facts.clone(),
+            candidates: exported.candidates.clone(),
+            learning_cursor: exported.learning_cursor.clone(),
             events: exported.events.clone(),
         };
         if let Some(parent) = path.parent() {
@@ -580,6 +981,9 @@ impl PetMemory {
         let mut memory = self.inner.lock();
         let persona = memory.personas.entry(persona_id.to_string()).or_default();
         persona.facts = bundle.facts;
+        persona.archived_facts = bundle.archived_facts;
+        persona.candidates = bundle.candidates;
+        persona.learning_cursor = bundle.learning_cursor;
         persona.events = bundle.events;
         trim_events(persona);
         persona
@@ -689,6 +1093,40 @@ impl PetMemory {
     }
 }
 
+fn fact_matches(fact: &Fact, key: &str, value: &str) -> bool {
+    fact.key.eq_ignore_ascii_case(key) && fact.value.trim().eq_ignore_ascii_case(value.trim())
+}
+
+fn explicit_preference_conflicts(existing: &Fact, key: &str, value: &str) -> bool {
+    if key.eq_ignore_ascii_case("称呼")
+        && existing.key.eq_ignore_ascii_case(key)
+        && !existing.value.trim().eq_ignore_ascii_case(value.trim())
+    {
+        return true;
+    }
+    match opposite_preference_key(key) {
+        Some(opposite) => {
+            existing.key.eq_ignore_ascii_case(opposite)
+                && existing.value.trim().eq_ignore_ascii_case(value.trim())
+        }
+        None => false,
+    }
+}
+
+fn opposite_preference_key(key: &str) -> Option<&'static str> {
+    if key.eq_ignore_ascii_case("喜欢") {
+        Some("不喜欢")
+    } else if key.eq_ignore_ascii_case("不喜欢") {
+        Some("喜欢")
+    } else if key.eq_ignore_ascii_case("想要") {
+        Some("不想要")
+    } else if key.eq_ignore_ascii_case("不想要") {
+        Some("想要")
+    } else {
+        None
+    }
+}
+
 fn trim_events(persona: &mut PersonaMemory) {
     if persona.events.len() > MAX_EVENTS {
         persona.events.drain(0..persona.events.len() - MAX_EVENTS);
@@ -722,11 +1160,101 @@ mod tests {
         memory
             .remember_fact("default", "咖啡", "拿铁", 0.9)
             .unwrap();
+        memory
+            .remember_fact("default", "咖啡", "美式", 0.8)
+            .unwrap();
+        let facts = memory.list_facts("default");
+        assert_eq!(facts.len(), 2);
+        assert!(facts.iter().any(|fact| fact.value == "美式"));
+        assert!(facts.iter().any(|fact| fact.value == "拿铁"));
+        memory.forget_fact("default", &facts[0].id).unwrap();
+        assert_eq!(memory.list_facts("default").len(), 1);
+        memory.clear_facts("default").unwrap();
+        assert!(memory.list_facts("default").is_empty());
+    }
+
+    #[test]
+    fn invalid_memory_is_reported_without_replacing_the_original_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("memory.json");
+        std::fs::write(&path, b"invalid json").unwrap();
+
+        assert!(PetMemory::open(&path).is_err());
+        assert_eq!(std::fs::read(&path).unwrap(), b"invalid json");
+    }
+
+    #[test]
+    fn explicit_preferences_coexist_but_retract_the_opposite_for_the_same_value() {
+        let dir = tempfile::tempdir().unwrap();
+        let memory = PetMemory::open(&dir.path().join("memory.json")).unwrap();
+        memory
+            .remember_explicit_preference("default", "喜欢", "咖啡", 0.9, "我喜欢咖啡")
+            .unwrap();
+        memory
+            .remember_explicit_preference("default", "喜欢", "茶", 0.9, "我喜欢茶")
+            .unwrap();
+        memory
+            .remember_explicit_preference("default", "不喜欢", "咖啡", 0.9, "我不喜欢咖啡")
+            .unwrap();
+
+        let facts = memory.list_facts("default");
+        assert!(facts
+            .iter()
+            .any(|fact| fact.key == "喜欢" && fact.value == "茶"));
+        assert!(facts
+            .iter()
+            .any(|fact| fact.key == "不喜欢" && fact.value == "咖啡"));
+        assert!(!facts
+            .iter()
+            .any(|fact| fact.key == "喜欢" && fact.value == "咖啡"));
+    }
+
+    #[test]
+    fn explicit_correction_to_a_manual_fact_waits_for_user_confirmation() {
+        let dir = tempfile::tempdir().unwrap();
+        let memory = PetMemory::open(&dir.path().join("memory.json")).unwrap();
+        memory
+            .remember_fact("default", "称呼", "小宁", 1.0)
+            .unwrap();
+
+        let recorded = memory
+            .remember_explicit_preference("default", "称呼", "宁宁", 0.9, "请叫我宁宁")
+            .unwrap();
+
+        assert!(!recorded);
+        let snapshot = memory.persona_snapshot("default");
+        assert_eq!(snapshot.facts.len(), 1);
+        assert_eq!(snapshot.facts[0].value, "小宁");
+        assert_eq!(snapshot.candidates.len(), 1);
+        assert_eq!(snapshot.candidates[0].value, "宁宁");
+        assert_eq!(snapshot.candidates[0].status, "pending");
+        assert_eq!(snapshot.candidates[0].evidence, vec!["请叫我宁宁"]);
+    }
+
+    #[test]
+    fn explicit_conversation_correction_replaces_an_old_form_of_address() {
+        let dir = tempfile::tempdir().unwrap();
+        let memory = PetMemory::open(&dir.path().join("memory.json")).unwrap();
+        memory
+            .remember_explicit_preference("default", "称呼", "小宁", 0.9, "请叫我小宁")
+            .unwrap();
+        memory
+            .remember_explicit_preference("default", "称呼", "宁宁", 0.9, "请叫我宁宁")
+            .unwrap();
+
         let facts = memory.list_facts("default");
         assert_eq!(facts.len(), 1);
-        assert_eq!(facts[0].value, "拿铁");
-        memory.forget_fact("default", &facts[0].id).unwrap();
-        assert!(memory.list_facts("default").is_empty());
+        assert_eq!(facts[0].value, "宁宁");
+    }
+
+    #[test]
+    fn habit_suggestions_require_three_distinct_user_messages() {
+        let good = r#"{"candidates":[{"key":"习惯","value":"下午散步","confidence":0.8,"evidenceTurnIds":["u1","u2","u3"]}]}"#;
+        let parsed = parse_memory_suggestions(good).unwrap();
+        assert_eq!(parsed.len(), 1);
+        let repeated_id = r#"{"candidates":[{"key":"习惯","value":"下午散步","confidence":0.8,"evidenceTurnIds":["u1","u1","u2"]}]}"#;
+        assert!(parse_memory_suggestions(repeated_id).is_err());
+        assert!(parse_memory_suggestions("not json").is_err());
     }
 
     #[test]
@@ -844,11 +1372,62 @@ mod tests {
         assert_eq!(profile.source, FACT_SOURCE_COMPRESSED);
         assert!(profile.value.contains("咖啡：美式"), "{}", profile.value);
         assert!(!facts.iter().any(|fact| fact.key == "咖啡"));
+        let snapshot = memory.persona_snapshot("default");
+        assert_eq!(snapshot.archived_facts.len(), 1);
+        assert_eq!(snapshot.archived_facts[0].key, "咖啡");
 
         // Compressing again folds into the same profile instead of duplicating it.
         assert_eq!(memory.compress_facts("default", 2).unwrap(), 1);
         let facts = memory.list_facts("default");
         assert_eq!(facts.iter().filter(|fact| fact.key == "画像").count(), 1);
+        assert!(!memory.persona_snapshot("default").archived_facts.is_empty());
+    }
+
+    #[test]
+    fn repeated_habit_requires_confirmation_and_rejection_prevents_reproposal() {
+        let dir = tempfile::tempdir().unwrap();
+        let memory = PetMemory::open(&dir.path().join("memory.json")).unwrap();
+        let evidence = vec![
+            "u1: 每天下午我都会散步".to_string(),
+            "u2: 下午继续出去散步了".to_string(),
+            "u3: 我今天也按习惯散步".to_string(),
+        ];
+        let candidate = memory
+            .propose_candidate("pet-a", "习惯", "下午散步", 0.85, &evidence)
+            .unwrap()
+            .unwrap();
+        assert_eq!(candidate.status, "pending");
+        assert!(memory.list_facts("pet-a").is_empty());
+
+        let fact = memory
+            .review_candidate("pet-a", &candidate.id, true)
+            .unwrap()
+            .unwrap();
+        assert_eq!(fact.key, "习惯");
+        assert_eq!(fact.value, "下午散步");
+        assert_eq!(fact.source, FACT_SOURCE_CONVERSATION);
+        assert!(memory
+            .list_facts("pet-a")
+            .iter()
+            .any(|item| item.id == fact.id));
+        assert!(memory
+            .propose_candidate("pet-a", "习惯", "下午散步", 0.9, &evidence)
+            .unwrap()
+            .is_none());
+
+        let rejected = memory
+            .propose_candidate("pet-b", "习惯", "上午喝茶", 0.8, &evidence)
+            .unwrap()
+            .unwrap();
+        assert!(memory
+            .review_candidate("pet-b", &rejected.id, false)
+            .unwrap()
+            .is_none());
+        assert!(memory
+            .propose_candidate("pet-b", "习惯", "上午喝茶", 0.9, &evidence)
+            .unwrap()
+            .is_none());
+        assert!(memory.list_facts("pet-b").is_empty());
     }
 
     #[test]
@@ -911,6 +1490,14 @@ mod tests {
         assert_eq!(
             extract_preference("Call me Book!"),
             Some(("称呼".to_string(), "Book".to_string(), 0.9))
+        );
+        assert_eq!(
+            extract_preference("我更喜欢乌龙茶"),
+            Some(("喜欢".to_string(), "乌龙茶".to_string(), 0.9))
+        );
+        assert_eq!(
+            extract_preference("我平时早上散步"),
+            Some(("习惯".to_string(), "早上散步".to_string(), 0.9))
         );
         assert!(extract_preference("今天感觉不错").is_none());
     }

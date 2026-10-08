@@ -124,17 +124,19 @@ final class NativeLifecycleTests: XCTestCase {
                                                       side: .bottom,
                                                       expansion: 1)
         XCTAssertLessThan(compact.width, expanded.width)
+        XCTAssertEqual(compact.height, 6)
+        XCTAssertEqual(expanded.height, 24)
         XCTAssertTrue(work.contains(expanded))
     }
 
     func testCredentialStatusLabelCoversConfiguredAndMissingKeys() throws {
         let configured = try JSONDecoder().decode(
             DeepSeekProjection.self,
-            from: Data(#"{"provider":"deepseek","keyConfigured":true,"baseUrl":"https://example.invalid","model":"test","apiKeyEnv":"TEST_KEY","timeoutSeconds":20,"maxTokens":80,"temperature":0.9,"thinkingDisabled":true}"#.utf8)
+            from: Data(#"{"provider":"deepseek","keyConfigured":true,"baseUrl":"https://example.invalid","model":"test","apiKeyEnv":"TEST_KEY","timeoutSeconds":20,"maxTokens":80,"conversationMaxTokens":512,"temperature":0.9,"thinkingDisabled":true}"#.utf8)
         )
         let missing = try JSONDecoder().decode(
             DeepSeekProjection.self,
-            from: Data(#"{"provider":"deepseek","keyConfigured":false,"baseUrl":"https://example.invalid","model":"test","apiKeyEnv":"TEST_KEY","timeoutSeconds":20,"maxTokens":80,"temperature":0.9,"thinkingDisabled":true}"#.utf8)
+            from: Data(#"{"provider":"deepseek","keyConfigured":false,"baseUrl":"https://example.invalid","model":"test","apiKeyEnv":"TEST_KEY","timeoutSeconds":20,"maxTokens":80,"conversationMaxTokens":512,"temperature":0.9,"thinkingDisabled":true}"#.utf8)
         )
 
         XCTAssertEqual(configured.credentialStatusLabel, "已配置（密钥不会显示）")
@@ -148,7 +150,49 @@ final class NativeLifecycleTests: XCTestCase {
         XCTAssertFalse(bubble.canBecomeKey)
         XCTAssertFalse(bubble.canBecomeMain)
         XCTAssertTrue(composer.canBecomeKey)
-        XCTAssertTrue(composer.canBecomeMain)
+        XCTAssertFalse(composer.canBecomeMain)
+    }
+
+    func testComposerUsesNativeGlassAndKeepsDraftWhileGenerating() throws {
+        let composer = ComposerPanel()
+        defer { composer.close() }
+        let glass = try XCTUnwrap(composer.contentView as? NSGlassEffectView)
+        XCTAssertEqual(glass.cornerRadius, 20)
+        let scroll = try XCTUnwrap(glass.contentView?.subviews.compactMap { $0 as? NSScrollView }.first)
+        let editor = try XCTUnwrap(scroll.documentView as? NSTextView)
+        var sent = [String]()
+        composer.onSend = { sent.append($0) }
+        composer.updatePosition(near: NSRect(x: 600, y: 400, width: 96, height: 96),
+                                workFrame: NSRect(x: 0, y: 0, width: 1440, height: 900),
+                                side: .bottom)
+        editor.string = "下一条还没有发出的消息"
+        composer.setConversationState(true, error: "")
+        XCTAssertTrue(composer.textView(editor, doCommandBy: #selector(NSResponder.insertNewline(_:))))
+        XCTAssertTrue(sent.isEmpty)
+        XCTAssertEqual(composer.draft(), "下一条还没有发出的消息")
+        composer.closePreservingDraft()
+        XCTAssertEqual(composer.draft(), "下一条还没有发出的消息")
+        composer.setConversationState(false, error: "")
+        XCTAssertTrue(composer.textView(editor, doCommandBy: #selector(NSResponder.insertNewline(_:))))
+        XCTAssertEqual(sent, ["下一条还没有发出的消息"])
+        XCTAssertTrue(composer.draft().isEmpty)
+    }
+
+    func testComposerGrowsForMultilineDraftAndStaysInWorkArea() throws {
+        let composer = ComposerPanel()
+        defer { composer.close() }
+        let glass = try XCTUnwrap(composer.contentView as? NSGlassEffectView)
+        let scroll = try XCTUnwrap(glass.contentView?.subviews.compactMap { $0 as? NSScrollView }.first)
+        let editor = try XCTUnwrap(scroll.documentView as? NSTextView)
+        let pet = NSRect(x: 600, y: 400, width: 96, height: 96)
+        let work = NSRect(x: 0, y: 0, width: 1440, height: 900)
+        composer.updatePosition(near: pet, workFrame: work, side: .bottom)
+        XCTAssertEqual(composer.frame.height, 40)
+        editor.string = Array(repeating: "多行中文草稿", count: 12).joined(separator: "\n")
+        composer.textDidChange(Notification(name: NSText.didChangeNotification, object: editor))
+        XCTAssertGreaterThan(composer.frame.height, 40)
+        XCTAssertLessThanOrEqual(composer.frame.height, 102)
+        XCTAssertTrue(work.contains(composer.frame))
     }
 
     func testOverlayPanelsCanBeCreatedAndClosedRepeatedly() {

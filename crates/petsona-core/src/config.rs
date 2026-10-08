@@ -24,10 +24,17 @@ pub struct DeepSeekConfig {
     pub model: String,
     pub api_key_env: String,
     pub timeout_seconds: u64,
+    /// The short proactive greeting budget remains separate from conversation generation.
     pub max_tokens: u32,
+    #[serde(default = "default_conversation_max_tokens")]
+    pub conversation_max_tokens: u32,
     pub temperature: f32,
     /// Ask DeepSeek to skip reasoning for short greetings.
     pub thinking_disabled: bool,
+}
+
+fn default_conversation_max_tokens() -> u32 {
+    512
 }
 
 impl Default for DeepSeekConfig {
@@ -39,6 +46,7 @@ impl Default for DeepSeekConfig {
             api_key_env: "DEEPSEEK_API_KEY".to_string(),
             timeout_seconds: 20,
             max_tokens: 80,
+            conversation_max_tokens: default_conversation_max_tokens(),
             temperature: 0.9,
             thinking_disabled: true,
         }
@@ -93,6 +101,18 @@ impl Default for MemoryConfig {
             event_retention_days: 0,
             fact_compress: true,
         }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase", default)]
+pub struct ConversationConfig {
+    pub save_history: bool,
+}
+
+impl Default for ConversationConfig {
+    fn default() -> Self {
+        Self { save_history: true }
     }
 }
 
@@ -158,11 +178,28 @@ impl Default for AutoWalkConfig {
 /// `scale_factor` drifts on mixed-DPI desktops: a 100% monitor next to a 150%
 /// one would restore the pet tens of pixels away from where the user left it.
 /// The UI converts to logical points only at the winit boundary.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase", default)]
 pub struct WindowPosition {
+    /// Horizontal offset from the selected display's left edge, in physical pixels.
     pub x: f32,
+    /// Vertical offset down from the selected display's top edge, in physical pixels.
     pub y: f32,
+    /// Display identity is advisory; an unavailable display falls back to a visible display.
+    pub display_id: Option<String>,
+    /// Backing scale used to encode x/y. Old two-field positions use 1.0.
+    pub backing_scale: f32,
+}
+
+impl Default for WindowPosition {
+    fn default() -> Self {
+        Self {
+            x: 0.0,
+            y: 0.0,
+            display_id: None,
+            backing_scale: 1.0,
+        }
+    }
 }
 
 /// The local state protocol hooks use to drive the pet.
@@ -197,6 +234,7 @@ pub struct AppConfig {
     pub deepseek: DeepSeekConfig,
     pub greeting: GreetingConfig,
     pub memory: MemoryConfig,
+    pub conversation: ConversationConfig,
     pub state_server: StateServerConfig,
 }
 
@@ -212,6 +250,7 @@ impl Default for AppConfig {
             deepseek: DeepSeekConfig::default(),
             greeting: GreetingConfig::default(),
             memory: MemoryConfig::default(),
+            conversation: ConversationConfig::default(),
             state_server: StateServerConfig::default(),
         }
     }
@@ -297,5 +336,31 @@ impl AppPaths {
 impl Default for AppPaths {
     fn default() -> Self {
         Self::resolve(Self::default_dir())
+    }
+}
+
+#[cfg(test)]
+mod position_compatibility_tests {
+    use super::*;
+
+    #[test]
+    fn old_two_coordinate_positions_load_and_new_monitor_metadata_round_trips() {
+        let old = r#"{"scale":1.0,"startPosition":{"x":640,"y":480}}"#;
+        let parsed: PetWindowConfig = serde_json::from_str(old).unwrap();
+        let position = parsed.start_position.unwrap();
+        assert_eq!(position.x, 640.0);
+        assert_eq!(position.y, 480.0);
+        assert_eq!(position.display_id, None);
+        assert_eq!(position.backing_scale, 1.0);
+
+        let migrated = WindowPosition {
+            x: 240.0,
+            y: 360.0,
+            display_id: Some("display-a".to_string()),
+            backing_scale: 2.0,
+        };
+        let encoded = serde_json::to_string(&migrated).unwrap();
+        let decoded: WindowPosition = serde_json::from_str(&encoded).unwrap();
+        assert_eq!(decoded, migrated);
     }
 }

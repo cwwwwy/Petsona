@@ -1,112 +1,39 @@
 # Petsona 平台架构
 
-> 2026-09-19 起，目标架构调整为“共享 Rust 核心 + 原生平台前端”。完整迁移计划见
-> [`plans/native-ui-rewrite.md`](plans/native-ui-rewrite.md)，功能对照见
-> [`FEATURE_PARITY.md`](FEATURE_PARITY.md)。本文件中关于 egui 共享 UI 的内容在迁移完成前仅描述旧入口，
-> 不代表最终产品架构。
+当前产品入口均为原生前端。旧 egui UI、`PlatformHost` 与两个旧 shell 已删除，历史设计可从 Git 查询。
+现行功能状态见 [FEATURE_PARITY.md](FEATURE_PARITY.md)，跨对话契约与证据分别放在 `plans/` 与 `execution/`。
 
-## 最终目标架构（迁移中的新入口）
+## 分层与职责
 
 ```text
-petsona-core + petsona-runtime  ->  petsona-ffi (C ABI)
-                                      ├── apps/macos (SwiftUI + AppKit)
-                                      └── apps/windows (C# + WinUI 3 + Win32)
+petsona-core + petsona-runtime → petsona-ffi (C ABI 3)
+                                  ├── apps/macos (SwiftUI + AppKit)
+                                  └── apps/windows (C# + WinUI 3 + Win32)
 ```
-
-原生前端拥有各自的 UI 主线程和窗口生命周期；Rust 只维护共享业务状态、动画、配置、协议和后台任务。
-当前 macOS 入口已经建立，旧 `petsona-app` / shell 仍用于行为对照，直到
-[`FEATURE_PARITY.md`](FEATURE_PARITY.md) 全部完成。Windows 原生入口已于 2026-09-20 启动
-（C# / WinUI 3 + Win32，与 macOS 线并行），契约见
-[`plans/windows-native-rewrite.md`](plans/windows-native-rewrite.md)。
-
-## 旧入口决策（历史记录，不约束新原生前端）
-
-- 一个仓库、一个 workspace、一个共享核心主线。
-- 共享层：`petsona-core` + `petsona-runtime` + `petsona-app`（纯 UI 库）。
-- Windows / macOS 各自拥有 UI 外壳，可独立发布（`windows-v*` / `macos-v*`），
-  不要求发布节奏一致。
-- 投入比例约为 Windows 70% / macOS 30%；Windows 领先不算欠债，但不能破坏共享层。
-- 不拆仓库、不拆核心逻辑、不长期维护两套平台主线。
-
-## 旧入口结构
-
-```text
-crates/
-  petsona-core/          宠物格式、动画引擎、人格、记忆、状态协议
-  petsona-runtime/       配置、宠物会话、日志、实例锁、问候
-  petsona-app/           共享 egui UI + PlatformHost 边界（纯库，无二进制）
-    src/app.rs           应用生命周期与 eframe 协调
-    src/app/             bubble / shadow / conversation / settings / interaction / menus / pets / test_hooks / geometry
-  petsona-shell-windows/ Win32 外壳（bin petsona-windows；autostart / no_activate 已拆出）
-  petsona-shell-macos/   AppKit 外壳（bin petsona-macos）
-```
-
-外壳实现 `PlatformHost` 后交给共享 UI 启动：
-
-```rust
-fn main() -> petsona_app::RunResult {
-    petsona_app::run(std::sync::Arc::new(WindowsHost::new()))
-}
-```
-
-## 旧入口边界
 
 | 层 | 负责 |
 |---|---|
-| `petsona-core` | 宠物状态机与动画时间、状态协议与 TTL、人格 / 记忆 / 对话模型 |
-| `petsona-runtime` | 配置读写、宠物库与会话、日志、实例锁、问候调度 |
-| `petsona-app` | egui 界面与交互协调、窗口几何计算、`PlatformHost` trait |
-| 平台外壳 | 窗口创建 / 激活 / 透明 / DPI、托盘与菜单、全局输入、点击穿透、打包与自启 |
+| `petsona-core` | 宠物格式、动画与注视规则、状态优先级、人格/记忆数据模型、兼容模型请求 |
+| `petsona-runtime` | 配置与会话、宠物库、文件存储、实例锁、日志、协议、网络任务、流式聊天、记忆学习、人格生成与取消 |
+| `petsona-ffi` | 命令入队、快照与 JSON 文本投影、渲染数据、错误与句柄生命周期 |
+| 原生前端 | UI 主线程、窗口与屏幕坐标换算、原生文本输入、菜单、渲染、Keychain/凭据与登录自启 |
 
-`PlatformHost` 的每个方法都有可移植默认实现（winit 几何、egui 菜单、无全局钩子），
-缺少平台能力时自动退化为框架行为。`petsona-app` 里不允许出现 `#[cfg(target_os = ...)]`。
+`contracts/petsona.h` 与 `contracts/ABI.md` 定义跨语言边界。禁止跨 ABI 传递 Rust 引用、容器或分配器所有权；保留 ABI 3 结构布局与已有枚举值，新业务通过追加命令和 JSON 投影表达。
 
-能力分组（完整签名见 `petsona_app::platform::PlatformHost`）：
+几何持久化使用物理像素；AppKit 屏幕点与像素只在前端边界换算。macOS 使用 `NSScreen.visibleFrame` 排除菜单栏与 Dock；混合 DPI、屏幕热拔插和 Spaces 仍需真实桌面验收。
 
-- 窗口与几何：`present_window`、`set_window_geometry_physical`、`monitor_work_area`、
-  `PhysicalRect`（物理像素矩形）。
-- 系统集成：菜单（`create_menu`、`PlatformMenu`）、自启（`autostart_*`）、
-  文件面板与文件管理器、设置窗口聚焦。
-- 输入：事件唤醒、指针快照、Escape、指针采样节流。
-- 字体：CJK 系统字体候选路径（`cjk_font_candidates`），共享层只负责读取和安装。
-- 测试探针（`test-hooks`）：轮询 / 事件计数、`popup_transitions_disabled` 等。
+## 产品与数据
 
-新增平台能力 = trait 加带默认实现的方法 → 对应外壳 override → 共享层只调用 trait。
+macOS 最低支持 26，使用 SwiftUI 原生设置与 AppKit 宠物/浮层窗口。宠物、气泡和入口不抢焦点；输入框可以成为 Key Window，设置拥有独立主窗口。浮层采用 macOS 26 `NSGlassEffectView`。
 
-## 旧入口菜单方案
+宠物只来自 Petsona 本地库，无内置宠物；Codex 目录只作为显式导入来源。聊天历史与长期记忆按宠物隔离并分别控制；人格更新保留稳定身份和记忆。模型来源材料按数据处理，输出验证通过后才能应用。
 
-- Windows：进程内专用 Win32 菜单线程 + `TrackPopupMenuEx(TPM_RETURNCMD | TPM_WORKAREA)`，
-  命令回 eframe 线程；菜单打开时宠物继续动画。
-- macOS：AppKit 原生菜单（含“选择宠物”checked 子菜单）。
-- 不采用 WinUI3 / Windows App SDK：同进程 XAML Island 需要常驻 STA dispatcher 和 C++/WinRT shim，
-  对四项菜单来说依赖、包体和首次弹出成本都高于收益。被否决方案的研究资料在 git 历史里
-  （`docs/WINUI3_MENU.md` 已删除）。
+macOS 用户数据默认位于 `~/Library/Application Support/Petsona`，Windows 位于 `%APPDATA%\Petsona`；测试在应用初始化前设置 `PETSONA_HOME`。凭据不写进配置快照，自动测试用专用假环境凭据，真实 Keychain 交互保留在人工验收。
 
-## 发布轨道
+## 发布与验证
 
-```text
-windows-v0.3.0  -> .github/workflows/release-windows.yml -> dist\Petsona-windows-<arch>-<version>.zip
-macos-v0.2.1    -> .github/workflows/release-macos.yml   -> dist/Petsona.app + Petsona-macos-<arch>.zip
-```
+一个仓库、一个 workspace，两端独立发布：`windows-v*` / `macos-v*` 分别触发各自 release workflow。不长期维护平台分支，Git 操作遵循 [AGENTS.md](../AGENTS.md) 的只读约定。
 
-共享层变更至少保证两边编译 + 核心测试通过；触及平台能力时跑对应平台完整验收脚本。
+共享层或 FFI 改动需要两端完整回归；前端改动跑对应完整验收入口。自动检查与人工矩阵分别记录，编译通过不能替代窗口视觉、IME、登录自启、干净机器、签名或公证验收。
 
-## 分支策略
-
-- 日常直接在 `main` 开发。
-- 试验性改动用 `codex/win-*` / `codex/mac-*` 短期分支，合并后立即删除。
-- 不长期维护 `windows` / `macos` 两套开发主线；如需稳定期可临时开 `release/win-*` 分支。
-
-## 旧外壳迁移状态（历史）
-
-共享层（core / runtime / app 纯库）和平台外壳（Win32 / AppKit）都已就位；发布 workflow 已建立。
-Windows 使用设置开关管理 HKCU Run；macOS 使用设置开关管理用户 LaunchAgent，工作区取
-`NSScreen.visibleFrame`。登录后实际启动仍需实机验收；macOS 真实签名 / 公证待凭据。
-
-## 当前原生迁移状态
-
-当前 macOS 原生实现已接入 runtime worker/ABI3、SwiftUI/AppKit 宠物窗、设置/宠物库/Composer、
-LaunchAgent/Keychain 服务和 native smoke，但仍未完成完整人工验收。目标契约以
-[计划 v1.0](plans/native-ui-rewrite.md) 为准，实际进展、命令证据与未修复审查项见
-[执行记录](execution/native-ui-rewrite.md)。旧共享 UI 的测试通过不能代表新前端通过。Windows 线独立执行
-[`plans/windows-native-rewrite.md`](plans/windows-native-rewrite.md)，其进展不以 macOS 证据替代。
+现行契约：macOS [桌面陪伴计划](plans/macos-companion-evolution.md)、[原生入口迁移](plans/native-ui-rewrite.md)，Windows [原生入口迁移](plans/windows-native-rewrite.md)。阶段进展和未关闭项以各自执行记录为准。

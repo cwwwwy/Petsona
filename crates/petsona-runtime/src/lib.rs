@@ -1,9 +1,11 @@
 pub mod commands;
+pub mod conversation;
 pub mod engine;
 pub mod events;
 pub mod greeting;
 pub mod instance_lock;
 pub mod logging;
+pub mod persona_source;
 pub mod pet;
 pub mod session;
 pub mod snapshot;

@@ -6,6 +6,41 @@ import XCTest
 final class EngineClientTests: XCTestCase {
     private let testAPIKeyEnv = "PETSONA_MACOS_TEST_API_KEY"
 
+    func testRenderedCursorTargetReachesV2GazePoseAndReturnsToIdle() throws {
+        let client = EngineClient(home: makeIsolatedHome())
+        defer { client.shutdown() }
+        waitUntilReady(client)
+        let repository = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent()
+            .deletingLastPathComponent().deletingLastPathComponent()
+        client.importPet(repository.appendingPathComponent("crates/petsona-core/testdata/v2-test-pet"))
+        // Import validates and decodes the atlas before loading it again.
+        // A cold Debug host can need more than one second for this setup.
+        for _ in 0..<500 {
+            _ = client.tick()
+            if client.snapshot.has_pet != 0 { break }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.01))
+        }
+        XCTAssertNotEqual(client.snapshot.has_pet, 0, "\(client.statusMessage); \(client.errorMessage)")
+        let frame = NSRect(x: 100, y: 100, width: 128, height: 128)
+        let target = try XCTUnwrap(PetGazeGeometry.target(cursor: NSPoint(x: 184, y: 184),
+                                                        petFrame: frame, active: false))
+        for _ in 0..<100 {
+            client.setGazeTarget(dx: target.x, dy: target.y)
+            _ = client.tick()
+            if client.snapshot.sprite_index == 72 { break } // The synthetic row has two drawn poses: 45° maps to column 0.
+            RunLoop.current.run(until: Date().addingTimeInterval(0.01))
+        }
+        XCTAssertEqual(client.snapshot.sprite_index, 72)
+        client.clearGaze()
+        for _ in 0..<100 {
+            _ = client.tick()
+            if client.snapshot.sprite_index < 8 { break }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.01))
+        }
+        XCTAssertLessThan(client.snapshot.sprite_index, 8)
+    }
+
     func testEmptyHomeIsIsolatedAndBecomesReadyWithoutAPet() {
         let home = makeIsolatedHome()
         let client = EngineClient(home: home)
@@ -15,6 +50,7 @@ final class EngineClientTests: XCTestCase {
         XCTAssertNotEqual(client.snapshot.ready, 0)
         XCTAssertEqual(client.snapshot.has_pet, 0)
         XCTAssertEqual(client.snapshot.faulted, 0)
+        XCTAssertTrue(client.text(PETSONA_TEXT_DEEPSEEK_CONFIG).contains("\"apiKeyEnv\":\"\(testAPIKeyEnv)\""))
         XCTAssertTrue(FileManager.default.fileExists(atPath: home.appendingPathComponent("config.json").path))
     }
 
@@ -94,6 +130,47 @@ final class EngineClientTests: XCTestCase {
                       "greeting config must land in the memory projection")
     }
 
+    func testSimplifiedSettingsKeepExistingAdvancedValues() throws {
+        let client = EngineClient(home: makeIsolatedHome())
+        defer { client.shutdown() }
+        waitUntilReady(client)
+        client.updateDeepSeekConfig(["timeoutSeconds": 47, "conversationMaxTokens": 2048,
+                                     "temperature": 0.4, "thinkingDisabled": false])
+        client.updateMemoryConfig(["recentEvents": 9, "factLimit": 35,
+                                   "eventRetentionDays": 180, "factCompress": false])
+        client.updateGreetingConfig(["cooldownMinutes": 67, "maxChars": 25])
+        // These are precisely the reduced payloads sent by the settings UI.
+        client.updateDeepSeekConfig(["provider": "custom", "baseUrl": "https://example.invalid/v1",
+                                     "model": "simplified-model"])
+        client.updateMemoryConfig(["enabled": false])
+        client.updateGreetingConfig(["enabled": false, "idleMinutes": 60])
+        for _ in 0..<100 {
+            _ = client.tick()
+            if client.text(PETSONA_TEXT_MEMORY).contains("\"idleMinutes\":60") { break }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.01))
+        }
+        let service = try XCTUnwrap(JSONSerialization.jsonObject(
+            with: Data(client.text(PETSONA_TEXT_DEEPSEEK_CONFIG).utf8)) as? [String: Any])
+        XCTAssertEqual(service["model"] as? String, "simplified-model")
+        XCTAssertEqual(service["timeoutSeconds"] as? Int, 47)
+        XCTAssertEqual(service["conversationMaxTokens"] as? Int, 2048)
+        XCTAssertEqual(service["temperature"] as? Double ?? 0, 0.4, accuracy: 0.001)
+        XCTAssertEqual(service["thinkingDisabled"] as? Bool, false)
+        XCTAssertEqual(service["apiKeyEnv"] as? String, testAPIKeyEnv)
+        let memory = try XCTUnwrap(JSONSerialization.jsonObject(
+            with: Data(client.text(PETSONA_TEXT_MEMORY).utf8)) as? [String: Any])
+        let config = try XCTUnwrap(memory["config"] as? [String: Any])
+        XCTAssertEqual(config["enabled"] as? Bool, false)
+        XCTAssertEqual(config["recentEvents"] as? Int, 9)
+        XCTAssertEqual(config["factLimit"] as? Int, 35)
+        XCTAssertEqual(config["eventRetentionDays"] as? Int, 180)
+        XCTAssertEqual(config["factCompress"] as? Bool, false)
+        let greeting = try XCTUnwrap(memory["greeting"] as? [String: Any])
+        XCTAssertEqual(greeting["enabled"] as? Bool, false)
+        XCTAssertEqual(greeting["cooldownMinutes"] as? Int, 67)
+        XCTAssertEqual(greeting["maxChars"] as? Int, 25)
+    }
+
     func testEngineCanBeDestroyedAndRecreatedWithPersistedSettings() {
         let home = makeIsolatedHome()
         do {
@@ -148,8 +225,9 @@ final class EngineClientTests: XCTestCase {
         let stateServer = stateServerEnabled
             ? "\"enabled\":true,\"port\":0"
             : "\"enabled\":false"
-        let config = "{\"stateServer\":{\(stateServer)},\"deepSeek\":{\"apiKeyEnv\":\"\(testAPIKeyEnv)\"}}"
+        let config = "{\"stateServer\":{\(stateServer)},\"deepseek\":{\"apiKeyEnv\":\"\(testAPIKeyEnv)\"}}"
         try! config.data(using: .utf8)!.write(to: home.appendingPathComponent("config.json"), options: .atomic)
+        addTeardownBlock { try? FileManager.default.removeItem(at: home) }
         return home
     }
 }

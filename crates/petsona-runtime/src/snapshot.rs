@@ -23,6 +23,11 @@ pub enum RuntimeTextField {
     Memory,
     ImportConflict,
     Models,
+    WindowPosition,
+    Conversation,
+    PersonaSource,
+    PersonaDraft,
+    PersonaPreview,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -71,6 +76,11 @@ pub struct RuntimeTexts {
     pub memory: String,
     pub import_conflict: String,
     pub models: String,
+    pub window_position: String,
+    pub conversation: String,
+    pub persona_source: String,
+    pub persona_draft: String,
+    pub persona_preview: String,
 }
 
 impl RuntimeTexts {
@@ -95,6 +105,11 @@ impl RuntimeTexts {
             RuntimeTextField::Memory => &self.memory,
             RuntimeTextField::ImportConflict => &self.import_conflict,
             RuntimeTextField::Models => &self.models,
+            RuntimeTextField::WindowPosition => &self.window_position,
+            RuntimeTextField::Conversation => &self.conversation,
+            RuntimeTextField::PersonaSource => &self.persona_source,
+            RuntimeTextField::PersonaDraft => &self.persona_draft,
+            RuntimeTextField::PersonaPreview => &self.persona_preview,
         }
     }
 }

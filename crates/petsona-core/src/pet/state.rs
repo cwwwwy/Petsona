@@ -289,10 +289,16 @@ fn gaze_next_frame_after(elapsed_ms: f32) -> Duration {
     Duration::from_millis(wait.ceil().max(1.0) as u64)
 }
 
-/// Official Codex per-row frame durations (milliseconds).
+/// Codex repeats idle holds six times longer than its regular frame table.
+pub const CODEX_IDLE_LOOP_MULTIPLIER: f32 = 6.0;
+
+/// Codex per-row rendered frame durations (milliseconds).
 pub fn official_durations(state: PetState) -> Vec<f32> {
     match state {
-        PetState::Idle => vec![280.0, 110.0, 110.0, 140.0, 140.0, 320.0],
+        PetState::Idle => vec![280.0, 110.0, 110.0, 140.0, 140.0, 320.0]
+            .into_iter()
+            .map(|duration| duration * CODEX_IDLE_LOOP_MULTIPLIER)
+            .collect(),
         PetState::RunningRight | PetState::RunningLeft => {
             let mut v = vec![120.0; 7];
             v.push(220.0);
@@ -1011,10 +1017,40 @@ mod tests {
     #[test]
     fn official_table_matches_codex_spec() {
         assert_eq!(official_durations(PetState::Idle).len(), 6);
+        assert_eq!(
+            official_durations(PetState::Idle),
+            vec![1680.0, 660.0, 660.0, 840.0, 840.0, 1920.0]
+        );
         assert_eq!(official_durations(PetState::RunningRight).len(), 8);
         assert_eq!(official_durations(PetState::Waving).len(), 4);
         assert_eq!(official_durations(PetState::Running)[5], 220.0);
         assert_eq!(official_durations(PetState::Review)[5], 280.0);
+    }
+
+    #[test]
+    fn locked_codex_bundle_animation_fixture_matches_the_engine_table() {
+        let reference: serde_json::Value = serde_json::from_str(include_str!(
+            "../../testdata/codex-26.930.31428-animation.json"
+        ))
+        .unwrap();
+        let multiplier = reference["idle"]["loopMultiplier"].as_f64().unwrap() as f32;
+        let idle = reference["idle"]["referenceDurationsMs"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|value| value.as_f64().unwrap() as f32 * multiplier)
+            .collect::<Vec<_>>();
+        assert_eq!(official_durations(PetState::Idle), idle);
+
+        for (name, expected) in reference["animations"].as_object().unwrap() {
+            let state = PetState::from_name(name).expect("known reference state");
+            let frames = expected["frames"].as_u64().unwrap() as usize;
+            let frame_ms = expected["frameMs"].as_f64().unwrap() as f32;
+            let last_ms = expected["lastFrameMs"].as_f64().unwrap() as f32;
+            let mut durations = vec![frame_ms; frames];
+            *durations.last_mut().unwrap() = last_ms;
+            assert_eq!(official_durations(state), durations, "{name}");
+        }
     }
 
     #[test]
@@ -1059,7 +1095,7 @@ mod tests {
         let idle = animations.get(&PetState::Idle).unwrap();
         assert_eq!(idle.durations_ms.len(), 5);
         assert_eq!(idle.sprites, vec![0, 1, 2, 3, 4]);
-        assert_eq!(*idle.durations_ms.last().unwrap(), 320.0);
+        assert_eq!(*idle.durations_ms.last().unwrap(), 1920.0);
         let running = animations.get(&PetState::RunningRight).unwrap();
         assert_eq!(running.sprites, vec![8]);
     }
@@ -1220,10 +1256,10 @@ mod tests {
         let e = engine(9);
         let idle = e.animation(PetState::Idle).unwrap();
         assert_eq!(idle.sprite_at(0.0), Some(0));
-        assert_eq!(idle.sprite_at(300.0), Some(1));
-        // 280 + 110 = 390ms, so 450ms is the third frame
-        assert_eq!(idle.sprite_at(450.0), Some(2));
-        assert_eq!(idle.sprite_at(1099.0), Some(5));
+        assert_eq!(idle.sprite_at(2000.0), Some(1));
+        // Codex holds each idle frame six times longer than the frame table.
+        assert_eq!(idle.sprite_at(2500.0), Some(2));
+        assert_eq!(idle.sprite_at(4800.0), Some(5));
         // loops back to the start
         assert_eq!(idle.sprite_at(idle.total_ms), Some(0));
         assert_eq!(idle.sprite_at(idle.total_ms + 1.0), Some(0));

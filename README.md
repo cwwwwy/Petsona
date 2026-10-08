@@ -2,7 +2,7 @@
 
 A lightweight desktop pet for Windows and macOS. A shared Rust core/runtime drives
 native platform frontends (Windows: C# / WinUI 3 + Win32, macOS: SwiftUI / AppKit),
-with a Codex-compatible pet engine and an optional DeepSeek greeting.
+with a Codex-compatible pet engine, model chat, local memory and configurable personalities.
 
 ## Features
 
@@ -10,10 +10,10 @@ with a Codex-compatible pet engine and an optional DeepSeek greeting.
 - 8×9 / 8×11 Codex pet packs, animation state machine, pixel-accurate click-through
 - Click / double-click / drag / native context menu / cursor gaze / speech bubble
 - Explicit import from Codex (`~/.codex/pets`), a folder or a `.zip`
-- macOS settings: DeepSeek configuration, persona CRUD/templates, JSON memory
-  facts/events, drag-and-drop import with overwrite confirmation, fixed scale presets
+- macOS companion: streaming chat and per-pet history, editable preferences and
+  confirmed habits, personalities shaped from chat samples or a named reference
 - Local state protocol (`127.0.0.1:17872`) so Codex hooks can drive the pet
-- Persona plus lightweight JSON memory (facts, recent events, last seen)
+- One stable personality per pet; local history and long-term memory have separate controls
 - Windows: WinUI 3 + Win32 frontend — tray with native menu, login autostart,
   single-monitor position memory (multi-monitor / gravity / activity reminders are
   deferred, see [plan §3.1](docs/plans/windows-native-rewrite.md))
@@ -24,23 +24,22 @@ with a Codex-compatible pet engine and an optional DeepSeek greeting.
 | Crate | Contents |
 |---|---|
 | `crates/petsona-core/` | Pet format, animation engine, persona, memory, DeepSeek, state protocol |
-| `crates/petsona-runtime/` | Platform-independent runtime: config, sessions, locks, logs, greetings |
+| `crates/petsona-runtime/` | Runtime: sessions, storage, chat/history, memory learning, personality generation, locks and logs |
 | `crates/petsona-ffi/` | Native frontend C ABI; ABI 3 contract and worker projection |
 | `apps/windows/` | C# / WinUI 3 + Win32 native Windows frontend (current product line) |
 | `apps/macos/` | SwiftUI + AppKit native macOS frontend (manual acceptance in progress) |
 
 Both native frontends call the shared engine through `contracts/petsona.h`. The
 old egui UI and the two legacy shells were **deleted on 2026-09-22** (Windows
-plan REQ-W15); they are only one `git checkout` away if a behaviour baseline is
-needed again.
+plan REQ-W15); historical behaviour can be inspected with read-only `git show`.
 
-Windows state: the native frontend passed its manual acceptance matrix (W1–W14)
-and the automated gate; packaging (`scripts\package-windows.ps1`) and the release
-workflow still need their first runs on a clean machine.
+Windows state: the earlier native gate and manual W1–W11 / W13 / W14 passed; W12
+remains deferred. Later W29–W33, shared-layer regression and release checks remain
+open in [the Windows checklist](docs/WINDOWS_VERIFICATION.md).
 macOS state: native settings use a unified titlebar/sidebar and grouped forms;
 window, IME, Keychain, and signing acceptance remains open. **macOS 26 or later
 is required.**
-See the plans ([macOS](docs/plans/native-ui-rewrite.md),
+See the plans ([macOS companion](docs/plans/macos-companion-evolution.md),
 [Windows](docs/plans/windows-native-rewrite.md)), their
 [execution records](docs/execution/), and [collaboration rules](AGENTS.md).
 
@@ -53,8 +52,13 @@ powershell -ExecutionPolicy Bypass -File scripts\package-windows.ps1   # then ru
 
 # macOS 26 or later
 xcodegen generate --spec apps/macos/project.yml --project apps/macos
-xcodebuild -project apps/macos/Petsona.xcodeproj -scheme Petsona build
+xcodebuild -project apps/macos/Petsona.xcodeproj -scheme Petsona \
+  -configuration Release -arch "$(uname -m)" \
+  -derivedDataPath .scratch/macos-native-build CODE_SIGNING_ALLOWED=NO build
 ```
+
+macOS builds require full Xcode and XcodeGen; the generated project builds the Rust FFI automatically.
+Use [the isolated acceptance instructions](docs/MACOS_VERIFICATION.md#0-准备) for UI checks.
 
 Windows needs VS Build Tools ("Desktop development with C++") for the MSVC
 linker. A GNU toolchain fallback is documented in `docs/WINDOWS_VERIFICATION.md`.
@@ -156,8 +160,7 @@ the persona's fixed or time-based greeting.
 
 | File | Contents |
 |---|---|
-| `docs/PLATFORM_ARCHITECTURE.md` | Shared core + platform shells, menu decision, release tracks |
+| `docs/PLATFORM_ARCHITECTURE.md` | Shared core/runtime + native frontend boundaries and release tracks |
 | `docs/WINDOWS_VERIFICATION.md` | Windows native manual checklist (W/D/F, includes the W11 protocol steps) |
 | `docs/MACOS_VERIFICATION.md` | macOS manual checklist |
 | `docs/plans/` · `docs/execution/` | Cross-conversation plan contracts and evidence records |
-| `docs/archive/` | Frozen history: legacy egui Windows checklist and the old Windows issue tracker |

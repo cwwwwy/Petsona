@@ -1,30 +1,24 @@
-# Petsona 原生功能状态汇总
+# 原生功能与验收状态
 
-契约：[计划 v1.0](plans/native-ui-rewrite.md)；事实与证据：[执行记录](execution/native-ui-rewrite.md)。
-此表仅汇总当前原生实现，不以旧 egui 测试或计划中的类名作为已实现证据。
-Windows 原生线：既有自动门禁 + 人工矩阵 W1–W11 / W13 / W14 于 2026-09-21 通过，W12 暂缓；本轮本地宠物双击行为 W33 待 Windows 门禁和集中人工验收。macOS 原生线最低版本为 macOS 26，在 macOS 27 使用系统原生控件；本轮完整自动门禁见 E-35，视觉人工项按用户决定集中验收。
+当前macOS主线：[桌面陪伴计划](plans/macos-companion-evolution.md)与[执行记录](execution/macos-companion-evolution.md)。原生迁移历史：[计划](plans/native-ui-rewrite.md)与[执行记录](execution/native-ui-rewrite.md)。Windows：[计划](plans/windows-native-rewrite.md)与[执行记录](execution/windows-native-rewrite.md)。
 
-| 功能 | REQ | macOS 当前实现 | 自动/人工验证 | 缺口 / 审查项 |
-|---|---|---|---|---|
-| V1/V2资源与动画帧 | 03/05/07 | Rust worker 负责加载/校验，原生按快照绘制 V2 atlas；macOS 已有 AppKit WebP 读取回归和缩略图缓存，Windows 有 WIC/WebP 回退 | Mac XCTest8、Windows E-W14；真实视觉待人工 | Swift 宠物主窗口仍按 atlas path 读图，字节/缓存服务迁移仍是 REV-02 后续项 |
-| 宠物库与空库首启 | 05/06/S19 | worker 支持本地导入/覆盖/切换/删除/导出；两端本地列表现为单击选择、双击切换，Codex 候选双击导入；macOS 候选扫描入口始终可见，系统 `List` 显示缩略图与空状态；目录/zip 拖放、冲突确认、导出/删除保持 | Mac E-35 自动门禁通过；Windows XAML 结构有效但原生构建未跑；两端双击人工待记录 | 集中人工验收前不将双击行为记为通过 |
-| 注视、caret、跨行过渡 | 07/10 | 共享 Rust 使用官方 16 向映射；macOS 新增 GazeStabilizer、持续目标重发和拖动暂停注视；Windows 有 C# GazeStabilizer | Rust 状态测试、Mac XCTest7、Windows dotnet36、双方 smoke；视觉待人工 | Mac/Windows 迟滞与拖动观感仍需双方 M-W/M-02/M-04 |
-| 状态协议与TTL | 07/12 | 新原生 app 通过 worker 执行 TTL，并刷新 `/health`；`action:"clear"` 可解除某 source 的粘滞覆盖（CR-W2 选项 A） | macOS E-35 Rust core/runtime 与 native smoke；Windows N7/N8/N25 + W11 人工 | macOS 原生 GUI 对状态切换的视觉仍待集中验收 |
-| 透明窗口与焦点 | 08 | 原生非激活 NSPanel；Composer 独立可激活 | E-15 编译；焦点/穿透待 M-02/M-04 | 多屏/Spaces 和实际前台规则待验 |
-| 像素级穿透 | 08 | `PetView.hitTest` 当前帧 alpha + idle 行并集；整窗不再忽略鼠标 | Rust旧规则 + 原生编译；人工待验 | Retina alpha 坐标和桌面实际穿透待 M-02 |
-| 单双击与拖动 | 08/09 | 原生区分单击/双击跳跃/拖动运行姿势并保存位置；输入入口为编辑按钮或气泡 | E-15 编译；人工待 M-02/M-03 | 原生事件肉眼验收尚未完成 |
-| 缩放、位置、多屏、重力 | 09 | 原生固定缩放档位 0.5–2.0，设置与状态栏菜单共用；物理像素位置命令已接；重力/多屏延期 | runtime scale normalization、E-18；档位与保存待人工 | 连续缩放已移除；多屏/重力属于延期范围 |
-| 自动活动/立即活动 | 09 | 原生菜单仍为基础立即 running；配置命令已接 worker | 自动尚未覆盖；人工未做 | auto-walk scheduler 与原生菜单完整接入待补 |
-| 气泡/影子/编辑按钮 | 10 | 原生 BubblePanel 支持 150ms 淡入、剩余时间进度条、悬停暂停；宠物下方编辑入口按工作区下方/左右侧挂定位并在悬停后展开；点击气泡/编辑入口打开 Composer；气泡不内置回复按钮 | E-30a；布局/XCTest 自动通过；视觉待 M-04 | 影子到编辑动画仍属于延期范围；触控板悬停与边缘观感待人工 |
-| 对话输入/IME/草稿 | 10/11 | 原生 NSTextView、Enter/Shift+Enter、Esc、草稿保留、后台 DeepSeek/fallback；Composer 可在下方或左右侧挂跟随宠物 | E-15 / E-30a；IME/网络人工待 M-04 | caret 方向已接，候选确认和撤销需人工 |
-| 设置、人格、记忆、DeepSeek | 11/REQ-S18–S21 | macOS 采用统一标题栏、系统侧边栏与 grouped `Form`/`List`；设置打开时 Dock 可见、关闭后恢复菜单栏模式；模型拉取中使用系统进度控件并禁用重复提交；人格、记忆和即时生效保持 | Mac E-35 门禁通过；Dock 显隐、模型慢请求与系统外观等待集中人工验收 | macOS 最低版本仍为 26，在 27 使用系统原生外观；模型网络、Keychain、IME 与记忆细节仍待人工 |
-| 托盘与菜单 | 12 | 原生 NSStatusItem 菜单含设置、宠物选择、固定缩放档位、显示隐藏、立即活动和退出；当前宠物有状态标识 | E-18；菜单交互待人工 | 宠物图标托盘化属于延期范围 |
-| Keychain/LaunchAgent | 04/12 | macOS 原生设置已接入 Keychain/LaunchAgent；启动凭据存在性检查异步回写，不阻塞状态服务 | E-31b；真实 Keychain/登录自启待人工 | 两端凭据/自启实现保持平台差异；真实登录行为仍待验收 |
-| 单实例/日志/退出 | 12/13 | worker 持有 InstanceLock，日志在 worker，FFI destroy join | E-14/E-17/E-18 | fault 注入、资源增长、5分钟 CPU 待 M-05/M-06 |
-| FFI/线程/故障 | 01/02 | ABI 3 薄转换 + worker、ready/faulted、panic terminal 状态 | E-13/E-14/E-15 layout/lifecycle | panic 注入与跨语言 fault UI 待补 |
-| 调度与性能 | 13 | 空库 worker 秒级 deadline；动画按 deadline 调度；原生 timer 使用快照 deadline | E-14/E-18 | Activity Monitor / 5分钟 CPU 待 M-06 |
-| 测试与打包 | 14/15 | 统一脚本真实构建/测试/启动/打包 native app；静态 `.a` 检查 | E-18 exit 0；xcresult/zip/otool 证据 | 签名、公证、干净机器和人工窗口仍待 |
-| Windows原生/全仓清理 | 16 | Windows 原生前端已落地；旧 egui UI 与两个旧 shell 已于 2026-09-22 删除（`eadd7f2`） | Windows 既有自动门禁及 W1–W14 人工记录（W12 暂缓）；Mac E-35 门禁 | 新增 W33 本地宠物双击需 Windows 回归；两端最终人工与发布项仍未闭合 |
+本表只汇总当前实现与缺口，不替代计划契约或关闭验收项。macOS27.0.1 arm64最新自动证据为E-11（文档/脚本整理后的重跑）；最低支持26，macOS26实机仍待验。Windows早期W矩阵通过，W12暂缓，后续W29–W33及共享回归/发布剩余项继续按其清单验收。
 
-旧测试迁移时，在执行记录逐项填写“原测试 → 新测试 → 新入口证据”，不能仅保留测试数量。
-状态变化必须关联新证据；不得通过改此表替代修改计划或补验收。
+| 功能 | macOS当前实现 | 自动证据 | 待验/限制 |
+|---|---|---|---|
+| V1/V2资源与动画 | 共享Rust加载/校验，AppKit atlas绘制与缓存；无内置宠物 | core状态测试、资源XCTest、native smoke | Codex锁定版本动作节奏逐项实测；主窗口仍按本地atlas路径读图 |
+| 宠物库 | 本地导入/覆盖/导出/删除、拖放、Codex候选；单击选择、双击切换/导入 | 配置命令与空库测试、smoke | 两端双击、覆盖和切宠实际观感；Windows W33 |
+| 注视/caret | 实际渲染矩形点坐标，1pt中心死区，16方向、跨行与持续目标更新 | Retina体内目标→FFI→Rust回归、core跨行测试 | Codex实际触发范围/过渡节奏、光标输入和缩放观感 |
+| 点击/拖动/穿透 | 单双击分辨、拖动运行姿势、像素alpha与idle并集命中；非激活宠物窗 | core/几何/生命周期测试 | 真实鼠标/触控板、焦点、Retina命中与拖动即时性 |
+| 缩放/屏幕/位置 | 固定缩放档位、物理坐标和显示器相对位置、可见工作区夹取 | DisplayGeometry XCTest | 多屏、混合Retina、热拔插和Spaces已纳入macOS当前范围，待实机；Windows W12仍按原计划暂缓 |
+| 浮层/输入 | 原生玻璃、薄胶囊入口、气泡预览/点击历史、动态多行NSTextView、生成中保留草稿 | 浮层布局/焦点/多行/草稿XCTest | Codex材质/位置/动画对照、IME、选区、撤销、侧挂和悬停时序 |
+| 聊天/历史 | SSE流式、等待/停止/失败重试、部分回复、按宠物保存/查看/清除 | 本地SSE stub、存储与请求校验测试 | 真实兼容端点、切宠/退出迟到结果、重启与IME的完整流程 |
+| 记忆 | 多值偏好、否定/修正、手工冲突候选、习惯确认/拒绝、来源/时间、编辑/导入导出；与历史独立 | core提取/压缩/兼容、runtime隔离测试 | 中文表达质量、候选质量、开关/清除与跨宠物实机验收 |
+| 人格 | 手动、粘贴/TXT/JSON聊天来源、人物参考；草稿编辑/试聊/应用，保留稳定ID与记忆 | parser、模型stub、旧JSON与稳定ID测试 | 超时/取消补测、试聊隔离、不同人格风格与重启人工对照；Windows新增UI另行规划 |
+| 设置/菜单 | 系统原生六页、模型加载反馈；精简调参但保留旧值；菜单含设置、历史、宠物、缩放、显隐、退出 | 连续配置合并保留旧值测试；模型页界面观察 | Dock/快捷键/焦点、两端设置视觉；macOS“立即活动”和“测试问候”已移除 |
+| 协议/单实例 | source优先级、TTL、同source clear；锁、日志、退出与端口释放 | core协议测试、FFI/runtime生命周期、smoke | GUI状态切换、故障界面、实际CPU和资源回收 |
+| 凭据/自启 | 原生Keychain/LaunchAgent；自动测试用规范deepseek字段与假环境凭据、隔离登录项 | 凭据短路、运行时环境断言与服务XCTest | 真实Keychain和下一次登录自启；不会因为自动门禁通过而关闭 |
+| FFI/线程/打包 | ABI3 worker、快照/JSON投影、静态Rust链接；常规包及保留本机数据的隔离验收包 | ABI/生命周期、33 XCTest、8 smoke、包结构与最低版本 | 共享Windows完整回归、签名/公证/干净机器与人工窗口 |
+| 清理/维护 | 旧egui/shell、过期参考和缓存已清理；单一平台门禁、发布脚本、当前契约/执行证据保留 | 构建和打包不依赖删除文件 | 历史失败/待验状态保留，不能因清理文件而关闭旧问题 |
+
+重力、自动活动提醒、语音、云同步和人物联网检索不属于当前macOS陪伴范围。

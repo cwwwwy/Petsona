@@ -78,6 +78,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var statusItem: NSStatusItem!
     private var petWindow: PetWindowController!
     private var settingsWindow: NSWindow?
+    private var conversationHistoryWindow: NSWindow?
     private var openSettingsOnLaunch = false
     private var tickTimer: Timer?
     private var didPresentEmptyLibrary = false
@@ -89,7 +90,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var lastSelectedPetID = ""
     private var lastScale = -1.0
     private var globalGazeActive = false
-    private var lastGlobalCursor: NSPoint?
     private let gazeStabilizer = GazeStabilizer()
     private var draggingPet = false
     private var lastDragRefreshTime = 0.0
@@ -143,7 +143,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             if !fileManager.fileExists(atPath: configPath.path) {
                 let config: [String: Any] = [
                     "stateServer": ["enabled": false],
-                    "deepSeek": ["apiKeyEnv": keyEnvironment],
+                    "deepseek": ["apiKeyEnv": keyEnvironment],
                 ]
                 let data = try JSONSerialization.data(withJSONObject: config)
                 try data.write(to: configPath, options: .atomic)
@@ -156,8 +156,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         } catch {
             fatalError("Unable to prepare isolated XCTest home: \(error)")
         }
-        guard setenv(keyEnvironment, "test-only-placeholder", 1) == 0 else {
-            fatalError("Unable to isolate XCTest credential environment")
+        for key in [keyEnvironment, "DEEPSEEK_API_KEY"] {
+            guard setenv(key, "test-only-placeholder", 1) == 0 else {
+                fatalError("Unable to isolate XCTest credential environment")
+            }
         }
         return home
     }
@@ -199,7 +201,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             self?.gazeStabilizer.reset()
         }
         bubblePanel = BubblePanel()
-        bubblePanel.onReply = { [weak self] in self?.openComposer() }
+        bubblePanel.onReply = { [weak self] in self?.openConversationHistory() }
         bubblePanel.onHoverChanged = { [weak self] hovered in
             self?.setBubblePaused(hovered)
         }
@@ -208,8 +210,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         composerPanel = ComposerPanel()
         composerPanel.onSend = { [weak self] text in
             self?.conversationDraft = ""
-            self?.engine.send(kind: PETSONA_COMMAND_SEND_CONVERSATION, text: text)
+            self?.engine.startConversation(text)
         }
+        composerPanel.onCancel = { [weak self] in self?.engine.cancelConversation() }
         composerPanel.onClose = { [weak self] in
             self?.conversationDraft = self?.composerPanel.draft() ?? ""
             self?.composerSide = nil
@@ -241,9 +244,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     func windowWillClose(_ notification: Notification) {
         guard let window = notification.object as? NSWindow,
-              window === settingsWindow else { return }
+              window === settingsWindow || window === conversationHistoryWindow else { return }
         DispatchQueue.main.async { [weak self] in
-            guard let self, self.settingsWindow?.isVisible == false else { return }
+            guard let self,
+                  self.settingsWindow?.isVisible != true,
+                  self.conversationHistoryWindow?.isVisible != true else { return }
             self.setDockVisible(false)
         }
     }
@@ -259,6 +264,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private func makeMenu() -> NSMenu {
         let menu = NSMenu()
         menu.addItem(withTitle: "设置…", action: #selector(openSettings), keyEquivalent: ",")
+        menu.addItem(withTitle: "聊天记录", action: #selector(openConversationHistory), keyEquivalent: "")
         let petsItem = NSMenuItem(title: "选择宠物", action: nil, keyEquivalent: "")
         petsItem.submenu = NSMenu(title: "选择宠物")
         menu.addItem(petsItem)
@@ -267,7 +273,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         menu.addItem(scaleItem)
         menu.addItem(.separator())
         menu.addItem(withTitle: "显示 / 隐藏宠物", action: #selector(togglePet), keyEquivalent: "")
-        menu.addItem(withTitle: "立即活动", action: #selector(triggerActivity), keyEquivalent: "")
         menu.addItem(.separator())
         menu.addItem(withTitle: "退出 Petsona", action: #selector(quit), keyEquivalent: "q")
         for item in menu.items { item.target = self }
@@ -319,7 +324,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     @objc func openSettings() {
         if settingsWindow == nil {
             let navigation = SettingsNavigationState()
-            let root = SettingsView(engine: engine, navigation: navigation)
+            let root = SettingsView(engine: engine,
+                                    navigation: navigation,
+                                    onOpenConversationHistory: { [weak self] in
+                                        self?.openConversationHistory()
+                                    })
             let hosting = NSHostingView(rootView: root)
             let window = SettingsWindow(contentRect: NSRect(x: 0, y: 0, width: 960, height: 700),
                                         navigationState: navigation)
@@ -336,19 +345,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         settingsWindow?.makeMain()
     }
 
+    @objc func openConversationHistory() {
+        if conversationHistoryWindow == nil {
+            let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 640, height: 560),
+                                  styleMask: [.titled, .closable, .miniaturizable, .resizable],
+                                  backing: .buffered,
+                                  defer: false)
+            window.title = "聊天记录"
+            window.minSize = NSSize(width: 480, height: 360)
+            window.collectionBehavior = [.moveToActiveSpace]
+            window.isReleasedWhenClosed = false
+            window.delegate = self
+            window.contentView = NSHostingView(rootView: ConversationHistoryView(engine: engine))
+            window.center()
+            conversationHistoryWindow = window
+        }
+        setDockVisible(true)
+        NSApp.activate(ignoringOtherApps: true)
+        conversationHistoryWindow?.makeKeyAndOrderFront(nil)
+    }
+
     @objc private func togglePet() {
         engine.send(kind: PETSONA_COMMAND_SET_VISIBILITY,
                     value: engine.snapshot.pet_visible == 0 ? 1 : 0)
-        petWindow.update()
-    }
-
-    @objc private func triggerActivity() {
-        engine.send(kind: PETSONA_COMMAND_SET_STATE,
-                    ttlMilliseconds: 8_000,
-                    text: "running")
-        engine.send(kind: PETSONA_COMMAND_SHOW_BUBBLE,
-                    ttlMilliseconds: 5_000,
-                    text: "现在活动一下吧")
         petWindow.update()
     }
 
@@ -367,6 +386,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         settings.target = self
         menu.addItem(settings)
 
+        let history = NSMenuItem(title: "聊天记录",
+                                 action: #selector(openConversationHistory),
+                                 keyEquivalent: "")
+        history.target = self
+        menu.addItem(history)
+
         let pets = NSMenuItem(title: "选择宠物", action: nil, keyEquivalent: "")
         pets.submenu = makePetSelectionMenu()
         menu.addItem(pets)
@@ -381,13 +406,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                                     keyEquivalent: "")
         visibility.target = self
         menu.addItem(visibility)
-
-        let activity = NSMenuItem(title: "立即活动",
-                                  action: #selector(triggerActivity),
-                                  keyEquivalent: "")
-        activity.target = self
-        menu.addItem(activity)
-        menu.addItem(.separator())
 
         let quit = NSMenuItem(title: "退出 Petsona", action: #selector(quit), keyEquivalent: "q")
         quit.target = self
@@ -516,6 +534,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private func updateOverlays() {
         let petFrame = petWindow.screenFrame()
         let workFrame = workArea(for: petFrame)
+        composerPanel.setConversationState(engine.conversation.inFlight,
+                                           error: engine.conversation.error)
         guard engine.snapshot.pet_visible != 0, engine.snapshot.has_pet != 0 else {
             bubblePanel.update(text: "", timing: nil, petFrame: petFrame, workFrame: workFrame)
             editPanel.hide()
@@ -549,11 +569,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
 
         if composerPanel.isVisible {
-            if composerSide == nil {
-                composerSide = MacOverlayLayout.chooseSide(pet: petFrame,
-                                                           work: workFrame,
-                                                           current: lastOverlaySide)
-            }
+            composerSide = MacOverlayLayout.chooseSide(pet: petFrame,
+                                                       work: workFrame,
+                                                       current: composerSide ?? lastOverlaySide,
+                                                       height: composerPanel.desiredHeight)
+            lastOverlaySide = composerSide
             composerPanel.updatePosition(near: petFrame,
                                          workFrame: workFrame,
                                          side: composerSide ?? .bottom)
@@ -606,23 +626,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
         let frame = petWindow.screenFrame()
         let cursor = NSEvent.mouseLocation
-        lastGlobalCursor = cursor
-        let dx = cursor.x - frame.midX
-        // Core gaze coordinates use screen Y (positive below); AppKit's
-        // global coordinate system grows upwards.
-        let dy = frame.midY - cursor.y
-        let width = CGFloat(max(engine.snapshot.cell_width, 1)) * CGFloat(max(engine.snapshot.scale, 0.1))
-        let height = CGFloat(max(engine.snapshot.cell_height, 1)) * CGFloat(max(engine.snapshot.scale, 0.1))
-        // Keep gaze local, but make the native trigger forgiving enough for
-        // normal mouse motion. Once active, use a larger release radius so a
-        // one-pixel edge fluctuation does not cancel the gaze.
-        let margin = min(width, height) * (globalGazeActive ? 1.00 : 0.80)
-        let radiusX = width * 0.5 + margin
-        let radiusY = height * 0.5 + margin
-        let near = (dx * dx) / (radiusX * radiusX) + (dy * dy) / (radiusY * radiusY) <= 1
-        let deadZone = min(width, height) * 0.35
-        if near && hypot(dx, dy) > deadZone {
-            let direction = gazeStabilizer.update(dx: dx, dy: dy)
+        if let target = PetGazeGeometry.target(cursor: cursor,
+                                              petFrame: frame,
+                                              active: globalGazeActive) {
+            let direction = gazeStabilizer.update(dx: target.x, dy: target.y)
             let vector = GazeStabilizer.unitVector(direction: direction)
             // Re-send the held direction every poll so a cross-row transition
             // can finish even when the cursor stops moving.

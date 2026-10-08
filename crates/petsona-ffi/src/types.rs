@@ -73,6 +73,11 @@ pub enum PetsonaTextField {
     ImportConflict = 16,
     Models = 17,
     BubbleTiming = 18,
+    WindowPosition = 19,
+    Conversation = 20,
+    PersonaSource = 21,
+    PersonaDraft = 22,
+    PersonaPreview = 23,
 }
 
 #[repr(u32)]
@@ -121,6 +126,19 @@ pub enum PetsonaCommandKind {
     ListModels = 41,
     ResetPersona = 42,
     SetBubblePaused = 43,
+    SetWindowPosition = 44,
+    UpdateConversationConfig = 45,
+    StartConversation = 46,
+    CancelConversation = 47,
+    ClearConversationHistory = 48,
+    LoadEarlierConversationHistory = 49,
+    ReviewMemoryCandidate = 50,
+    ParsePersonaSource = 51,
+    GeneratePersonaProfile = 52,
+    ApplyPersonaDraft = 53,
+    ClearPersonaDraft = 54,
+    PreviewPersonaDraft = 55,
+    ApplyImportedPersona = 56,
 }
 
 #[repr(C)]
