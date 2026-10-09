@@ -4,7 +4,7 @@
 
 - 计划路径/版本：`docs/plans/pre-release-full-acceptance.md` v1.0。
 - 开始日期：2026-10-09。
-- 当前阶段：FA 全部关闭；NA 收尾通过；LC 生命周期与系统集成自动证据完成，待人工验收。
+- 当前阶段：FA/NA/LC 已关闭；PB 协议与数据兼容自动证据完成，待人工验收。
 - 环境原则：使用隔离 `PETSONA_HOME`、独立端口；真实 `%APPDATA%\Petsona` 与 Codex 原始宠物目录只读。
 
 ## FA 阶段
@@ -19,7 +19,8 @@
 | FA-5 记忆页 | 已关闭 | 核心记忆 15 项 + 运行时 2 项测试通过；隔离目录已播种 2 条 pending 候选与归档事实；导入样例就绪 | 2026-10-09 用户通过 | 无遗留 |
 | FA-6 连接/系统/聊天 | 已关闭 | 流式聊天 8 项 + 模型拉取 1 项测试通过；隔离目录已播种 60 条聊天历史；Key 隔离策略已定 | 2026-10-09 用户通过 | FA 六轮全部完成 |
 | NA 原生交互 | 已关闭 | 点击/双击/滚轮/注视/输入框重做全部实现并冒烟 | 2026-10-09 用户复测通过 | 编辑条已移除 |
-| LC 生命周期/集成 | 待人工验收 | 冒烟：聊天窗/设置窗关闭只隐藏、单实例、退出释放端口；单测含 HKCU Run 隔离值往返 | 待用户 | 托盘菜单与自启需人工 |
+| LC 生命周期/集成 | 已关闭 | 冒烟：聊天窗/设置窗关闭只隐藏、单实例、退出释放端口；单测含 HKCU Run 隔离值往返 | 2026-10-09 用户通过 | 无遗留 |
+| PB 协议/数据兼容 | 待人工验收 | 工作区门禁 117 passed；协议冒烟含 TTL/sticky/CLEAR/400；宠物/人格/记忆/会话格式测试全绿 | 待用户 | 协议命令与数据页需人工复核 |
 
 ## FA-0 证据
 
@@ -320,6 +321,30 @@ $env:PETSONA_AUTOSTART_VALUE = "PetsonaLcAccept"
 5. 单实例：同一数据目录再启动一次 → 提示气泡后第二个退出，第一个继续（自动已覆盖，可复核）。
 6. 系统页“开机自启”：打开 → `Get-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'` 出现 `PetsonaLcAccept`；关闭 → 条目消失（真实登录自启留 M6 干净环境验证）。
 7. 托盘 → “退出”：进程结束、端口 17920 释放（`Get-NetTCPConnection -LocalPort 17920 -ErrorAction SilentlyContinue` 为空）、托盘图标与窗口消失。
+
+## PB 证据（2026-10-09）
+
+| 证据ID | REQ | 环境 | 操作 | 结果 |
+|---|---|---|---|---|
+| E-PB-01 | 工作区门禁 | WSL（放行回环） | `cargo fmt --check`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --workspace` | fmt/clippy 干净；**core 86 + runtime 31 = 117 passed** |
+| E-PB-02 | 协议语义（单元） | WSL | `cargo test -p petsona-core state_server` | 7 passed：已知/未知状态、clear 无 state、clear 大小写与空白、每请求必有响应、健康快照、ttl=0 不过期、唤醒 |
+| E-PB-03 | 粘滞覆盖（运行时） | WSL | `engine::tests::protocol_clear_retracts_a_sticky_source_override` | 通过：粘滞 source 状态由 clear 解除 |
+| E-PB-04 | 协议端到端 | Windows 隔离目录 | `desktop-smoke.ps1` 协议段（本轮扩展） | /health、/pets；waiting 2s TTL 过期；气泡 8s 生命周期；非法状态 **400**；非法 JSON **400**；`ttlMs:0` 粘滞 held=True；大写 `CLEAR` released=True；退出释放端口 |
+| E-PB-05 | 数据格式兼容（既有） | WSL | 宠物库 9 / 人格 13 / 记忆 15（core）；人格 4 / 记忆 2 / 会话 8（runtime） | 全部通过；隔离 home 含 boba/rocky（V2 webp）、default/rocky 人格、事实+归档+候选、60 条会话历史，FA 各轮已实际加载 |
+
+### PB 待人工验收清单
+
+启动：`$env:PETSONA_HOME = "$env:TEMP\petsona-preaccept"` 后运行构建产物（端口 17920）。
+
+1. 协议命令（PowerShell）：
+   - `Invoke-RestMethod http://127.0.0.1:17920/health | ConvertTo-Json -Depth 5` → pet/persona/state/pets 字段正确；
+   - `Invoke-RestMethod http://127.0.0.1:17920/pets` → 包含 boba、rocky；
+   - `POST /state` `{"source":"win-verify","state":"waiting","message":"Windows 验证","ttlMs":10000}` → 切状态+气泡，约 10s 回 idle；
+   - `POST /state` `{"source":"win-verify","state":"running","ttlMs":0}` → 持续保持；`{"source":"win-verify","action":"clear"}` 解除；
+   - 非法 payload（如 `{"state":"nope"}` 或非 JSON）→ HTTP 400。
+2. 数据页复核（重启后）：宠物页 boba/rocky 缩略图与切换；人格页绑定风格；记忆页事实/归档/候选；聊天窗口 60 条历史可“加载更早”。
+3. 导入/导出抽查一项：宠物 ZIP、人格 JSON、记忆 JSON 任选其一，往返后数据一致。
+4. 旧格式兼容：core 测试已覆盖缺省字段（archivedFacts/candidates 等）；如需人工，可用备份的旧 `memory.json` 替换后启动确认不丢数据。
 
 ## 证据与限制
 

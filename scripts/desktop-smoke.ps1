@@ -406,9 +406,37 @@ try {
 }
 Write-Host ("  invalid state returns: HTTP {0}  (expected 400)" -f $invalid)
 
-$clearBody = '{"source":"smoke","action":"clear"}'
+$invalidJson = 0
+try {
+    Invoke-RestMethod -Method Post -Uri ("http://127.0.0.1:{0}/state" -f $PetPort) -ContentType 'application/json; charset=utf-8' -Body 'not-json' -TimeoutSec 2 | Out-Null
+} catch {
+    $invalidJson = [int]$_.Exception.Response.StatusCode
+}
+Write-Host ("  invalid JSON returns: HTTP {0}  (expected 400)" -f $invalidJson)
+
+# sticky state: ttlMs 0 must stay until a (case-insensitive) clear releases it
+$stickyBody = '{"source":"smoke","state":"waiting","ttlMs":0}'
+Invoke-RestMethod -Method Post -Uri ("http://127.0.0.1:{0}/state" -f $PetPort) -ContentType 'application/json; charset=utf-8' -Body $stickyBody -TimeoutSec 2 | Out-Null
+$stickySeen = $false
+$watch = [System.Diagnostics.Stopwatch]::StartNew()
+while ($watch.ElapsedMilliseconds -lt 2000) {
+    $h = Get-Health $PetPort
+    if ($h -and $h.state -eq 'waiting') { $stickySeen = $true; break }
+    Start-Sleep -Milliseconds 80
+}
+Start-Sleep -Milliseconds 2500
+$h = Get-Health $PetPort
+$stickyHeld = [bool]$h -and $h.state -eq 'waiting'
+$clearBody = '{"source":"smoke","action":"CLEAR"}'
 Invoke-RestMethod -Method Post -Uri ("http://127.0.0.1:{0}/state" -f $PetPort) -ContentType 'application/json; charset=utf-8' -Body $clearBody -TimeoutSec 2 | Out-Null
-Write-Host '  action:clear accepted'
+$stickyCleared = $false
+$watch = [System.Diagnostics.Stopwatch]::StartNew()
+while ($watch.ElapsedMilliseconds -lt 2000) {
+    $h = Get-Health $PetPort
+    if ($h -and $h.state -ne 'waiting') { $stickyCleared = $true; break }
+    Start-Sleep -Milliseconds 80
+}
+Write-Host ("  ttl=0 sticky seen={0} held={1}; CLEAR released={2}" -f $stickySeen, $stickyHeld, $stickyCleared)
 
 # ---------------- click interactions (posted messages, no cursor input) ----------------
 Write-Host '== click interactions (posted messages, no mouse) =='
