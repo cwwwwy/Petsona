@@ -4,7 +4,7 @@
 
 - 计划路径/版本：`docs/plans/pre-release-full-acceptance.md` v1.0。
 - 开始日期：2026-10-09。
-- 当前阶段：FA/NA/LC 已关闭；PB 协议与数据兼容自动证据完成，待人工验收。
+- 当前阶段：FA/NA/LC/PB 已关闭；RG 发布环境回归自动证据完成，待人工验收。
 - 环境原则：使用隔离 `PETSONA_HOME`、独立端口；真实 `%APPDATA%\Petsona` 与 Codex 原始宠物目录只读。
 
 ## FA 阶段
@@ -20,7 +20,8 @@
 | FA-6 连接/系统/聊天 | 已关闭 | 流式聊天 8 项 + 模型拉取 1 项测试通过；隔离目录已播种 60 条聊天历史；Key 隔离策略已定 | 2026-10-09 用户通过 | FA 六轮全部完成 |
 | NA 原生交互 | 已关闭 | 点击/双击/滚轮/注视/输入框重做全部实现并冒烟 | 2026-10-09 用户复测通过 | 编辑条已移除 |
 | LC 生命周期/集成 | 已关闭 | 冒烟：聊天窗/设置窗关闭只隐藏、单实例、退出释放端口；单测含 HKCU Run 隔离值往返 | 2026-10-09 用户通过 | 无遗留 |
-| PB 协议/数据兼容 | 待人工验收 | 工作区门禁 117 passed；协议冒烟含 TTL/sticky/CLEAR/400；宠物/人格/记忆/会话格式测试全绿 | 待用户 | 协议命令与数据页需人工复核 |
+| PB 协议/数据兼容 | 已关闭 | 工作区门禁 117 passed；协议冒烟含 TTL/sticky/CLEAR/400；宠物/人格/记忆/会话格式测试全绿 | 2026-10-09 用户通过 | 无遗留 |
+| RG 发布环境回归 | 待人工验收 | release 产物冒烟、独立副本运行、内存/CPU、无控制台、空数据首启均通过 | 待用户 | 真实冷启动/登录自启 SKIP 留 M6 |
 
 ## FA-0 证据
 
@@ -345,6 +346,26 @@ $env:PETSONA_AUTOSTART_VALUE = "PetsonaLcAccept"
 2. 数据页复核（重启后）：宠物页 boba/rocky 缩略图与切换；人格页绑定风格；记忆页事实/归档/候选；聊天窗口 60 条历史可“加载更早”。
 3. 导入/导出抽查一项：宠物 ZIP、人格 JSON、记忆 JSON 任选其一，往返后数据一致。
 4. 旧格式兼容：core 测试已覆盖缺省字段（archivedFacts/candidates 等）；如需人工，可用备份的旧 `memory.json` 替换后启动确认不丢数据。
+
+## RG 证据（2026-10-09）
+
+| 证据ID | REQ | 环境 | 操作 | 结果 |
+|---|---|---|---|---|
+| E-RG-01 | release 产物/无控制台 | Windows MSVC release（LTO+strip） | `desktop-build-windows.ps1 -Profile release`；按进程枚举窗口 | 产物 15.83 MB；进程可见 `ConsoleWindowClass` 窗口数 **0** |
+| E-RG-02 | 发布产物完整冒烟 | Windows 隔离目录 | `desktop-smoke.ps1 -Exe release\petsona-desktop.exe` | 启动 **121–133ms**（debug 约 1.3s；旧热启动基线 ~0.55s）；样式/几何/动画/编辑条移除/设置与聊天关闭只隐藏/单实例/协议（含 sticky+CLEAR+400）/点击/Composer/滚轮/退出/空库全部通过 |
+| E-RG-03 | 独立副本与资源 | Windows | release exe 复制到 `%TEMP%\petsona-rg-standalone`，用独立 `PETSONA_HOME` 运行 | 宠物可见 **341ms**；`/health(17896)` ok；WorkingSet 60 MB；Private 33.9 MB；空闲 CPU ~**0.62%/核** |
+| E-RG-04 | 干净数据首启 | Windows 隔离目录 | 空库 `--show-settings`（冒烟段） | 设置窗出现、宠物隐藏、/health ok、pet 字段为空 |
+| E-RG-05 | 真实冷启动 | — | 需要重启后的干净环境 | **SKIP（留 M6 干净环境验收）** |
+
+环境说明：release 冒烟中 `typed text` 一次读到 `'hihe'`——composer 测试期间前台窗口收到真实键盘输入造成的环境性干扰；`composer hidden/cleared`、焦点、注视与草稿恢复断言均通过，不作为回归。
+
+### RG 待人工验收清单
+
+1. 双击 `%USERPROFILE%\petsona-build\desktop-target\release\petsona-desktop.exe`：**无黑色控制台**，宠物应很快出现（~0.1–0.3s）。
+2. 空数据目录首启：`$env:PETSONA_HOME = "$env:TEMP\petsona-rg-empty"`（先删除旧目录）→ 打开设置、无宠物；从 Codex 导入一只后正常显示。
+3. 把 release exe 复制到任意目录（如桌面）再运行 → 正常启动（不依赖仓库、cargo/node 等开发工具）。
+4. 托盘退出 → 进程、托盘图标、端口 17872 均干净；再启动一次 → 行为一致。
+5. （已 SKIP）真实冷启动/登录后自启：留 M6 干净环境（重启后）验收。
 
 ## 证据与限制
 
