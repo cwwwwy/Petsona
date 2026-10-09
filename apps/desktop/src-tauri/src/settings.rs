@@ -10,9 +10,9 @@ use petsona_core::config::{
 };
 use petsona_core::persona::PersonaStyleProfile;
 use petsona_runtime::commands::{
-    ApplyPersonaDraftRequest, ConversationRequest, MemoryFactInput, MemoryFactUpdate, MemoryScope,
-    PersonaPatch, PersonaPreviewRequest, PersonaProfileRequest, PersonaSourceParseRequest,
-    RuntimeCommand,
+    ApplyPersonaDraftRequest, ConversationRequest, MemoryCandidateReview, MemoryFactInput,
+    MemoryFactUpdate, MemoryScope, PersonaPatch, PersonaPreviewRequest, PersonaProfileRequest,
+    PersonaSourceParseRequest, RuntimeCommand,
 };
 use petsona_runtime::snapshot::RuntimeTextField;
 use serde::{Deserialize, Serialize};
@@ -155,6 +155,10 @@ pub enum SettingsAction {
     },
     UpdateMemoryConfig {
         config: MemoryConfig,
+    },
+    ReviewMemoryCandidate {
+        candidate_id: String,
+        accept: bool,
     },
     ImportMemory {
         path: String,
@@ -408,6 +412,13 @@ pub fn settings_action(engine: State<'_, Engine>, action: SettingsAction) -> Res
         SettingsAction::ListModels => RuntimeCommand::ListModels,
         SettingsAction::UpdateGreeting { config } => RuntimeCommand::UpdateGreetingConfig(config),
         SettingsAction::UpdateMemoryConfig { config } => RuntimeCommand::UpdateMemoryConfig(config),
+        SettingsAction::ReviewMemoryCandidate {
+            candidate_id,
+            accept,
+        } => RuntimeCommand::ReviewMemoryCandidate(MemoryCandidateReview {
+            candidate_id,
+            accept,
+        }),
         SettingsAction::ImportMemory { path } => RuntimeCommand::ImportMemory(PathBuf::from(path)),
         SettingsAction::ExportMemory { path } => RuntimeCommand::ExportMemory(PathBuf::from(path)),
         SettingsAction::UpdateConversation { config } => {
@@ -525,6 +536,24 @@ pub fn open_data_path(path: String) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn settings_action_accepts_memory_candidate_wire_shape() {
+        let action: SettingsAction = serde_json::from_str(
+            r#"{"type":"reviewMemoryCandidate","candidate_id":"c1","accept":true}"#,
+        )
+        .expect("memory candidate wire shape");
+        match action {
+            SettingsAction::ReviewMemoryCandidate {
+                candidate_id,
+                accept,
+            } => {
+                assert_eq!(candidate_id, "c1");
+                assert!(accept);
+            }
+            _ => panic!("unexpected action"),
+        }
+    }
 
     #[test]
     fn settings_action_accepts_persona_source_wire_shape() {

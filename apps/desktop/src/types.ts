@@ -209,12 +209,23 @@ export interface MemoryEvent {
   createdAt: number;
 }
 
+export interface MemoryCandidate {
+  id: string;
+  key: string;
+  value: string;
+  confidence: number;
+  evidence: string[];
+  status: string;
+  createdAt: number;
+  updatedAt: number;
+}
+
 export interface MemoryProjection {
   config: MemoryConfig;
   greeting: GreetingConfig;
   facts: MemoryFact[];
   archivedFacts: MemoryFact[];
-  candidates: unknown[];
+  candidates: MemoryCandidate[];
   learning: boolean;
   events: MemoryEvent[];
   lastSeenAt?: number | null;
@@ -327,6 +338,7 @@ export type SettingsAction =
   | { type: "listModels" }
   | { type: "updateGreeting"; config: GreetingConfig }
   | { type: "updateMemoryConfig"; config: MemoryConfig }
+  | { type: "reviewMemoryCandidate"; candidate_id: string; accept: boolean }
   | { type: "importMemory"; path: string }
   | { type: "exportMemory"; path: string }
   | { type: "updateConversation"; config: ConversationConfig }

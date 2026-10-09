@@ -28,6 +28,7 @@ export function MemoryPage({ snapshot, run }: PageProps) {
   const [newKey, setNewKey] = useState("");
   const [newValue, setNewValue] = useState("");
   const [busy, setBusy] = useState<"import" | "export" | null>(null);
+  const [reviewBusy, setReviewBusy] = useState<string | null>(null);
 
   const startEdit = (id: string, key: string, value: string) => {
     setEditingId(id);
@@ -65,6 +66,19 @@ export function MemoryPage({ snapshot, run }: PageProps) {
       type: "updateMemoryConfig",
       config: { ...memory.config, ...patch },
     });
+  };
+
+  const reviewCandidate = async (candidateId: string, accept: boolean) => {
+    setReviewBusy(candidateId);
+    try {
+      await run({
+        type: "reviewMemoryCandidate",
+        candidate_id: candidateId,
+        accept,
+      });
+    } finally {
+      setReviewBusy(null);
+    }
   };
 
   const confirmClear = (scope: 0 | 1 | 2, label: string) => {
@@ -201,6 +215,63 @@ export function MemoryPage({ snapshot, run }: PageProps) {
             description="在对话中自然提到稳定偏好，审阅通过后才会出现在这里。"
           />
         )}
+      </Card>
+
+      <Card
+        title="待确认的习惯"
+        description="模型从聊天中归纳的候选不会自动进入长期记忆，需要你确认。"
+      >
+        {(() => {
+          const pending = (memory.candidates ?? []).filter(
+            (candidate) => candidate.status === "pending",
+          );
+          if (!pending.length) {
+            return (
+              <EmptyState
+                title="没有待确认的习惯"
+                description="连续出现并达到证据门槛的习惯会出现在这里。"
+              />
+            );
+          }
+          return (
+            <div className="candidate-list">
+              {pending.map((candidate) => (
+                <div className="candidate-row" key={candidate.id}>
+                  <div className="candidate-copy">
+                    <div className="row-title">
+                      <strong>{candidate.key}</strong>
+                      <Badge tone="accent">
+                        可信度 {Math.round(candidate.confidence * 100)}%
+                      </Badge>
+                    </div>
+                    <span>{candidate.value}</span>
+                    {!!candidate.evidence.length && (
+                      <small title={candidate.evidence.join("\n")}>
+                        依据：{candidate.evidence.slice(0, 2).join("；")}
+                      </small>
+                    )}
+                  </div>
+                  <div className="button-group">
+                    <Button
+                      variant="primary"
+                      disabled={reviewBusy !== null}
+                      onClick={() => void reviewCandidate(candidate.id, true)}
+                    >
+                      {reviewBusy === candidate.id ? "处理中…" : "确认"}
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      disabled={reviewBusy !== null}
+                      onClick={() => void reviewCandidate(candidate.id, false)}
+                    >
+                      忽略
+                    </Button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          );
+        })()}
       </Card>
 
       <Card title="手动添加一条" description="适合补充称呼、口味、习惯等稳定事实。">

@@ -1529,3 +1529,42 @@ button {
   line-height: 1.65;
   white-space: pre-wrap;
 }
+
+/* M4-C memory candidate review */
+.candidate-list {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.candidate-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 11px 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--bg-elevated) 72%, transparent);
+}
+
+.candidate-copy {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+  gap: 4px;
+}
+
+.candidate-copy > span {
+  color: var(--text-soft);
+  font-size: 12.5px;
+}
+
+.candidate-copy > small {
+  overflow: hidden;
+  color: var(--text-faint);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
