@@ -1,5 +1,6 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod autostart;
 mod dialog;
 #[cfg(windows)]
 mod gdi_text;
@@ -64,6 +65,7 @@ fn main() {
             settings::settings_action,
             settings::open_data_path,
             settings::open_external_url,
+            settings::open_chat_window,
             settings::pet_preview,
             dialog::pick_import_zip,
             dialog::pick_import_folder,
@@ -73,6 +75,7 @@ fn main() {
             dialog::pick_persona_source,
             dialog::pick_memory_import,
             dialog::pick_memory_export,
+            autostart::set_autostart,
         ])
         .on_window_event(|window, event| match event {
             tauri::WindowEvent::CloseRequested { api, .. } => {
@@ -175,7 +178,7 @@ fn show_settings_window(app: &AppHandle) {
     }
 }
 
-fn show_chat_window(app: &AppHandle) {
+pub(crate) fn show_chat_window(app: &AppHandle) {
     if let Some(window) = app.get_webview_window("chat") {
         let _ = window.show();
         let _ = window.set_focus();

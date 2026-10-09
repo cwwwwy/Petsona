@@ -48,6 +48,14 @@ export function openExternalUrl(url: string): Promise<void> {
   return invoke<void>("open_external_url", { url });
 }
 
+export function openChatWindow(): Promise<void> {
+  return invoke<void>("open_chat_window");
+}
+
+export function setAutostart(enabled: boolean): Promise<void> {
+  return invoke<void>("set_autostart", { enabled });
+}
+
 export function pickImportZip(): Promise<string | null> {
   return invoke<string | null>("pick_import_zip");
 }

@@ -348,8 +348,7 @@ button {
 }
 
 .setting-row {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(220px, 520px);
+  display: flex;
   align-items: center;
   gap: 22px;
   min-height: 47px;
@@ -363,8 +362,9 @@ button {
 
 .setting-copy {
   display: flex;
+  flex: 1 1 220px;
   flex-direction: column;
-  min-width: 0;
+  min-width: 180px;
   gap: 3px;
 }
 
@@ -382,21 +382,27 @@ button {
 
 .setting-control {
   display: flex;
+  flex: 0 1 520px;
   align-items: center;
   justify-content: flex-end;
-  justify-self: end;
-  width: 100%;
+  width: auto;
   max-width: 520px;
   min-width: 0;
 }
 
 .setting-row-stacked {
-  grid-template-columns: 1fr;
+  flex-direction: column;
+  align-items: stretch;
   gap: 8px;
 }
 
+.setting-row-stacked .setting-copy {
+  min-width: 0;
+}
+
 .setting-row-stacked .setting-control {
-  justify-self: stretch;
+  flex: 0 0 auto;
+  width: 100%;
   max-width: none;
 }
 
@@ -1009,13 +1015,18 @@ button {
   }
 
   .setting-row {
-    grid-template-columns: 1fr;
+    flex-direction: column;
     gap: 8px;
     align-items: stretch;
   }
 
+  .setting-copy {
+    min-width: 0;
+  }
+
   .setting-control {
-    justify-self: stretch;
+    flex: 0 0 auto;
+    width: 100%;
     max-width: none;
   }
 

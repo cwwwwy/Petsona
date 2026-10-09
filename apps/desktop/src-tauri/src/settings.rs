@@ -28,6 +28,7 @@ pub struct SettingsSnapshot {
     pub platform: String,
     pub arch: String,
     pub debug_build: bool,
+    pub autostart: bool,
     pub revision: u64,
     pub ready: bool,
     pub faulted: bool,
@@ -283,6 +284,7 @@ pub fn settings_snapshot(
         platform: std::env::consts::OS.to_string(),
         arch: std::env::consts::ARCH.to_string(),
         debug_build: cfg!(debug_assertions),
+        autostart: crate::autostart::is_enabled(),
         revision: snapshot.revision,
         ready: snapshot.ready,
         faulted: snapshot.faulted,
@@ -459,6 +461,12 @@ pub fn settings_action(engine: State<'_, Engine>, action: SettingsAction) -> Res
 }
 
 #[tauri::command]
+pub fn open_chat_window(app: AppHandle) -> Result<(), String> {
+    crate::show_chat_window(&app);
+    Ok(())
+}
+
+#[tauri::command]
 pub fn open_external_url(url: String) -> Result<(), String> {
     let url = url.trim();
     if !(url.starts_with("https://") || url.starts_with("http://")) {
@@ -536,6 +544,19 @@ pub fn open_data_path(path: String) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(windows)]
+    #[test]
+    fn autostart_uses_an_isolated_value_name() {
+        let value_name = format!("PetsonaTest-{}", std::process::id());
+        std::env::set_var("PETSONA_AUTOSTART_VALUE", &value_name);
+        let _ = crate::autostart::set_enabled(false);
+        assert!(!crate::autostart::is_enabled());
+        crate::autostart::set_enabled(true).expect("enable isolated autostart");
+        assert!(crate::autostart::is_enabled());
+        crate::autostart::set_enabled(false).expect("disable isolated autostart");
+        assert!(!crate::autostart::is_enabled());
+    }
 
     #[test]
     fn settings_action_accepts_memory_candidate_wire_shape() {

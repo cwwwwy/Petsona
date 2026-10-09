@@ -4,13 +4,14 @@ import {
   Button,
   Card,
   EmptyState,
+  InlineNotice,
   NumberField,
   PageHeader,
   SettingRow,
   Switch,
   TextField,
 } from "../components/ui";
-import { pickMemoryExport, pickMemoryImport } from "../lib/api";
+import { openChatWindow, pickMemoryExport, pickMemoryImport } from "../lib/api";
 import type { PageProps } from "../types";
 
 const SOURCE_LABELS: Record<string, string> = {
@@ -28,6 +29,10 @@ export function MemoryPage({ snapshot, run }: PageProps) {
   const [newKey, setNewKey] = useState("");
   const [newValue, setNewValue] = useState("");
   const [busy, setBusy] = useState<"import" | "export" | null>(null);
+  const displayFacts = [
+    ...(memory.facts ?? []).map((fact) => ({ ...fact, archived: false })),
+    ...(memory.archivedFacts ?? []).map((fact) => ({ ...fact, archived: true })),
+  ];
   const [reviewBusy, setReviewBusy] = useState<string | null>(null);
 
   const startEdit = (id: string, key: string, value: string) => {
@@ -38,7 +43,7 @@ export function MemoryPage({ snapshot, run }: PageProps) {
 
   const saveEdit = async () => {
     if (!editingId || !editKey.trim() || !editValue.trim()) return;
-    const fact = memory.facts.find((item) => item.id === editingId);
+    const fact = displayFacts.find((item) => item.id === editingId);
     await run({
       type: "updateFact",
       fact: {
@@ -117,6 +122,9 @@ export function MemoryPage({ snapshot, run }: PageProps) {
         description="记忆只保存在本机。只有启用模型服务并发送对话时，必要上下文才会出网。"
         actions={
           <div className="button-group">
+            <Button variant="ghost" onClick={() => void openChatWindow()}>
+              查看聊天记录
+            </Button>
             <Button
               variant="secondary"
               disabled={busy !== null}
@@ -145,13 +153,19 @@ export function MemoryPage({ snapshot, run }: PageProps) {
         </SettingRow>
       </Card>
 
+      {memory.learning && (
+        <InlineNotice>
+          正在整理近期习惯……候选会在达到证据门槛后出现在下方，等待你确认。
+        </InlineNotice>
+      )}
+
       <Card
         title="偏好事实"
-        description={`${memory.facts?.length ?? 0} 条长期偏好；显示来源，可编辑或删除。`}
+        description={`${displayFacts.length} 条长期偏好${memory.archivedFacts?.length ? `（含 ${memory.archivedFacts.length} 条归档）` : ""}；显示来源，可编辑或删除。`}
       >
-        {memory.facts?.length ? (
+        {displayFacts.length ? (
           <div className="fact-list">
-            {memory.facts.map((fact) => {
+            {displayFacts.map((fact) => {
               const editing = editingId === fact.id;
               return (
                 <div className="fact-row" key={fact.id}>
@@ -182,6 +196,7 @@ export function MemoryPage({ snapshot, run }: PageProps) {
                         <div className="row-title">
                           <strong>{fact.key}</strong>
                           <Badge>{SOURCE_LABELS[fact.source] ?? fact.source}</Badge>
+                          {fact.archived && <Badge>归档</Badge>}
                         </div>
                         <span>{fact.value}</span>
                       </div>
@@ -350,6 +365,11 @@ export function MemoryPage({ snapshot, run }: PageProps) {
           </Button>
         </div>
       </Card>
+
+      <InlineNotice>
+        记忆只保存在本机；只有配置并使用模型服务时，必要的记忆片段才会随对话发送给该服务。
+        清空聊天记录不会删除已保存的长期偏好或互动事件。
+      </InlineNotice>
     </div>
   );
 }

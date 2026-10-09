@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   Badge,
   Button,
@@ -27,7 +27,7 @@ const TONE_PRESETS = [
   { label: "冷静克制", value: "reserved and composed" },
 ];
 
-type Busy = "save" | "import" | "export" | "copy" | null;
+type Busy = "autosave" | "import" | "export" | "copy" | null;
 
 function safeFileName(value: string): string {
   const cleaned = value.trim().replace(/[\\/:*?"<>|]+/g, "_");
@@ -37,9 +37,9 @@ function safeFileName(value: string): string {
 export function PersonaPage({ snapshot, run }: PageProps) {
   const persona = snapshot.persona;
   const dirty = useRef(false);
+  const personaId = useRef(persona.id);
   const [tone, setTone] = useState(persona.traits?.tone ?? "");
   const [emoji, setEmoji] = useState(persona.traits?.emoji ?? true);
-  const [greeting, setGreeting] = useState(persona.greeting ?? "");
   const [systemPrompt, setSystemPrompt] = useState(persona.systemPrompt ?? "");
   const [busy, setBusy] = useState<Busy>(null);
   const [copyOpen, setCopyOpen] = useState(false);
@@ -49,10 +49,13 @@ export function PersonaPage({ snapshot, run }: PageProps) {
   } | null>(null);
 
   useEffect(() => {
+    if (personaId.current !== persona.id) {
+      personaId.current = persona.id;
+      dirty.current = false;
+    }
     if (dirty.current) return;
     setTone(persona.traits?.tone ?? "");
     setEmoji(persona.traits?.emoji ?? true);
-    setGreeting(persona.greeting ?? "");
     setSystemPrompt(persona.systemPrompt ?? "");
   }, [persona]);
 
@@ -60,15 +63,14 @@ export function PersonaPage({ snapshot, run }: PageProps) {
     dirty.current = true;
   };
 
-  const save = async () => {
-    setBusy("save");
+  const persistDraft = useCallback(async () => {
+    setBusy("autosave");
     try {
       await run({
         type: "updatePersona",
         patch: {
           tone,
           emoji,
-          greeting,
           system_prompt: systemPrompt,
         },
       });
@@ -77,7 +79,16 @@ export function PersonaPage({ snapshot, run }: PageProps) {
     } finally {
       setBusy(null);
     }
-  };
+  }, [emoji, run, systemPrompt, tone]);
+
+  useEffect(() => {
+    if (!dirty.current) return;
+    const targetPersonaId = persona.id;
+    const timer = window.setTimeout(() => {
+      if (personaId.current === targetPersonaId) void persistDraft();
+    }, 450);
+    return () => window.clearTimeout(timer);
+  }, [persistDraft, emoji, persona.id, systemPrompt, tone]);
 
   const reset = async () => {
     if (!window.confirm("确定把当前宠物的说话方式重置为内置默认值吗？")) return;
@@ -88,7 +99,7 @@ export function PersonaPage({ snapshot, run }: PageProps) {
   const exportPersona = async () => {
     setBusy("export");
     try {
-      if (dirty.current) await save();
+      if (dirty.current) await persistDraft();
       const path = await pickPersonaExport(`${safeFileName(persona.name || persona.id)}.json`);
       if (!path) return;
       await run({ type: "exportPersona", id: persona.id, path });
@@ -123,7 +134,7 @@ export function PersonaPage({ snapshot, run }: PageProps) {
       <PageHeader
         eyebrow="人格"
         title="说话方式"
-        description="说话方式跟随当前宠物保存。切换宠物后，每只宠物会恢复自己的设置。"
+        description="说话方式跟随当前宠物保存。修改后自动保存，切换宠物后每只宠物恢复自己的设置。"
         actions={
           <div className="button-group">
             <Button
@@ -151,9 +162,9 @@ export function PersonaPage({ snapshot, run }: PageProps) {
             <Button variant="ghost" onClick={() => void reset()}>
               重置为内置
             </Button>
-            <Button variant="primary" onClick={() => void save()} disabled={busy !== null}>
-              {busy === "save" ? "保存中…" : "保存"}
-            </Button>
+            <Badge tone={busy === "autosave" ? "warning" : "positive"}>
+              {busy === "autosave" ? "自动保存中…" : "自动保存"}
+            </Badge>
           </div>
         }
       />
@@ -213,18 +224,6 @@ export function PersonaPage({ snapshot, run }: PageProps) {
         </SettingRow>
       </Card>
 
-      <Card title="问候文案" description="空闲问候触发时优先使用这句话；没有配置模型时也可使用。">
-        <TextArea
-          value={greeting}
-          onChange={(value) => {
-            setGreeting(value);
-            markDirty();
-          }}
-          rows={3}
-          placeholder="例如：我在这儿呢，需要我陪你聊聊吗？"
-        />
-      </Card>
-
       <Card title="高级：系统提示词" description="会作为模型对话的基础指令。普通使用无需修改。">
         <TextArea
           value={systemPrompt}
@@ -253,8 +252,8 @@ export function PersonaPage({ snapshot, run }: PageProps) {
       )}
 
       <InlineNotice>
-        导入与导出的都是 Petsona 人格 JSON；导入会切换当前宠物的说话方式，覆盖前会二次确认。
-        复制到其他宠物会创建独立副本，之后两边分别编辑、互不影响。
+        语气、emoji 和系统提示词会自动保存。固定问候文案已归入「外观与交互」页。
+        导入与导出的都是 Petsona 人格 JSON；导入会切换当前宠物，覆盖前会二次确认。
       </InlineNotice>
 
       {copyOpen && (

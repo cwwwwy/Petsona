@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   Badge,
   Button,
@@ -74,7 +74,7 @@ export function ConnectionPage({ snapshot, run }: PageProps) {
     setConnectionNotice(null);
   };
 
-  const saveConnection = async () => {
+  const persistConnection = useCallback(async () => {
     if (!validHttpUrl(config.baseUrl)) {
       setConnectionNotice({
         tone: "danger",
@@ -92,12 +92,20 @@ export function ConnectionPage({ snapshot, run }: PageProps) {
       setConnectionNotice(
         next.status.includes("失败")
           ? { tone: "danger", message: next.status }
-          : { tone: "info", message: next.status || "连接设置已保存" },
+          : { tone: "info", message: next.status || "连接设置已自动保存" },
       );
     } finally {
       setSavingConnection(false);
     }
-  };
+  }, [config, run]);
+
+  useEffect(() => {
+    if (!dirty.current) return;
+    const timer = window.setTimeout(() => {
+      void persistConnection();
+    }, 450);
+    return () => window.clearTimeout(timer);
+  }, [persistConnection]);
 
   const saveKey = async () => {
     if (!apiKey.trim()) return;
@@ -153,15 +161,11 @@ export function ConnectionPage({ snapshot, run }: PageProps) {
       <PageHeader
         eyebrow="连接与问候"
         title="模型服务"
-        description="服务商、URL、API Key、模型，再到高级参数。保存后即时生效。"
+        description="服务商、URL、模型和高级参数修改后自动保存；API Key 单独保存。"
         actions={
-          <Button
-            variant="primary"
-            disabled={savingConnection || !baseUrlValid}
-            onClick={() => void saveConnection()}
-          >
-            {savingConnection ? "保存中…" : "保存连接"}
-          </Button>
+          <Badge tone={savingConnection ? "warning" : "positive"}>
+            {savingConnection ? "自动保存中…" : "自动保存"}
+          </Badge>
         }
       />
 

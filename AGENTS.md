@@ -11,7 +11,7 @@ Petsona 是 Windows / macOS 桌宠与 AI 伴侣。项目正按 `desktop-shell-ru
 **WebView 不渲染宠物浮层。** 旧 C#/WinUI 与 Swift/AppKit 前端、C ABI（`petsona-ffi`）已于 2026-10-08 删除；
 完整快照为 git `6bca241`，需要对照时只读 `git show 6bca241:<path>` 取回，不恢复死代码到工作树。
 
-平台现状：Windows 为主线（M2 浮层已实机验收，M3 设置页建设中）；macOS 在 M5 平齐。产品入口 `apps/desktop` 已进入 M3。
+平台现状：Windows 为主线（M0–M4 已实机验收，进入 M6 发布准备）；macOS M5 按用户决定暂缓。产品入口 `apps/desktop` 已具备发布前主体功能。
 
 ## 目录
 
@@ -54,7 +54,7 @@ cargo test --workspace          # core + runtime；状态协议测试需要绑�
 
 ## 跨对话工作流（规划 → 执行 → 审查）
 
-- 当前任务线：`desktop-shell-rust-ts`（P0/M0/M1/M2 已提交并人工通过；M3-A 已提交并经用户人工验收通过；M3-B 已提交并经用户人工验收通过；M3-C 已提交并验收关闭；M3-D 已提交并经用户人工验收通过；M4-A 已提交并经用户人工验收通过；M4-B 已提交并经用户人工验收通过；M4-C 记忆候选审阅已实现待人工验收；macOS 可行性留 M5）。
+- 当前任务线：`desktop-shell-rust-ts`（P0/M0/M1/M2 已提交并人工通过；M3-A 已提交并经用户人工验收通过；M3-B 已提交并经用户人工验收通过；M3-C 已提交并验收关闭；M3-D 已提交并经用户人工验收通过；M4-A 已提交并经用户人工验收通过；M4-B 已提交并经用户人工验收通过；M4-C 已提交并经用户人工验收通过；M5 按用户决定暂缓；发布前回归任务 pre-release-full-acceptance 已启动，FA-0 设置项收束已实现待人工验收；macOS 可行性留 M5）。
 - **规划**：只读调查，明确目标/非目标、逐文件增改删、约束、REQ 编号、依赖、验收矩阵、命令与完成条件；
   授权落盘后才写指定文档，不写产品代码。
 - **执行**：先复述关键目标与验收标准，再按计划实施；可作计划内局部实现选择，不得自行缩减功能、
@@ -68,7 +68,7 @@ cargo test --workspace          # core + runtime；状态协议测试需要绑�
 
 ## 当前状态（2026-10-09）
 
-- HEAD `071aaff`：M4-B 人格来源与草稿试聊已提交；工作区当前为 M4-C 未提交改动。
+- HEAD `b94d0b6`：M4-C 记忆候选审阅已提交；M5 暂缓，工作区进入 M6 发布准备。
 - M1/M2 已完成：runtime 直连、单实例/协议/托盘/空库首启、真实图集动画、拖动与位置记忆、注视、气泡、编辑条、
   Composer；自动冒烟无鼠标，鼠标类项目按验收清单人工执行。
 - M3-A（已提交 `b5dda69`，2026-10-09 用户验收通过）：Tauri IPC `settings_snapshot` / `settings_action` / `open_data_path`；runtime 新增 `settings`
@@ -99,10 +99,15 @@ cargo test --workspace          # core + runtime；状态协议测试需要绑�
 - M4-B（已提交 `071aaff`，2026-10-09 用户验收通过）：人格页新增“从资料学习说话方式”——人物描述、粘贴/导入 TXT/JSON、说话人选择、
   草稿编辑、试聊、应用/放弃；草稿流程使用 runtime 既有命令，应用保持稳定人格 ID 与宠物记忆。
 - M4-B 证据：`tsc`/`vite`/Windows 构建/桌面壳 5 项单测通过；无鼠标完整冒烟 EXIT=0（启动 1.36–1.40s）。
-- M4-C（当前未提交）：记忆页新增“待确认的习惯”，只展示 pending 候选；显示 key/value、可信度和证据，
+- M4-C（已提交 `b94d0b6`，2026-10-09 用户验收通过）：记忆页新增“待确认的习惯”，只展示 pending 候选；显示 key/value、可信度和证据，
   支持确认转长期事实、忽略后不再重复提案。
 - M4-C 证据：`tsc`/`vite`/Windows 构建/桌面壳 6 项单测通过；无鼠标完整冒烟 EXIT=0（启动 1.34–1.64s）。
-- 下一步：M4-C 人工验收通过后进入 M5 macOS 平齐（需在 Mac 上实机验证）；Windows 侧可先做 M6 发布准备。
+- M5（用户决定暂缓）：macOS 平齐、玻璃材质、Dock、LaunchAgent、Keychain；当前不阻塞 Windows 发布。
+- 发布前回归 FA-0 已实现待验：人格/模型连接改为 450ms 去抖自动保存（API Key 仍显式保存）；固定问候文案移入外观与交互；
+  系统页补齐 Windows HKCU Run 自启（`PETSONA_AUTOSTART_VALUE` 隔离值名）；记忆页补归档事实、整理中状态和聊天入口；
+  设置行改为可收缩 flex，修复窄内容区标签竖排。FA-0-4 拖放导入明确 DEFER。
+- 后续顺序：FA-1～FA-6 前端逐页 → NA 原生浮层 → LC 生命周期 → PB 协议数据 → RG 发布环境；全部通过后进入 M6。
+- 下一步：FA-0 人工验收通过后开始 FA-1 设置窗口与全局布局验收。
 
 - 构建入口：`scripts/desktop-build-windows.ps1`（Windows）；冒烟 `scripts/desktop-smoke.ps1`；截图 `scripts/desktop-shot.ps1`。
 - 旧世界验收知识已迁移：行为矩阵在 `docs/DESKTOP_VERIFICATION.md`，产品决策在计划文档「继承的产品决策」。

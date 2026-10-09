@@ -1,6 +1,6 @@
 import { useState } from "react";
-import { Badge, Button, Card, PageHeader, SettingRow } from "../components/ui";
-import { openExternalUrl, openPath } from "../lib/api";
+import { Badge, Button, Card, PageHeader, SettingRow, Switch } from "../components/ui";
+import { openExternalUrl, openPath, setAutostart } from "../lib/api";
 import type { PageProps } from "../types";
 
 const REPOSITORY_URL = "https://github.com/cwwwwy/Petsona";
@@ -13,6 +13,7 @@ function shortPath(value: string): string {
 export function SystemPage({ snapshot }: PageProps) {
   const paths = snapshot.settings.paths;
   const [notice, setNotice] = useState("");
+  const [autostartBusy, setAutostartBusy] = useState(false);
 
   const open = async (path: string) => {
     try {
@@ -27,6 +28,19 @@ export function SystemPage({ snapshot }: PageProps) {
       await openExternalUrl(REPOSITORY_URL);
     } catch (reason) {
       setNotice(reason instanceof Error ? reason.message : String(reason));
+    }
+  };
+
+  const toggleAutostart = async (enabled: boolean) => {
+    setAutostartBusy(true);
+    setNotice("");
+    try {
+      await setAutostart(enabled);
+      setNotice(enabled ? "已启用开机自启。" : "已关闭开机自启。");
+    } catch (reason) {
+      setNotice(reason instanceof Error ? reason.message : String(reason));
+    } finally {
+      setAutostartBusy(false);
     }
   };
 
@@ -116,6 +130,20 @@ export function SystemPage({ snapshot }: PageProps) {
             <span className="danger-text wrap">{snapshot.error}</span>
           </SettingRow>
         )}
+      </Card>
+
+      <Card title="启动" description="登录 Windows 后自动启动 Petsona。">
+        <SettingRow
+          label="开机自启"
+          hint="写入或删除 HKCU\Software\Microsoft\Windows\CurrentVersion\Run；真实登录后行为在 M6 发布验收。"
+        >
+          <Switch
+            label="开机自启"
+            checked={snapshot.autostart}
+            disabled={autostartBusy}
+            onChange={(value) => void toggleAutostart(value)}
+          />
+        </SettingRow>
       </Card>
 
       <Card title="本机数据" description="设置窗口关闭不会退出 Petsona；从托盘菜单「退出」才会结束进程。">

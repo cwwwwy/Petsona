@@ -238,6 +238,7 @@ export interface SettingsSnapshot {
   platform: string;
   arch: string;
   debugBuild: boolean;
+  autostart: boolean;
   revision: number;
   ready: boolean;
   faulted: boolean;
