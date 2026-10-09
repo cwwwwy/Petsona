@@ -238,3 +238,29 @@
 
 - 中文 IME 组合不误发；Shift+Enter 换行；真实点击气泡打开并可直接输入；
 - 拖动宠物时输入框跟随、贴近任务栏时左右侧挂；发送后运行时反应（无 Key 时记录错误属预期）。
+
+
+## M2-B-04 编辑条与故障提示（2026-10-09）
+
+- **编辑条** `PetsonaStripWindow`（分层/TOOLWINDOW/NOACTIVATE/TOPMOST，独立类名便于测试）：
+  - 宠物可见且 Composer 关闭时显示；悬停 120ms 由 36×6 展开到 72×6（不透明度 90→200，`RenderStrip` 移植）；
+  - 悬停 **220ms** 自动打开 Composer；**点击**立即打开；Composer 打开后自动隐藏，关闭后恢复；
+  - 侧挂旋转：贴近任务栏（下方空间不足）时按 `OverlayLayout.ChooseSide` 迟滞规则移到左/右余量更大一侧、变为竖向 6×36→6×72；
+  - 位置 `PositionStrip` 移植（下方居中 / 侧边 centerY = pet.bottom − 22、EdgeMargin=8）。
+- **布局收敛**：Composer 改用同一套 `ChooseSide`（打开时锁定所在侧，`position_panel` 移植 Gap=12 / 侧边 y=pet.bottom−height+6）。
+- **故障提示气泡**（旧 `HandleFault` 移植）：runtime 故障时用气泡显示本地文案——
+  - 锁冲突："已有一个 Petsona 实例在使用同一数据目录，本窗口将在 3 秒后退出。" → 显示后 **3 秒退出**；
+  - 其他故障："Petsona 无法继续：\n{error}"（60 秒），进程保持；宠物无帧时气泡落在工作区右下角（`DEFAULT_MARGIN`）。
+  - watcher 不再直接退出，仅记录日志；故障时注视/编辑条停止。
+
+### 证据（无鼠标冒烟）
+
+| 证据ID/时间 | 操作 | 结果 |
+|---|---|---|
+| E-M2-B-04 | `desktop-smoke.ps1` 完整运行 | **EXIT=0**：编辑条可见=True 尺寸=36×6；Composer 打开时编辑条隐藏=True、Esc 后恢复=True；第二实例提示气泡可见=True、3.3s 后退出、存活=1；composer/气泡/协议/退出/空库全部回归通过 |
+
+### 待人工（用户）
+
+- 编辑条悬停展开（120ms）与悬停 220ms 打开 Composer、点击立即打开；
+- 拖动宠物贴近任务栏 → 编辑条侧挂并旋转、悬停竖向展开；Composer 在侧边打开并保持该侧；
+- （可选）再次手动启动第二实例观察右下角提示与 3 秒退出。

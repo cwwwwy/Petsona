@@ -54,7 +54,7 @@ cargo test --workspace          # core + runtime；状态协议测试需要绑�
 
 ## 跨对话工作流（规划 → 执行 → 审查）
 
-- 当前任务线：`desktop-shell-rust-ts`（P0/M0/M1/M2-A/M2-B-01/M2-B-02 已提交并人工通过；M2-B-03 Composer 已实现待实机验收；编辑条与故障气泡待做；macOS 可行性待补）。
+- 当前任务线：`desktop-shell-rust-ts`（P0/M0/M1/M2-A/M2-B-01/M2-B-02/M2-B-03 已提交并人工通过；M2-B-04 编辑条+故障提示已实现待实机验收；macOS 可行性待补；M2 验收后进入 M3 设置 UI）。
 - **规划**：只读调查，明确目标/非目标、逐文件增改删、约束、REQ 编号、依赖、验收矩阵、命令与完成条件；
   授权落盘后才写指定文档，不写产品代码。
 - **执行**：先复述关键目标与验收标准，再按计划实施；可作计划内局部实现选择，不得自行缩减功能、
@@ -82,7 +82,8 @@ cargo test --workspace          # core + runtime；状态协议测试需要绑�
   remaining/total 进度条、悬停轮询暂停/续跑、宠物上方优先/顶部翻转、`rcWork` 夹取；协议气泡固定 8s 生命周期。
 - M2-B-03（当前未提交）：`PetsonaComposerWindow` + 原生 EDIT（多行/`ES_WANTRETURN`）——Enter 发送并清空、Shift+Enter 换行、
   Esc 关闭保留草稿、打开时前台聚焦（1.5s 重试）、跟随宠物并侧挂、主题同步；入口=点击气泡（+ `--open-composer` / `WM_APP+1` 测试口）。
-- M2-B 其余待做：编辑条（36×6 / 72×6、侧挂旋转、220ms 悬停展开）、故障提示气泡。
+- M2-B-04（当前未提交）：`PetsonaStripWindow` 编辑条（36×6→72×6、悬停 120ms 展开、220ms 自动打开或点击立即打开 Composer、
+  贴近任务栏侧挂旋转）；Composer 复用 `ChooseSide` 并锁定打开侧；故障提示气泡（锁冲突 3 秒退出、其他故障 60 秒保持）。
 - 构建入口：`scripts/desktop-build-windows.ps1`（Windows）；冒烟 `scripts/desktop-smoke.ps1`（`-SkipMouseChecks` 供鼠标忙时）；
   截图 `scripts/desktop-shot.ps1`。
 - 旧世界验收知识已迁移：行为矩阵在 `docs/DESKTOP_VERIFICATION.md`，产品决策在计划文档「继承的产品决策」。

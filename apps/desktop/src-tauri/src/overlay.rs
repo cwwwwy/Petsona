@@ -103,6 +103,16 @@ const DARK_ACCENT: u32 = 0xFF00_99FF;
 const DARK_TRACK: u32 = 0x46FF_FFFF;
 
 const COMPOSER_CLASS_NAME: &str = "PetsonaComposerWindow";
+const STRIP_CLASS_NAME: &str = "PetsonaStripWindow";
+const STRIP_THICKNESS: i32 = 6;
+const STRIP_LENGTH: i32 = 36;
+const STRIP_EXPANDED_LENGTH: i32 = 72;
+const STRIP_ANIMATION_MS: u64 = 120;
+const STRIP_HOVER_OPEN_MS: u64 = 220;
+/// OverlayLayout.Gap: spacing between the pet and panels.
+const GAP: i32 = 12;
+/// OverlayLayout.ComposerMinWidth: side hysteresis threshold.
+const COMPOSER_MIN_WIDTH: i32 = 280;
 const COMPOSER_WIDTH: i32 = 360;
 const COMPOSER_HEIGHT: i32 = 56;
 const COMPOSER_RADIUS: i32 = 12;
@@ -158,6 +168,28 @@ struct BubbleState {
     visible: bool,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum OverlaySide {
+    Bottom,
+    Left,
+    Right,
+}
+
+struct StripState {
+    hwnd: HWND,
+    hovered: bool,
+    hover_started: Option<Instant>,
+    expanded: f32,
+    animation_from: f32,
+    animation_target: f32,
+    animation_started: Instant,
+    render_key: String,
+    pixels: Vec<u8>,
+    width: i32,
+    height: i32,
+    visible: bool,
+}
+
 struct ComposerState {
     hwnd: HWND,
     edit: HWND,
@@ -175,6 +207,9 @@ struct State {
     pet_hwnd: HWND,
     bubble_hwnd: HWND,
     composer: ComposerState,
+    strip: StripState,
+    last_side: Option<OverlaySide>,
+    composer_side: Option<OverlaySide>,
     bubble: BubbleState,
     atlas: Option<Atlas>,
     frames: HashMap<(u32, i32, i32), Frame>,
@@ -191,6 +226,9 @@ struct State {
     gaze_active: bool,
     gaze_direction: i32,
     gaze_last: (f32, f32),
+    fault_reported: bool,
+    fault_message: Option<String>,
+    fault_until: Option<Instant>,
 }
 
 thread_local! {
@@ -200,6 +238,7 @@ thread_local! {
 static PET_CLASS: OnceLock<bool> = OnceLock::new();
 static BUBBLE_CLASS: OnceLock<bool> = OnceLock::new();
 static COMPOSER_CLASS: OnceLock<bool> = OnceLock::new();
+static STRIP_CLASS: OnceLock<bool> = OnceLock::new();
 static PET_HWND: std::sync::atomic::AtomicIsize = std::sync::atomic::AtomicIsize::new(0);
 
 /// Spawns the overlay thread that owns the pet window and its message pump.
@@ -216,6 +255,7 @@ unsafe fn thread_main(engine: Arc<Mutex<RuntimeEngine>>) {
     if !register_class(CLASS_NAME, &PET_CLASS)
         || !register_class(BUBBLE_CLASS_NAME, &BUBBLE_CLASS)
         || !register_class(COMPOSER_CLASS_NAME, &COMPOSER_CLASS)
+        || !register_class(STRIP_CLASS_NAME, &STRIP_CLASS)
     {
         log("overlay: RegisterClassExW failed");
         return;
@@ -229,6 +269,8 @@ unsafe fn thread_main(engine: Arc<Mutex<RuntimeEngine>>) {
     apply_dwm_attributes(hwnd);
     let bubble_hwnd = create_window(BUBBLE_CLASS_NAME, "Petsona");
     apply_dwm_attributes(bubble_hwnd);
+    let strip_hwnd = create_window(STRIP_CLASS_NAME, "Petsona");
+    apply_dwm_attributes(strip_hwnd);
     let composer_hwnd = create_composer_window();
     let composer_edit = if composer_hwnd.is_null() {
         ptr::null_mut()
@@ -251,6 +293,22 @@ unsafe fn thread_main(engine: Arc<Mutex<RuntimeEngine>>) {
         engine,
         pet_hwnd: hwnd,
         bubble_hwnd,
+        strip: StripState {
+            hwnd: strip_hwnd,
+            hovered: false,
+            hover_started: None,
+            expanded: 0.0,
+            animation_from: 0.0,
+            animation_target: 0.0,
+            animation_started: Instant::now(),
+            render_key: String::new(),
+            pixels: Vec::new(),
+            width: 0,
+            height: 0,
+            visible: false,
+        },
+        last_side: None,
+        composer_side: None,
         composer: ComposerState {
             hwnd: composer_hwnd,
             edit: composer_edit,
@@ -287,6 +345,9 @@ unsafe fn thread_main(engine: Arc<Mutex<RuntimeEngine>>) {
         gaze_active: false,
         gaze_direction: -1,
         gaze_last: (0.0, 0.0),
+        fault_reported: false,
+        fault_message: None,
+        fault_until: None,
     });
     STATE.with(|cell| *cell.borrow_mut() = Some(state));
 
@@ -394,6 +455,20 @@ unsafe extern "system" fn wnd_proc(
                 _ => None,
             };
         }
+        if !state.strip.hwnd.is_null() && hwnd == state.strip.hwnd {
+            return match msg {
+                WM_SETCURSOR => {
+                    SetCursor(LoadCursorW(ptr::null_mut(), IDC_ARROW));
+                    Some(1)
+                }
+                WM_LBUTTONUP => {
+                    open_composer(state);
+                    Some(0)
+                }
+                WM_DESTROY => Some(0),
+                _ => None,
+            };
+        }
         if !state.composer.hwnd.is_null() && hwnd == state.composer.hwnd {
             return composer_wnd_proc_msg(hwnd, msg, wparam, lparam, state);
         }
@@ -446,12 +521,39 @@ unsafe extern "system" fn wnd_proc(
 
 /// Reads the runtime snapshot and shows/hides/renders the pet window.
 unsafe fn refresh(hwnd: HWND, state: &mut State) {
-    let (snapshot, atlas_path) = {
+    let (snapshot, atlas_path, error_text) = {
         let Ok(engine) = state.engine.lock() else {
             return;
         };
-        (engine.snapshot(), engine.text(RuntimeTextField::AtlasPath))
+        (
+            engine.snapshot(),
+            engine.text(RuntimeTextField::AtlasPath),
+            engine.text(RuntimeTextField::Error),
+        )
     };
+
+    if snapshot.faulted && !state.fault_reported {
+        state.fault_reported = true;
+        let lowercase = error_text.to_lowercase();
+        let lock_conflict = lowercase.contains("lock");
+        let message = if lock_conflict {
+            "已有一个 Petsona 实例在使用同一数据目录，本窗口将在 3 秒后退出。".to_string()
+        } else if error_text.trim().is_empty() {
+            "Petsona 引擎发生故障，已停止处理命令。".to_string()
+        } else {
+            format!("Petsona 无法继续：\n{error_text}")
+        };
+        state.fault_message = Some(message);
+        state.fault_until = Some(Instant::now() + std::time::Duration::from_secs(60));
+        log(&format!("overlay: runtime faulted (lock={lock_conflict})"));
+        if lock_conflict {
+            // A stray second instance must not linger on the desktop.
+            std::thread::spawn(|| {
+                std::thread::sleep(std::time::Duration::from_secs(3));
+                std::process::exit(0);
+            });
+        }
+    }
 
     let want_visible =
         snapshot.ready && snapshot.has_pet && snapshot.pet_visible && !atlas_path.is_empty();
@@ -479,6 +581,7 @@ unsafe fn refresh(hwnd: HWND, state: &mut State) {
     }
     update_bubble(state);
     update_composer(state);
+    update_strip(state);
 }
 
 /// Renders the current runtime frame; returns false when the atlas could not
@@ -969,7 +1072,7 @@ unsafe fn on_nchittest(hwnd: HWND, state: &State, lparam: LPARAM) -> LRESULT {
 /// Samples the global cursor at 16 ms and drives the runtime gaze target with
 /// the stabilized official direction. Mirrors `AppController.SampleGaze`.
 unsafe fn update_gaze(hwnd: HWND, state: &mut State) {
-    if !state.visible || state.dragging {
+    if !state.visible || state.dragging || state.fault_reported {
         clear_gaze(state);
         return;
     }
@@ -1149,27 +1252,39 @@ fn update_bubble(state: &mut State) {
     if state.bubble_hwnd.is_null() {
         return;
     }
-    if !state.visible || state.pet_hwnd.is_null() {
+
+    let fault_text = state.fault_message.clone().filter(|_| {
+        state
+            .fault_until
+            .is_some_and(|until| Instant::now() < until)
+    });
+    if fault_text.is_none() && (!state.visible || state.pet_hwnd.is_null()) {
         hide_bubble(state);
         return;
     }
 
-    let (text, timing) = {
-        let Ok(engine) = state.engine.lock() else {
+    let (text, remaining_ms, total_ms, generation) = if let Some(message) = fault_text {
+        // Locally rendered fault notice (60s), mirroring the old HandleFault.
+        (message, 60_000i64, 60_000i64, -1000i64)
+    } else {
+        let (text, timing) = {
+            let Ok(engine) = state.engine.lock() else {
+                return;
+            };
+            (
+                engine.text(RuntimeTextField::Bubble),
+                engine.text(RuntimeTextField::BubbleTiming),
+            )
+        };
+        if text.trim().is_empty() {
+            hide_bubble(state);
+            return;
+        }
+        let Some(timing) = parse_bubble_timing(&timing) else {
+            hide_bubble(state);
             return;
         };
-        (
-            engine.text(RuntimeTextField::Bubble),
-            engine.text(RuntimeTextField::BubbleTiming),
-        )
-    };
-    if text.trim().is_empty() {
-        hide_bubble(state);
-        return;
-    }
-    let Some((remaining_ms, total_ms, generation)) = parse_bubble_timing(&timing) else {
-        hide_bubble(state);
-        return;
+        (text, timing.0, timing.1, timing.2)
     };
 
     // Hover is derived from the cursor position: the bubble must pause while
@@ -1187,13 +1302,15 @@ fn update_bubble(state: &mut State) {
     };
     state.bubble.hovered = hovered;
 
-    if !hovered && state.bubble.paused_generation != -1 {
+    if state.fault_reported {
+        state.bubble.paused_generation = -1;
+    } else if !hovered && state.bubble.paused_generation != -1 {
         if let Ok(engine) = state.engine.lock() {
             let _ = engine.send(RuntimeCommand::SetBubblePaused(false));
         }
         state.bubble.paused_generation = -1;
     }
-    if hovered && state.bubble.paused_generation != generation {
+    if !state.fault_reported && hovered && state.bubble.paused_generation != generation {
         if let Ok(engine) = state.engine.lock() {
             let _ = engine.send(RuntimeCommand::SetBubblePaused(true));
         }
@@ -1230,7 +1347,16 @@ fn update_bubble(state: &mut State) {
         if GetWindowRect(state.pet_hwnd, &mut pet_rect) == 0 {
             return;
         }
-        let (x, y) = position_bubble(pet_rect, state.bubble.width, state.bubble.height);
+        let has_frame = pet_rect.right - pet_rect.left > 1;
+        let (x, y) = if has_frame {
+            position_bubble(pet_rect, state.bubble.width, state.bubble.height)
+        } else {
+            let work = primary_work_area();
+            (
+                work.right - state.bubble.width - DEFAULT_MARGIN,
+                work.bottom - state.bubble.height - DEFAULT_MARGIN,
+            )
+        };
         SetWindowPos(
             state.bubble_hwnd,
             ptr::null_mut(),
@@ -1716,6 +1842,19 @@ fn open_composer(state: &mut State) {
     state.composer.open = true;
     state.composer.focus_deadline = Some(Instant::now() + std::time::Duration::from_millis(1500));
     unsafe {
+        let mut pet_rect: RECT = std::mem::zeroed();
+        if GetWindowRect(state.pet_hwnd, &mut pet_rect) != 0 {
+            let work = work_area_for_rect(pet_rect);
+            state.composer_side = Some(choose_side(
+                pet_rect,
+                work,
+                COMPOSER_HEIGHT,
+                state.last_side,
+            ));
+            state.last_side = state.composer_side;
+        }
+    }
+    unsafe {
         let draft = wide(&state.composer.draft);
         SetWindowTextW(state.composer.edit, draft.as_ptr());
         update_composer(state);
@@ -1736,7 +1875,16 @@ fn update_composer(state: &mut State) {
         if GetWindowRect(state.pet_hwnd, &mut pet_rect) == 0 {
             return;
         }
-        let (x, y) = position_composer(pet_rect, COMPOSER_WIDTH, COMPOSER_HEIGHT);
+        let work = work_area_for_rect(pet_rect);
+        let side = match state.composer_side {
+            Some(side) => side,
+            None => {
+                let side = choose_side(pet_rect, work, COMPOSER_HEIGHT, state.last_side);
+                state.composer_side = Some(side);
+                side
+            }
+        };
+        let (x, y) = position_panel(pet_rect, side, COMPOSER_WIDTH, COMPOSER_HEIGHT);
         if state.composer.position != (x, y) {
             state.composer.position = (x, y);
             SetWindowPos(
@@ -1779,31 +1927,69 @@ unsafe fn work_area_for_rect(rect: RECT) -> RECT {
     info.rcWork
 }
 
-/// Below the pet by default; near the bottom/taskbar it moves to the side with
-/// more room (mirroring the edit-strip placement rules), then clamps.
-unsafe fn position_composer(pet: RECT, width: i32, height: i32) -> (i32, i32) {
-    let work = work_area_for_rect(pet);
-    let pet_width = pet.right - pet.left;
-    let pet_height = pet.bottom - pet.top;
-    let centre_x = pet.left + pet_width / 2;
-    let centre_y = pet.top + pet_height / 2;
+/// Port of `OverlayLayout.ChooseSide`: below by default, left/right when the
+/// taskbar leaves no room, with hysteresis so the side does not flip-flop.
+fn choose_side(
+    pet: RECT,
+    work: RECT,
+    panel_height: i32,
+    current: Option<OverlaySide>,
+) -> OverlaySide {
+    let below = work.bottom - pet.bottom - GAP - EDGE_MARGIN;
+    let right = work.right - pet.right - GAP - EDGE_MARGIN;
+    let left = pet.left - work.left - GAP - EDGE_MARGIN;
+    let bottom_fits = below >= panel_height;
 
-    let mut x = centre_x - width / 2;
-    let mut y = pet.bottom + 8;
-    if y + height > work.bottom - EDGE_MARGIN {
-        let left_space = pet.left - work.left;
-        let right_space = work.right - pet.right;
-        if right_space >= left_space && right_space >= width + EDGE_MARGIN {
-            x = pet.right + EDGE_MARGIN;
-            y = centre_y - height / 2;
-        } else if left_space >= width + EDGE_MARGIN {
-            x = pet.left - width - EDGE_MARGIN;
-            y = centre_y - height / 2;
-        } else {
-            y = pet.top - height - EDGE_MARGIN;
+    match current {
+        Some(OverlaySide::Bottom) => {
+            if bottom_fits {
+                OverlaySide::Bottom
+            } else if right >= left {
+                OverlaySide::Right
+            } else {
+                OverlaySide::Left
+            }
+        }
+        Some(side @ (OverlaySide::Left | OverlaySide::Right)) => {
+            if below >= panel_height + 16 {
+                return OverlaySide::Bottom;
+            }
+            let (current_space, other_space) = if side == OverlaySide::Right {
+                (right, left)
+            } else {
+                (left, right)
+            };
+            if current_space >= COMPOSER_MIN_WIDTH || current_space >= other_space {
+                side
+            } else if side == OverlaySide::Right {
+                OverlaySide::Left
+            } else {
+                OverlaySide::Right
+            }
+        }
+        None => {
+            if bottom_fits {
+                OverlaySide::Bottom
+            } else if right >= left {
+                OverlaySide::Right
+            } else {
+                OverlaySide::Left
+            }
         }
     }
+}
 
+/// Port of `OverlayLayout.PositionPanel` for the composer.
+unsafe fn position_panel(pet: RECT, side: OverlaySide, width: i32, height: i32) -> (i32, i32) {
+    let x = match side {
+        OverlaySide::Left => pet.left - width - GAP,
+        OverlaySide::Right => pet.right + GAP,
+        OverlaySide::Bottom => pet.left + ((pet.right - pet.left) - width) / 2,
+    };
+    let y = match side {
+        OverlaySide::Bottom => pet.bottom + GAP,
+        _ => pet.bottom - height + 6,
+    };
     let desired = RECT {
         left: x,
         top: y,
@@ -1812,6 +1998,167 @@ unsafe fn position_composer(pet: RECT, width: i32, height: i32) -> (i32, i32) {
     };
     let clamped = clamp_to_work_area(desired);
     (clamped.left, clamped.top)
+}
+
+/// Port of `OverlayLayout.PositionStrip`.
+unsafe fn position_strip(pet: RECT, side: OverlaySide, width: i32, height: i32) -> (i32, i32) {
+    let centre_y = pet.bottom - 22;
+    let x = match side {
+        OverlaySide::Left => pet.left - width - EDGE_MARGIN,
+        OverlaySide::Right => pet.right + EDGE_MARGIN,
+        OverlaySide::Bottom => pet.left + ((pet.right - pet.left) - width) / 2,
+    };
+    let y = match side {
+        OverlaySide::Bottom => pet.bottom + EDGE_MARGIN,
+        _ => centre_y - height / 2,
+    };
+    let desired = RECT {
+        left: x,
+        top: y,
+        right: x + width,
+        bottom: y + height,
+    };
+    let clamped = clamp_to_work_area(desired);
+    (clamped.left, clamped.top)
+}
+
+/// Drives the compact edit strip: shown while the pet is on screen and the
+/// composer is closed; hovering expands it 36 -> 72 (120 ms) and, after 220 ms,
+/// opens the composer. Clicking opens immediately. The strip rotates to a
+/// vertical pill when it side-mounts near the taskbar.
+fn update_strip(state: &mut State) {
+    if state.strip.hwnd.is_null() {
+        return;
+    }
+    if !state.visible || state.composer.open || state.fault_reported {
+        hide_strip(state);
+        return;
+    }
+
+    unsafe {
+        let mut pet_rect: RECT = std::mem::zeroed();
+        if GetWindowRect(state.pet_hwnd, &mut pet_rect) == 0 {
+            return;
+        }
+        let work = work_area_for_rect(pet_rect);
+        let side = choose_side(pet_rect, work, COMPOSER_HEIGHT, state.last_side);
+        state.last_side = Some(side);
+        let vertical = !matches!(side, OverlaySide::Bottom);
+
+        // Hover test against the live window rect, with 2 px of tolerance so
+        // the 6 px band is not impossible to enter.
+        let mut cursor: POINT = std::mem::zeroed();
+        let mut rect: RECT = std::mem::zeroed();
+        let hovered = state.strip.visible
+            && GetCursorPos(&mut cursor) != 0
+            && GetWindowRect(state.strip.hwnd, &mut rect) != 0
+            && cursor.x >= rect.left - 2
+            && cursor.x < rect.right + 2
+            && cursor.y >= rect.top - 2
+            && cursor.y < rect.bottom + 2;
+        state.strip.hovered = hovered;
+
+        if hovered {
+            let started = *state.strip.hover_started.get_or_insert_with(Instant::now);
+            if started.elapsed().as_millis() as u64 >= STRIP_HOVER_OPEN_MS {
+                open_composer(state);
+                hide_strip(state);
+                return;
+            }
+        } else {
+            state.strip.hover_started = None;
+        }
+
+        let target = if hovered { 1.0 } else { 0.0 };
+        if (target - state.strip.animation_target).abs() > f32::EPSILON {
+            state.strip.animation_target = target;
+            state.strip.animation_from = state.strip.expanded;
+            state.strip.animation_started = Instant::now();
+        }
+        let elapsed = state.strip.animation_started.elapsed().as_millis() as u64;
+        let progress = (elapsed as f32 / STRIP_ANIMATION_MS as f32).min(1.0);
+        state.strip.expanded = state.strip.animation_from
+            + (state.strip.animation_target - state.strip.animation_from) * progress;
+        if progress >= 1.0 {
+            state.strip.expanded = state.strip.animation_target;
+        }
+
+        let length = (STRIP_LENGTH as f32
+            + (STRIP_EXPANDED_LENGTH - STRIP_LENGTH) as f32 * state.strip.expanded)
+            .round() as i32;
+        let width = if vertical { STRIP_THICKNESS } else { length };
+        let height = if vertical { length } else { STRIP_THICKNESS };
+        let render_key = format!("{vertical}:{length}");
+        if render_key != state.strip.render_key || state.strip.pixels.is_empty() {
+            let (pixels, pixel_width, pixel_height) =
+                render_strip(vertical, length, state.strip.expanded);
+            state.strip.pixels = pixels;
+            state.strip.width = pixel_width;
+            state.strip.height = pixel_height;
+            state.strip.render_key = render_key;
+        }
+
+        let (x, y) = position_strip(pet_rect, side, width, height);
+        SetWindowPos(
+            state.strip.hwnd,
+            ptr::null_mut(),
+            x,
+            y,
+            0,
+            0,
+            SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE,
+        );
+        present_pixels(
+            state.strip.hwnd,
+            &state.strip.pixels,
+            state.strip.width,
+            state.strip.height,
+            255,
+        );
+        if !state.strip.visible {
+            state.strip.visible = true;
+            ShowWindow(state.strip.hwnd, SW_SHOWNOACTIVATE);
+            log("strip: shown");
+        }
+    }
+}
+
+fn hide_strip(state: &mut State) {
+    if state.strip.hwnd.is_null() {
+        return;
+    }
+    state.strip.hovered = false;
+    state.strip.hover_started = None;
+    if state.strip.visible {
+        state.strip.visible = false;
+        unsafe {
+            ShowWindow(state.strip.hwnd, SW_HIDE);
+        }
+    }
+}
+
+/// Port of `OverlayWindow.RenderStrip`: a rounded pill whose opacity rises
+/// from 90 to 200 as it expands.
+fn render_strip(vertical: bool, length: i32, expansion: f32) -> (Vec<u8>, i32, i32) {
+    let width = if vertical { STRIP_THICKNESS } else { length };
+    let height = if vertical { length } else { STRIP_THICKNESS };
+    let mut pixels = vec![0u8; (width * height * 4) as usize];
+    let dark = DARK_THEME.load(Ordering::Relaxed);
+    let base = if dark { DARK_TEXT } else { LIGHT_TEXT };
+    let alpha = (90.0 + 110.0 * expansion.clamp(0.0, 1.0)).round() as u32;
+    let argb = (alpha << 24) | (base & 0x00FF_FFFF);
+    let radius = STRIP_THICKNESS as f32 / 2.0;
+    let rect = (0.5f32, 0.5f32, width as f32 - 0.5, height as f32 - 0.5);
+    for y in 0..height {
+        for x in 0..width {
+            let coverage = rounded_rect_coverage(x as f32 + 0.5, y as f32 + 0.5, rect, radius);
+            if coverage > 0.0 {
+                let index = ((y * width + x) * 4) as usize;
+                blend_argb(&mut pixels, index, argb, coverage);
+            }
+        }
+    }
+    (pixels, width, height)
 }
 
 unsafe extern "system" fn edit_proc(
@@ -1827,6 +2174,7 @@ unsafe extern "system" fn edit_proc(
                 |state| {
                     state.composer.draft = text;
                     state.composer.open = false;
+                    state.composer_side = None;
                     state.composer.hwnd
                 },
                 ptr::null_mut(),

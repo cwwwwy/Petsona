@@ -169,6 +169,7 @@ fn start_watcher(app: AppHandle, engine: Engine) {
     thread::spawn(move || {
         logging::log("watcher: started");
         let mut settings_presented = false;
+        let mut fault_logged = false;
         loop {
             thread::sleep(Duration::from_millis(200));
             let (faulted, error, ready, has_pet) = {
@@ -185,13 +186,19 @@ fn start_watcher(app: AppHandle, engine: Engine) {
             };
 
             if faulted {
-                if error.to_lowercase().contains("lock") {
-                    logging::log("watcher: another instance owns the data directory; exiting");
-                } else {
-                    logging::log(&format!("watcher: runtime faulted: {error}"));
+                if !fault_logged {
+                    fault_logged = true;
+                    if error.to_lowercase().contains("lock") {
+                        logging::log(
+                            "watcher: another instance owns the data directory; the overlay shows a notice and exits shortly",
+                        );
+                    } else {
+                        logging::log(&format!("watcher: runtime faulted: {error}"));
+                    }
                 }
-                app.exit(0);
-                return;
+                // The overlay renders the fault bubble (and exits after ~3 s on
+                // a lock conflict); the watcher only keeps a record.
+                continue;
             }
 
             if ready && !has_pet && !settings_presented {

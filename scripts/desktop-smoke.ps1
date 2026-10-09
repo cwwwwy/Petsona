@@ -77,6 +77,29 @@ public static class SmokeNative
 
     public struct RECT { public int Left; public int Top; public int Right; public int Bottom; }
 
+    public delegate bool EnumProc(IntPtr h, IntPtr l);
+
+    [DllImport("user32.dll")]
+    public static extern bool EnumWindows(EnumProc cb, IntPtr l);
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    public static extern int GetClassNameW(IntPtr h, StringBuilder s, int n);
+
+    /// First *visible* top-level window of the given class (a hidden window of
+    /// the same class may exist in another instance).
+    public static IntPtr FindVisibleByClass(string cls)
+    {
+        IntPtr result = IntPtr.Zero;
+        EnumWindows((h, l) => {
+            if (!IsWindowVisible(h)) { return true; }
+            var sb = new StringBuilder(128);
+            GetClassNameW(h, sb, 128);
+            if (sb.ToString() == cls) { result = h; return false; }
+            return true;
+        }, IntPtr.Zero);
+        return result;
+    }
+
     public static long GetExStyle(IntPtr hwnd)
     {
         if (IntPtr.Size == 8) { return GetWindowLongPtrW64(hwnd, -20).ToInt64(); }
@@ -110,8 +133,15 @@ function Get-SettingsWindow([int]$ProcessId) {
     return $candidate
 }
 
+function Get-StripWindow {
+    $hwnd = [SmokeNative]::FindWindowW('PetsonaStripWindow', [NullString]::Value)
+    if ($hwnd -eq [IntPtr]::Zero) { return $null }
+    return $hwnd
+}
+
 function Get-BubbleWindow {
-    $hwnd = [SmokeNative]::FindWindowW('PetsonaOverlayWindow', [NullString]::Value)
+    # Only visible bubbles count: the other instance may own a hidden one.
+    $hwnd = [SmokeNative]::FindVisibleByClass('PetsonaOverlayWindow')
     if ($hwnd -eq [IntPtr]::Zero) { return $null }
     return $hwnd
 }
@@ -239,6 +269,17 @@ Write-Host ("  animation distinct frames over 14 samples: {0}  (expected >1)" -f
 $foreground = [SmokeNative]::GetForegroundWindow()
 Write-Host ("  foreground is pet window: {0}  (expected False)" -f ($foreground -eq $hwnd))
 
+# the compact edit strip rides under the pet while the composer is closed
+$strip = Get-StripWindow
+$stripShown = [bool]$strip -and [SmokeNative]::IsWindowVisible($strip)
+$stripSize = ''
+if ($stripShown) {
+    $stripRect = New-Object SmokeNative+RECT
+    [void][SmokeNative]::GetWindowRect($strip, [ref]$stripRect)
+    $stripSize = "{0}x{1}" -f ($stripRect.Right - $stripRect.Left), ($stripRect.Bottom - $stripRect.Top)
+}
+Write-Host ("  edit strip visible: {0} size={1}  (expected 36x6)" -f $stripShown, $stripSize)
+
 Stop-Petsona
 
 Write-Host '== settings focus (--show-settings) =='
@@ -266,14 +307,28 @@ $procA = Start-Process -FilePath $Exe -PassThru
 if (-not (Wait-PetVisible 20000)) { throw 'first instance pet window not visible' }
 
 $procB = Start-Process -FilePath $Exe -PassThru
+$watchB = [System.Diagnostics.Stopwatch]::StartNew()
+$noticeSeen = $false
+while ($watchB.ElapsedMilliseconds -lt 2500) {
+    $faultBubble = Get-BubbleWindow
+    if ($faultBubble -and [SmokeNative]::IsWindowVisible($faultBubble)) { $noticeSeen = $true; break }
+    Start-Sleep -Milliseconds 100
+}
+Write-Host ("  second instance fault notice visible: {0}" -f $noticeSeen)
 $exited = $false
-$watch = [System.Diagnostics.Stopwatch]::StartNew()
-while ($watch.ElapsedMilliseconds -lt 10000) {
+while ($watchB.ElapsedMilliseconds -lt 12000) {
     if ($procB.HasExited) { $exited = $true; break }
     Start-Sleep -Milliseconds 200
 }
-$aliveCount = (Get-Process petsona-desktop -ErrorAction SilentlyContinue | Measure-Object).Count
-Write-Host ("  second process exited: {0}; surviving shells: {1}" -f $exited, $aliveCount)
+# the exited process can linger briefly in the process table
+$aliveCount = 2
+$watchC = [System.Diagnostics.Stopwatch]::StartNew()
+while ($watchC.ElapsedMilliseconds -lt 4000) {
+    $aliveCount = (Get-Process petsona-desktop -ErrorAction SilentlyContinue | Measure-Object).Count
+    if ($aliveCount -le 1) { break }
+    Start-Sleep -Milliseconds 200
+}
+Write-Host ("  second process exited: {0} after {1} ms (~3s notice); surviving shells: {2}" -f $exited, $watchB.ElapsedMilliseconds, $aliveCount)
 $health = Get-Health $PetPort
 Write-Host ("  first instance still healthy: {0}" -f [bool]$health)
 
@@ -370,6 +425,9 @@ function Wait-ComposerVisible([int]$TimeoutMs) {
 $composer = Wait-ComposerVisible 8000
 Write-Host ("  composer visible: {0}" -f [bool]$composer)
 if (-not $composer) { throw 'composer did not open' }
+Start-Sleep -Milliseconds 300
+$stripWhileOpen = Get-StripWindow
+Write-Host ("  edit strip hidden while composer open: {0}" -f (-not $stripWhileOpen -or -not [SmokeNative]::IsWindowVisible($stripWhileOpen)))
 $fg = [SmokeNative]::GetForegroundWindow()
 Write-Host ("  foreground is composer: {0}" -f ($fg -eq $composer))
 $edit = [SmokeNative]::FindWindowExW($composer, [IntPtr]::Zero, 'Edit', [NullString]::Value)
@@ -388,6 +446,9 @@ Write-Host ("  typed text: '{0}'  (expected 'hi')" -f $typed)
 Start-Sleep -Milliseconds 500
 $hidden = -not [SmokeNative]::IsWindowVisible($composer)
 Write-Host ("  composer hidden after Esc: {0}" -f $hidden)
+Start-Sleep -Milliseconds 300
+$stripBack = Get-StripWindow
+Write-Host ("  edit strip back after Esc: {0}" -f ([bool]$stripBack -and [SmokeNative]::IsWindowVisible($stripBack)))
 
 # reopen: the draft must still be there
 [void][SmokeNative]::PostMessageW($petHwnd, 0x8001, [UIntPtr]::Zero, [IntPtr]::Zero)
