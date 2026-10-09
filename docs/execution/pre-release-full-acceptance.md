@@ -4,7 +4,7 @@
 
 - 计划路径/版本：`docs/plans/pre-release-full-acceptance.md` v1.0。
 - 开始日期：2026-10-09。
-- 当前阶段：FA 全部 6 轮已关闭；NA 原生交互接线完成（点击/双击/拖动 running），待人工验收。
+- 当前阶段：FA 全部关闭；NA 收尾通过；LC 生命周期与系统集成自动证据完成，待人工验收。
 - 环境原则：使用隔离 `PETSONA_HOME`、独立端口；真实 `%APPDATA%\Petsona` 与 Codex 原始宠物目录只读。
 
 ## FA 阶段
@@ -18,6 +18,8 @@
 | FA-4 人格页 | 已关闭 | 人格库 13 项 + 运行时人格 4 项测试通过；导入/聊天记录素材与共享 Key 检查就绪 | 2026-10-09 用户通过 | 原生点击交互缺失转入 NA 待办 |
 | FA-5 记忆页 | 已关闭 | 核心记忆 15 项 + 运行时 2 项测试通过；隔离目录已播种 2 条 pending 候选与归档事实；导入样例就绪 | 2026-10-09 用户通过 | 无遗留 |
 | FA-6 连接/系统/聊天 | 已关闭 | 流式聊天 8 项 + 模型拉取 1 项测试通过；隔离目录已播种 60 条聊天历史；Key 隔离策略已定 | 2026-10-09 用户通过 | FA 六轮全部完成 |
+| NA 原生交互 | 已关闭 | 点击/双击/滚轮/注视/输入框重做全部实现并冒烟 | 2026-10-09 用户复测通过 | 编辑条已移除 |
+| LC 生命周期/集成 | 待人工验收 | 冒烟：聊天窗/设置窗关闭只隐藏、单实例、退出释放端口；单测含 HKCU Run 隔离值往返 | 待用户 | 托盘菜单与自启需人工 |
 
 ## FA-0 证据
 
@@ -270,6 +272,14 @@ FA-4 验收期间用户发现“点击宠物无互动动作”。旧 C# 语义�
 | E-NA-06 | 无鼠标冒烟 | `edit strip removed: True`；`composer WS_EX_TOPMOST: True`；`foreground is composer: True`；滚轮路径 `up-when-closed stays closed=True / down opens=True / up closes=True`；启动日志 `mouse wheel hook installed`；单击/双击/Composer/协议/退出全部通过 |
 | E-NA-07 | 视觉 QA 截图 | `%TEMP%\petsona-qa-bubble.png`（发丝进度 + 淡出）、`%TEMP%\petsona-qa-composer.png`（296×44 + 纸飞机发送键）、`%TEMP%\petsona-qa-composer-text.png`（EDIT 文本可见） |
 | E-NA-08 | 冒烟（NA-3） | `composer WS_EX_TOPMOST: True`；`composer focus drives gaze: True`；`typed text: 'hi'`；滚轮 up/down 路径与既有回归全部通过 |
+| E-NA-09 | NA-3 人工 | 2026-10-09 用户回复“验收通过” | 输入框尺寸/抗锯齿/输入注视通过与 NA-2 一并关闭；NA 仅剩整合复测项 |
+
+### NA 进度（2026-10-09）
+
+- 已人工通过：单击/双击交互、滚轮手势（下开/上关、其他窗口滚动不受影响）、编辑条移除、输入框置顶/尺寸/抗锯齿、输入时注视光标。
+- 待整合复测：拖动 running 与跟手、边界夹取与位置记忆、穿透与光标、注视 16 方向与近距离稳定性、气泡顶部翻转/新气泡重置、中文 IME 不误发。
+- 2026-10-09 用户回复“验收通过，继续下一步”：上述整合复测全部通过，NA 关闭。
+- 下一步进入 **LC 生命周期与系统集成**（托盘、单实例、显隐、自启、退出、端口释放）。
 
 ### NA 待人工验收清单
 
@@ -282,6 +292,34 @@ FA-4 验收期间用户发现“点击宠物无互动动作”。旧 C# 语义�
 7. 滚轮手势：鼠标停在宠物上，滚轮向下 → 输入框打开并聚焦；滚轮向上 → 输入框关闭（草稿保留）；编辑条不应再出现；在其他窗口上滚动不受影响。
 8. 气泡：靠近屏幕顶部时翻转到宠物下方；新气泡重置计时。
 9. Composer：尺寸更小、边缘无锯齿（两种主题各看一次）；始终置顶；输入时宠物注视输入光标；Enter 发送 / Shift+Enter 换行 / Esc 保留草稿；中文输入法组合期间 Enter 不误发。
+
+## LC 证据（2026-10-09）
+
+| 证据ID | REQ | 环境 | 操作 | 结果 |
+|---|---|---|---|---|
+| E-LC-01 | 关闭只隐藏 | Windows 隔离目录 | `desktop-smoke.ps1`（无鼠标） | 聊天窗 WM_CLOSE 后 `chat hidden=True; process alive=True; pet visible=True` |
+| E-LC-02 | 关闭只隐藏/重显 | Windows 隔离目录 | `desktop-settings-smoke.ps1` | 设置窗 WM_CLOSE 后 `hidden=True; process alive=True; pet visible=True; /health ok=True`；重显后采样色 50（非白屏） |
+| E-LC-03 | 单实例 | Windows 隔离目录 | 同一数据目录启动第二实例 | 故障气泡出现；第二进程 ~3.4s 退出；存活实例 1 个且 /health 正常 |
+| E-LC-04 | 退出释放端口 | Windows 隔离目录 | `--exit-after-ms 3000` | 进程退出后端口 17897 关闭 |
+| E-LC-05 | 自启隔离值往返 | Windows（壳单测，真实注册表） | `autostart_uses_an_isolated_value_name`（`PETSONA_AUTOSTART_VALUE=PetsonaTest-<pid>`） | 写入 → `is_enabled=true` → 删除 → `is_enabled=false`（13 项单测之一） |
+
+### LC 待人工验收清单
+
+启动（带隔离自启值名）：
+
+```powershell
+$env:PETSONA_HOME = "$env:TEMP\petsona-preaccept"
+$env:PETSONA_AUTOSTART_VALUE = "PetsonaLcAccept"
+& "$env:USERPROFILE\petsona-build\desktop-target\debug\petsona-desktop.exe" --show-settings
+```
+
+1. 托盘右键（任务栏可见 + 收纳面板两种状态）→ 菜单完整：设置… / 聊天与历史 / 显示·隐藏宠物 / 退出；Esc 或点外关闭。
+2. 托盘 → “设置…”：设置窗前台聚焦；托盘 → “聊天与历史”：独立聊天窗前台聚焦。
+3. 托盘 → “显示 / 隐藏宠物”：立即隐藏/显示，反复切换正常。
+4. 关闭设置窗与聊天窗（✕）：只隐藏；宠物、托盘、进程继续（自动已覆盖，可复核）。
+5. 单实例：同一数据目录再启动一次 → 提示气泡后第二个退出，第一个继续（自动已覆盖，可复核）。
+6. 系统页“开机自启”：打开 → `Get-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'` 出现 `PetsonaLcAccept`；关闭 → 条目消失（真实登录自启留 M6 干净环境验证）。
+7. 托盘 → “退出”：进程结束、端口 17920 释放（`Get-NetTCPConnection -LocalPort 17920 -ErrorAction SilentlyContinue` 为空）、托盘图标与窗口消失。
 
 ## 证据与限制
 

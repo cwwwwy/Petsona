@@ -133,6 +133,15 @@ function Get-SettingsWindow([int]$ProcessId) {
     return $candidate
 }
 
+function Get-ChatWindow([int]$ProcessId) {
+    $candidate = [SmokeNative]::FindWindowW('Tauri Window', 'Petsona 聊天')
+    if (-not $candidate) { return $null }
+    [uint32]$candidatePid = 0
+    [void][SmokeNative]::GetWindowThreadProcessId($candidate, [ref]$candidatePid)
+    if ($candidatePid -ne $ProcessId) { return $null }
+    return $candidate
+}
+
 function Get-BubbleWindow {
     # Only visible bubbles count: the other instance may own a hidden one.
     $hwnd = [SmokeNative]::FindVisibleByClass('PetsonaOverlayWindow')
@@ -284,6 +293,33 @@ if ($settings -and [SmokeNative]::IsWindowVisible($settings)) {
     Write-Host ("  settings visible: True; foreground is settings: {0}" -f ($fg -eq $settings))
 } else {
     Write-Host '  settings window not visible within 20s  [FAIL]'
+}
+Stop-Petsona
+
+Write-Host '== chat window close hides only =='
+$proc = Start-Process -FilePath $Exe -ArgumentList '--show-chat' -PassThru
+if (-not (Wait-PetVisible 20000)) { throw 'pet window not visible for the chat test' }
+$chat = $null
+$watch = [System.Diagnostics.Stopwatch]::StartNew()
+while ($watch.ElapsedMilliseconds -lt 20000) {
+    $chat = Get-ChatWindow $proc.Id
+    if ($chat -and [SmokeNative]::IsWindowVisible($chat)) { break }
+    Start-Sleep -Milliseconds 100
+}
+if (-not $chat -or -not [SmokeNative]::IsWindowVisible($chat)) {
+    Write-Host '  chat window not visible within 20s  [FAIL]'
+} else {
+    [void][SmokeNative]::PostMessageW($chat, 0x0010, [UIntPtr]::Zero, [IntPtr]::Zero)
+    $chatHidden = $false
+    $watch = [System.Diagnostics.Stopwatch]::StartNew()
+    while ($watch.ElapsedMilliseconds -lt 5000) {
+        if (-not [SmokeNative]::IsWindowVisible($chat)) { $chatHidden = $true; break }
+        Start-Sleep -Milliseconds 100
+    }
+    $alive = -not $proc.HasExited
+    $pet = Get-PetWindow
+    $petVisible = [bool]$pet -and [SmokeNative]::IsWindowVisible($pet)
+    Write-Host ("  chat hidden: {0}; process alive: {1}; pet visible: {2}" -f $chatHidden, $alive, $petVisible)
 }
 Stop-Petsona
 
