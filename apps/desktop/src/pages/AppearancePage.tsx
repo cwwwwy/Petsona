@@ -1,13 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import {
-  Badge,
-  Card,
-  NumberField,
-  PageHeader,
-  SettingRow,
-  Switch,
-  TextArea,
-} from "../components/ui";
+import { Card, PageHeader, SettingRow, Switch, TextArea } from "../components/ui";
 import type { PageProps } from "../types";
 
 const SCALE_STOPS = [0.5, 0.75, 1, 1.25, 1.5, 1.75, 2];
@@ -17,7 +9,6 @@ export function AppearancePage({ snapshot, run }: PageProps) {
   const dirty = useRef(false);
   const timer = useRef<number | null>(null);
   const greeting = snapshot.settings.greeting;
-  const conversation = snapshot.settings.conversation;
   const [greetingText, setGreetingText] = useState(snapshot.persona.greeting ?? "");
   const greetingDirty = useRef(false);
   const greetingTimer = useRef<number | null>(null);
@@ -112,52 +103,12 @@ export function AppearancePage({ snapshot, run }: PageProps) {
         </div>
       </Card>
 
-      <Card title="显示">
-        <SettingRow
-          label="显示宠物"
-          hint="隐藏后仍保留托盘与设置窗口，可随时恢复。"
-        >
-          <Switch
-            label="显示宠物"
-            checked={snapshot.petVisible}
-            onChange={(value) => void run({ type: "setVisibility", value })}
-          />
-        </SettingRow>
-      </Card>
-
-      <Card title="空闲问候" description="固定文案跟随当前宠物保存；这里同时控制触发节奏。">
+      <Card title="空闲问候" description="固定文案跟随当前宠物保存；这里控制是否启用。">
         <SettingRow label="启用空闲问候">
           <Switch
             label="启用空闲问候"
             checked={greeting.enabled}
             onChange={(value) => updateGreeting({ enabled: value })}
-          />
-        </SettingRow>
-        <SettingRow label="空闲多久后问候">
-          <NumberField
-            value={greeting.idleMinutes}
-            min={1}
-            max={1440}
-            suffix="分钟"
-            onChange={(value) => updateGreeting({ idleMinutes: value })}
-          />
-        </SettingRow>
-        <SettingRow label="两次问候的冷却时间">
-          <NumberField
-            value={greeting.cooldownMinutes}
-            min={1}
-            max={10080}
-            suffix="分钟"
-            onChange={(value) => updateGreeting({ cooldownMinutes: value })}
-          />
-        </SettingRow>
-        <SettingRow label="问候最大字数">
-          <NumberField
-            value={greeting.maxChars}
-            min={8}
-            max={200}
-            suffix="字"
-            onChange={(value) => updateGreeting({ maxChars: value })}
           />
         </SettingRow>
         <SettingRow stacked label="固定问候文案" hint="没有可用模型时作为回退；修改后随当前宠物自动保存。">
@@ -170,26 +121,6 @@ export function AppearancePage({ snapshot, run }: PageProps) {
         </SettingRow>
       </Card>
 
-      <Card title="聊天与主题">
-        <SettingRow
-          label="保存聊天历史"
-          hint="关闭后新对话不会写入历史；已经保存的记录不会被自动删除。"
-        >
-          <Switch
-            label="保存聊天历史"
-            checked={conversation.saveHistory}
-            onChange={(value) =>
-              void run({
-                type: "updateConversation",
-                config: { ...conversation, saveHistory: value },
-              })
-            }
-          />
-        </SettingRow>
-        <SettingRow label="主题" hint="跟随 Windows 系统主题，切换后窗口内容即时更新。">
-          <Badge tone="accent">跟随系统</Badge>
-        </SettingRow>
-      </Card>
     </div>
   );
 }

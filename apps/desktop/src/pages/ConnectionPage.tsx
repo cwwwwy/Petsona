@@ -4,11 +4,9 @@ import {
   Button,
   Card,
   InlineNotice,
-  NumberField,
   PageHeader,
   SelectField,
   SettingRow,
-  Switch,
   TextField,
 } from "../components/ui";
 import { loadSnapshot } from "../lib/api";
@@ -159,9 +157,9 @@ export function ConnectionPage({ snapshot, run }: PageProps) {
   return (
     <div className="page">
       <PageHeader
-        eyebrow="连接与问候"
+        eyebrow="连接"
         title="模型服务"
-        description="服务商、URL、模型和高级参数修改后自动保存；API Key 单独保存。"
+        description="服务商、URL、模型修改后自动保存；API Key 单独保存。"
         actions={
           <Badge tone={savingConnection ? "warning" : "positive"}>
             {savingConnection ? "自动保存中…" : "自动保存"}
@@ -171,7 +169,7 @@ export function ConnectionPage({ snapshot, run }: PageProps) {
 
       <Card
         title="服务"
-        description="顺序固定为服务商 → Base URL → API Key → 模型；高级参数在下方的独立卡片。"
+        description="顺序固定为服务商 → Base URL → API Key → 模型。"
       >
         <SettingRow label="模型服务商" hint="DeepSeek 使用官方 OpenAI 兼容端点；自定义可接任意兼容服务。">
           <div className="connection-control">
@@ -297,55 +295,9 @@ export function ConnectionPage({ snapshot, run }: PageProps) {
         {keyNotice && <InlineNotice tone={keyNotice.tone}>{keyNotice.message}</InlineNotice>}
       </Card>
 
-      <Card title="高级参数" description="通常保持默认即可。修改后使用“保存连接”写入。">
-        <SettingRow label="请求超时">
-          <NumberField
-            value={config.timeoutSeconds}
-            min={5}
-            max={120}
-            suffix="秒"
-            onChange={(value) => patch({ timeoutSeconds: value })}
-          />
-        </SettingRow>
-        <SettingRow label="短回复最大 token">
-          <NumberField
-            value={config.maxTokens}
-            min={16}
-            max={4096}
-            step={16}
-            onChange={(value) => patch({ maxTokens: value })}
-          />
-        </SettingRow>
-        <SettingRow label="对话最大 token">
-          <NumberField
-            value={config.conversationMaxTokens}
-            min={64}
-            max={32768}
-            step={64}
-            onChange={(value) => patch({ conversationMaxTokens: value })}
-          />
-        </SettingRow>
-        <SettingRow label="温度">
-          <NumberField
-            value={config.temperature}
-            min={0}
-            max={2}
-            step={0.1}
-            onChange={(value) => patch({ temperature: value })}
-          />
-        </SettingRow>
-        <SettingRow label="短问候关闭思考" hint="减少简单问候的等待与 token 消耗。">
-          <Switch
-            label="短问候关闭思考"
-            checked={config.thinkingDisabled}
-            onChange={(value) => patch({ thinkingDisabled: value })}
-          />
-        </SettingRow>
-      </Card>
-
       <InlineNotice>
-        空闲问候已归入「外观与交互」页；这里不再重复显示。凭据保存在系统凭据库，
-        config.json 只保留 provider、URL、模型等非敏感字段。拉取模型和聊天会访问你填写的服务商。
+        凭据保存在系统凭据库；config.json 只保留 provider、URL、模型等非敏感字段。
+        拉取模型和聊天会访问你填写的服务商。
       </InlineNotice>
     </div>
   );

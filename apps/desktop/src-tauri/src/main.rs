@@ -91,6 +91,32 @@ fn main() {
                 #[cfg(windows)]
                 overlay::set_dark_theme(matches!(theme, tauri::Theme::Dark));
             }
+            tauri::WindowEvent::DragDrop(event) => {
+                // Drag & drop import lives on the settings window: dropping a
+                // pet folder or a ZIP runs the same ImportPet command the
+                // import menu uses (conflicts still surface in the UI modal).
+                if window.label() == "settings" {
+                    if let tauri::DragDropEvent::Drop { paths, .. } = event {
+                        let engine = window.app_handle().state::<Engine>();
+                        for path in paths {
+                            let is_zip = path
+                                .extension()
+                                .is_some_and(|ext| ext.to_string_lossy().eq_ignore_ascii_case("zip"));
+                            if path.is_dir() || is_zip {
+                                if let Ok(engine) = engine.lock() {
+                                    let _ = engine.send(RuntimeCommand::ImportPet {
+                                        path: path.clone(),
+                                        overwrite: false,
+                                    });
+                                    logging::log(&format!("drop: importing {}", path.display()));
+                                }
+                            } else {
+                                logging::log(&format!("drop: ignored {}", path.display()));
+                            }
+                        }
+                    }
+                }
+            }
             _ => {}
         })
         .setup(move |app| {

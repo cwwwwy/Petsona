@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Badge, Button, Card, PageHeader, SettingRow, Switch } from "../components/ui";
+import { Badge, Button, Card, InlineNotice, PageHeader, SettingRow, Switch } from "../components/ui";
 import { openExternalUrl, openPath, setAutostart } from "../lib/api";
 import type { PageProps } from "../types";
 
@@ -53,7 +53,10 @@ export function SystemPage({ snapshot }: PageProps) {
       `revision=${snapshot.revision}`,
       `status=${snapshot.status || ""}`,
       `data=${paths.dataDir}`,
+      `pets=${paths.petsDir}`,
       `logs=${paths.logsDir}`,
+      `config=${paths.configFile}`,
+      `memory=${paths.memoryFile}`,
     ].join("\n");
     try {
       await navigator.clipboard.writeText(text);
@@ -96,40 +99,11 @@ export function SystemPage({ snapshot }: PageProps) {
             访问
           </Button>
         </div>
-      </Card>
-
-      <Card title="运行状态">
         <SettingRow label="运行时">
           <Badge tone={snapshot.faulted ? "warning" : snapshot.ready ? "positive" : "neutral"}>
             {snapshot.faulted ? "故障" : snapshot.ready ? "就绪" : "启动中"}
           </Badge>
         </SettingRow>
-        <SettingRow label="状态协议端口">
-          <span className="mono">127.0.0.1:{snapshot.stateServerPort}</span>
-        </SettingRow>
-        <SettingRow label="配置版本">
-          <span className="mono">revision {snapshot.revision}</span>
-        </SettingRow>
-        <SettingRow label="平台 / 架构">
-          <span className="mono">
-            {snapshot.platform} / {snapshot.arch}
-          </span>
-        </SettingRow>
-        <SettingRow label="构建类型">
-          <Badge tone={snapshot.debugBuild ? "warning" : "positive"}>
-            {snapshot.debugBuild ? "调试版" : "发布版"}
-          </Badge>
-        </SettingRow>
-        {snapshot.status && (
-          <SettingRow label="最近状态">
-            <span className="muted wrap">{snapshot.status}</span>
-          </SettingRow>
-        )}
-        {snapshot.error && (
-          <SettingRow label="错误信息">
-            <span className="danger-text wrap">{snapshot.error}</span>
-          </SettingRow>
-        )}
       </Card>
 
       <Card title="启动" description="登录 Windows 后自动启动 Petsona。">
@@ -157,16 +131,6 @@ export function SystemPage({ snapshot }: PageProps) {
             </Button>
           </div>
         </SettingRow>
-        <SettingRow label="宠物目录">
-          <div className="path-control">
-            <span className="mono" title={paths.petsDir}>
-              {shortPath(paths.petsDir)}
-            </span>
-            <Button variant="ghost" onClick={() => void open(paths.petsDir)}>
-              打开
-            </Button>
-          </div>
-        </SettingRow>
         <SettingRow label="日志目录">
           <div className="path-control">
             <span className="mono" title={paths.logsDir}>
@@ -177,33 +141,10 @@ export function SystemPage({ snapshot }: PageProps) {
             </Button>
           </div>
         </SettingRow>
-        <SettingRow label="配置文件">
-          <div className="path-control">
-            <span className="mono" title={paths.configFile}>
-              {shortPath(paths.configFile)}
-            </span>
-            <Button variant="ghost" onClick={() => void open(paths.configFile)}>
-              打开
-            </Button>
-          </div>
-        </SettingRow>
-        <SettingRow label="记忆文件">
-          <div className="path-control">
-            <span className="mono" title={paths.memoryFile}>
-              {shortPath(paths.memoryFile)}
-            </span>
-            <Button variant="ghost" onClick={() => void open(paths.memoryFile)}>
-              打开
-            </Button>
-          </div>
-        </SettingRow>
       </Card>
 
-      {notice && (
-        <Card title="提示">
-          <p className="muted wrap">{notice}</p>
-        </Card>
-      )}
+      <InlineNotice>主题跟随 Windows 系统自动切换。</InlineNotice>
+      {notice && <InlineNotice>{notice}</InlineNotice>}
     </div>
   );
 }

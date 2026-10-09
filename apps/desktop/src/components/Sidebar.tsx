@@ -5,7 +5,7 @@ const NAV_ITEMS: Array<{ id: PageId; label: string; icon: IconName }> = [
   { id: "appearance", label: "外观与交互", icon: "sliders" },
   { id: "persona", label: "人格", icon: "spark" },
   { id: "memory", label: "记忆", icon: "brain" },
-  { id: "connection", label: "连接与问候", icon: "plug" },
+  { id: "connection", label: "连接", icon: "plug" },
   { id: "system", label: "系统", icon: "gear" },
 ];
 

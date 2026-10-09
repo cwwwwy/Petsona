@@ -5,7 +5,6 @@ import {
   Card,
   EmptyState,
   InlineNotice,
-  NumberField,
   PageHeader,
   SettingRow,
   Switch,
@@ -23,6 +22,7 @@ const SOURCE_LABELS: Record<string, string> = {
 
 export function MemoryPage({ snapshot, run }: PageProps) {
   const memory = snapshot.memory;
+  const conversation = snapshot.settings.conversation;
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editKey, setEditKey] = useState("");
   const [editValue, setEditValue] = useState("");
@@ -143,12 +143,27 @@ export function MemoryPage({ snapshot, run }: PageProps) {
         }
       />
 
-      <Card title="记忆开关" description="关闭后，新的对话不会再生成长期偏好。">
+      <Card title="记忆与历史" description="记忆与聊天历史可以分别关闭；关闭记忆不再生成长期偏好，关闭历史不写入新对话。">
         <SettingRow label="启用记忆">
           <Switch
             label="启用记忆"
             checked={memory.config?.enabled ?? false}
             onChange={(value) => updateConfig({ enabled: value })}
+          />
+        </SettingRow>
+        <SettingRow
+          label="保存聊天历史"
+          hint="关闭后新对话不会写入历史；已经保存的记录不会被自动删除。"
+        >
+          <Switch
+            label="保存聊天历史"
+            checked={conversation.saveHistory}
+            onChange={(value) =>
+              void run({
+                type: "updateConversation",
+                config: { ...conversation, saveHistory: value },
+              })
+            }
           />
         </SettingRow>
       </Card>
@@ -230,6 +245,22 @@ export function MemoryPage({ snapshot, run }: PageProps) {
             description="在对话中自然提到稳定偏好，审阅通过后才会出现在这里。"
           />
         )}
+
+        <div className="fact-add fact-add-inline">
+          <TextField value={newKey} onChange={setNewKey} placeholder="主题，例如：称呼" />
+          <TextField
+            value={newValue}
+            onChange={setNewValue}
+            placeholder="内容，例如：可以叫我小周"
+          />
+          <Button
+            variant="primary"
+            disabled={!newKey.trim() || !newValue.trim()}
+            onClick={() => void remember()}
+          >
+            添加
+          </Button>
+        </div>
       </Card>
 
       <Card
@@ -289,58 +320,6 @@ export function MemoryPage({ snapshot, run }: PageProps) {
         })()}
       </Card>
 
-      <Card title="手动添加一条" description="适合补充称呼、口味、习惯等稳定事实。">
-        <div className="fact-add">
-          <TextField value={newKey} onChange={setNewKey} placeholder="主题，例如：称呼" />
-          <TextField
-            value={newValue}
-            onChange={setNewValue}
-            placeholder="内容，例如：可以叫我小周"
-          />
-          <Button
-            variant="primary"
-            disabled={!newKey.trim() || !newValue.trim()}
-            onClick={() => void remember()}
-          >
-            添加
-          </Button>
-        </div>
-      </Card>
-
-      <Card title="记忆容量与保留" description="控制长期偏好的数量与互动事件的保留时间。">
-        <SettingRow label="长期偏好上限">
-          <NumberField
-            value={memory.config?.factLimit ?? 20}
-            min={1}
-            max={100}
-            onChange={(value) => updateConfig({ factLimit: value })}
-          />
-        </SettingRow>
-        <SettingRow label="最近互动事件数">
-          <NumberField
-            value={memory.config?.recentEvents ?? 5}
-            min={0}
-            max={50}
-            onChange={(value) => updateConfig({ recentEvents: value })}
-          />
-        </SettingRow>
-        <SettingRow label="事件保留天数" hint="0 表示永久保留。">
-          <NumberField
-            value={memory.config?.eventRetentionDays ?? 0}
-            min={0}
-            max={3650}
-            onChange={(value) => updateConfig({ eventRetentionDays: value })}
-          />
-        </SettingRow>
-        <SettingRow label="自动压缩长期偏好" hint="超过上限时折叠为一份画像，不直接丢弃。">
-          <Switch
-            label="自动压缩长期偏好"
-            checked={memory.config?.factCompress ?? true}
-            onChange={(value) => updateConfig({ factCompress: value })}
-          />
-        </SettingRow>
-      </Card>
-
       {snapshot.status && (
         <p className="status-line">
           <Badge tone={snapshot.status.includes("失败") ? "warning" : "neutral"}>状态</Badge>
@@ -350,16 +329,10 @@ export function MemoryPage({ snapshot, run }: PageProps) {
 
       <Card
         title="清空记忆"
-        description="按范围清空当前宠物的记忆。清空后无法恢复。"
+        description="清空当前宠物的全部记忆。清空后无法恢复。"
         tone="danger"
       >
         <div className="danger-actions">
-          <Button variant="danger" onClick={() => confirmClear(1, "清空所有长期偏好")}>
-            清空偏好
-          </Button>
-          <Button variant="danger" onClick={() => confirmClear(2, "清空互动事件")}>
-            清空事件
-          </Button>
           <Button variant="danger" onClick={() => confirmClear(0, "清空全部记忆")}>
             清空全部
           </Button>

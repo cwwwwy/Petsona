@@ -8,7 +8,6 @@ import {
   SettingRow,
   Switch,
   TextArea,
-  TextField,
 } from "../components/ui";
 import { PersonaSourcePanel } from "../components/PersonaSourcePanel";
 import {
@@ -17,15 +16,6 @@ import {
   pickPersonaImport,
 } from "../lib/api";
 import type { PageProps } from "../types";
-
-const TONE_PRESETS = [
-  { label: "温和友好", value: "friendly and concise" },
-  { label: "简洁直接", value: "concise and direct" },
-  { label: "活泼俏皮", value: "playful and upbeat" },
-  { label: "专业沉稳", value: "professional and calm" },
-  { label: "幽默轻松", value: "humorous and relaxed" },
-  { label: "冷静克制", value: "reserved and composed" },
-];
 
 type Busy = "autosave" | "import" | "export" | "copy" | null;
 
@@ -38,7 +28,6 @@ export function PersonaPage({ snapshot, run }: PageProps) {
   const persona = snapshot.persona;
   const dirty = useRef(false);
   const personaId = useRef(persona.id);
-  const [tone, setTone] = useState(persona.traits?.tone ?? "");
   const [emoji, setEmoji] = useState(persona.traits?.emoji ?? true);
   const [systemPrompt, setSystemPrompt] = useState(persona.systemPrompt ?? "");
   const [busy, setBusy] = useState<Busy>(null);
@@ -54,7 +43,6 @@ export function PersonaPage({ snapshot, run }: PageProps) {
       dirty.current = false;
     }
     if (dirty.current) return;
-    setTone(persona.traits?.tone ?? "");
     setEmoji(persona.traits?.emoji ?? true);
     setSystemPrompt(persona.systemPrompt ?? "");
   }, [persona]);
@@ -69,7 +57,6 @@ export function PersonaPage({ snapshot, run }: PageProps) {
       await run({
         type: "updatePersona",
         patch: {
-          tone,
           emoji,
           system_prompt: systemPrompt,
         },
@@ -79,7 +66,7 @@ export function PersonaPage({ snapshot, run }: PageProps) {
     } finally {
       setBusy(null);
     }
-  }, [emoji, run, systemPrompt, tone]);
+  }, [emoji, run, systemPrompt]);
 
   useEffect(() => {
     if (!dirty.current) return;
@@ -88,7 +75,7 @@ export function PersonaPage({ snapshot, run }: PageProps) {
       if (personaId.current === targetPersonaId) void persistDraft();
     }, 450);
     return () => window.clearTimeout(timer);
-  }, [persistDraft, emoji, persona.id, systemPrompt, tone]);
+  }, [persistDraft, emoji, persona.id, systemPrompt]);
 
   const reset = async () => {
     if (!window.confirm("确定把当前宠物的说话方式重置为内置默认值吗？")) return;
@@ -169,49 +156,7 @@ export function PersonaPage({ snapshot, run }: PageProps) {
         }
       />
 
-      <Card title="当前绑定" description="说话方式与宠物直接绑定，不再单独维护一份“人格列表”。">
-        <div className="binding-row">
-          <div>
-            <span className="setting-label">宠物</span>
-            <strong>{snapshot.petName || "未选择宠物"}</strong>
-          </div>
-          <div>
-            <span className="setting-label">说话方式</span>
-            <strong>{persona.name || "默认"}</strong>
-          </div>
-          <Badge tone={persona.builtin ? "neutral" : "accent"}>
-            {persona.builtin ? "内置" : "当前宠物自定义"}
-          </Badge>
-        </div>
-      </Card>
-
-      <Card title="语气" description="选择一个预设，或直接写出你希望的语气。">
-        <div className="tone-grid">
-          {TONE_PRESETS.map((preset) => (
-            <button
-              key={preset.value}
-              type="button"
-              className={`tone-card${tone === preset.value ? " tone-card-active" : ""}`}
-              onClick={() => {
-                setTone(preset.value);
-                markDirty();
-              }}
-            >
-              <strong>{preset.label}</strong>
-              <span>{preset.value}</span>
-            </button>
-          ))}
-        </div>
-        <SettingRow label="自定义语气" hint="会覆盖上面的预设选择。">
-          <TextField
-            value={tone}
-            onChange={(value) => {
-              setTone(value);
-              markDirty();
-            }}
-            placeholder="例如：温柔、简短，偶尔主动关心我"
-          />
-        </SettingRow>
+      <Card title="表达" description="说话方式由资料学习塑造；这里保留一个直接的输出偏好。">
         <SettingRow label="允许使用 emoji" hint="默认开启，只影响后续生成的回复。">
           <Switch
             label="允许使用 emoji"
@@ -225,15 +170,18 @@ export function PersonaPage({ snapshot, run }: PageProps) {
       </Card>
 
       <Card title="高级：系统提示词" description="会作为模型对话的基础指令。普通使用无需修改。">
-        <TextArea
-          value={systemPrompt}
-          onChange={(value) => {
-            setSystemPrompt(value);
-            markDirty();
-          }}
-          rows={7}
-          placeholder="描述宠物的身份、边界和回答方式"
-        />
+        <details className="advanced-disclosure">
+          <summary>展开编辑</summary>
+          <TextArea
+            value={systemPrompt}
+            onChange={(value) => {
+              setSystemPrompt(value);
+              markDirty();
+            }}
+            rows={7}
+            placeholder="描述宠物的身份、边界和回答方式"
+          />
+        </details>
       </Card>
 
       <PersonaSourcePanel
@@ -252,7 +200,7 @@ export function PersonaPage({ snapshot, run }: PageProps) {
       )}
 
       <InlineNotice>
-        语气、emoji 和系统提示词会自动保存。固定问候文案已归入「外观与交互」页。
+        emoji 和系统提示词会自动保存；固定问候文案已归入「外观与交互」页。
         导入与导出的都是 Petsona 人格 JSON；导入会切换当前宠物，覆盖前会二次确认。
       </InlineNotice>
 

@@ -597,21 +597,6 @@ button {
   font-size: 20px;
 }
 
-.active-pet,
-.binding-row {
-  display: flex;
-  align-items: center;
-  gap: 14px;
-}
-
-.active-pet-copy {
-  display: flex;
-  flex: 1;
-  flex-direction: column;
-  min-width: 0;
-  gap: 4px;
-}
-
 .pet-avatar,
 .pet-thumb {
   display: grid;
@@ -634,15 +619,6 @@ button {
   height: 34px;
   border-radius: 9px;
   font-size: 13px;
-}
-
-.active-pet-meta {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-end;
-  gap: 4px;
-  color: var(--text-faint);
-  font-size: 12px;
 }
 
 .pet-list,
@@ -703,51 +679,6 @@ button {
   gap: 6px;
 }
 
-.tone-grid {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 8px;
-  margin-bottom: 10px;
-}
-
-.tone-card {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 4px;
-  padding: 11px 12px;
-  border: 1px solid var(--border);
-  border-radius: 11px;
-  background: transparent;
-  color: var(--text);
-  text-align: left;
-}
-
-.tone-card:hover {
-  background: var(--bg-hover);
-}
-
-.tone-card-active {
-  border-color: color-mix(in srgb, var(--accent) 55%, transparent);
-  background: var(--accent-soft);
-}
-
-.tone-card span {
-  color: var(--text-faint);
-  font-size: 11px;
-}
-
-.binding-row {
-  justify-content: space-between;
-  flex-wrap: wrap;
-}
-
-.binding-row > div {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-
 .fact-row {
   display: flex;
   align-items: center;
@@ -773,6 +704,22 @@ button {
   grid-template-columns: minmax(120px, 0.42fr) minmax(200px, 1fr) auto;
   gap: 8px;
   align-items: center;
+}
+
+.fact-add-inline {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+
+.advanced-disclosure summary {
+  cursor: pointer;
+  color: var(--text-soft);
+  font-size: 12.5px;
+}
+
+.advanced-disclosure[open] summary {
+  margin-bottom: 10px;
 }
 
 .danger-actions {
@@ -1033,10 +980,6 @@ button {
     flex: 0 0 auto;
     width: 100%;
     max-width: none;
-  }
-
-  .tone-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .fact-edit,
