@@ -222,6 +222,22 @@ pub fn pick_persona_export(default_name: String) -> Result<Option<String>, Strin
 }
 
 #[tauri::command]
+pub fn pick_persona_source() -> Result<Option<String>, String> {
+    #[cfg(windows)]
+    {
+        Ok(open_file_dialog(
+            "选择人格资料",
+            "文本或 JSON (*.txt;*.json)\0*.txt;*.json\0所有文件 (*.*)\0*.*\0\0",
+            "txt",
+        ))
+    }
+    #[cfg(not(windows))]
+    {
+        Err("当前平台暂未实现原生文件选择".to_string())
+    }
+}
+
+#[tauri::command]
 pub fn pick_memory_import() -> Result<Option<String>, String> {
     #[cfg(windows)]
     {

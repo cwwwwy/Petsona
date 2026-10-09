@@ -8,8 +8,10 @@ use std::path::PathBuf;
 use petsona_core::config::{
     AppPaths, ConversationConfig, DeepSeekConfig, GreetingConfig, MemoryConfig,
 };
+use petsona_core::persona::PersonaStyleProfile;
 use petsona_runtime::commands::{
-    ConversationRequest, MemoryFactInput, MemoryFactUpdate, MemoryScope, PersonaPatch,
+    ApplyPersonaDraftRequest, ConversationRequest, MemoryFactInput, MemoryFactUpdate, MemoryScope,
+    PersonaPatch, PersonaPreviewRequest, PersonaProfileRequest, PersonaSourceParseRequest,
     RuntimeCommand,
 };
 use petsona_runtime::snapshot::RuntimeTextField;
@@ -110,6 +112,37 @@ pub enum SettingsAction {
         id: String,
         path: String,
     },
+    ParsePersonaSource {
+        request_id: String,
+        label: String,
+        format: String,
+        path: Option<String>,
+        text: Option<String>,
+    },
+    GeneratePersonaProfile {
+        request_id: String,
+        source_id: String,
+        kind: String,
+        label: String,
+        description: String,
+        target_speaker: String,
+        target_speaker_label: String,
+        start_index: usize,
+        end_index: usize,
+    },
+    ApplyPersonaDraft {
+        draft_id: String,
+        pet_id: String,
+        name: String,
+        style: PersonaStyleProfile,
+    },
+    PreviewPersonaDraft {
+        request_id: String,
+        pet_id: String,
+        draft_id: String,
+        prompt: String,
+    },
+    ClearPersonaDraft,
     UpdateDeepSeek {
         config: DeepSeekConfig,
     },
@@ -313,6 +346,63 @@ pub fn settings_action(engine: State<'_, Engine>, action: SettingsAction) -> Res
             id,
             path: PathBuf::from(path),
         },
+        SettingsAction::ParsePersonaSource {
+            request_id,
+            label,
+            format,
+            path,
+            text,
+        } => RuntimeCommand::ParsePersonaSource(PersonaSourceParseRequest {
+            request_id,
+            label,
+            format,
+            path: path.map(PathBuf::from),
+            text,
+        }),
+        SettingsAction::GeneratePersonaProfile {
+            request_id,
+            source_id,
+            kind,
+            label,
+            description,
+            target_speaker,
+            target_speaker_label,
+            start_index,
+            end_index,
+        } => RuntimeCommand::GeneratePersonaProfile(PersonaProfileRequest {
+            request_id,
+            source_id,
+            kind,
+            label,
+            description,
+            target_speaker,
+            target_speaker_label,
+            start_index,
+            end_index,
+        }),
+        SettingsAction::ApplyPersonaDraft {
+            draft_id,
+            pet_id,
+            name,
+            style,
+        } => RuntimeCommand::ApplyPersonaDraft(ApplyPersonaDraftRequest {
+            draft_id,
+            pet_id,
+            name,
+            style,
+        }),
+        SettingsAction::PreviewPersonaDraft {
+            request_id,
+            pet_id,
+            draft_id,
+            prompt,
+        } => RuntimeCommand::PreviewPersonaDraftRequest(PersonaPreviewRequest {
+            request_id,
+            pet_id,
+            draft_id,
+            prompt,
+        }),
+        SettingsAction::ClearPersonaDraft => RuntimeCommand::ClearPersonaDraft,
         SettingsAction::UpdateDeepSeek { config } => RuntimeCommand::UpdateDeepSeekConfig(config),
         SettingsAction::SaveDeepSeekKey { key } => RuntimeCommand::SaveDeepSeekKey(key),
         SettingsAction::ListModels => RuntimeCommand::ListModels,
@@ -435,6 +525,42 @@ pub fn open_data_path(path: String) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn settings_action_accepts_persona_source_wire_shape() {
+        let action: SettingsAction = serde_json::from_str(
+            r#"{"type":"parsePersonaSource","request_id":"p1","label":"sample","format":"txt","path":null,"text":"A: hello"}"#,
+        )
+        .expect("persona source wire shape");
+        match action {
+            SettingsAction::ParsePersonaSource {
+                request_id,
+                path,
+                text,
+                ..
+            } => {
+                assert_eq!(request_id, "p1");
+                assert!(path.is_none());
+                assert_eq!(text.as_deref(), Some("A: hello"));
+            }
+            _ => panic!("unexpected action"),
+        }
+    }
+
+    #[test]
+    fn settings_action_accepts_persona_style_wire_shape() {
+        let action: SettingsAction = serde_json::from_str(
+            r#"{"type":"applyPersonaDraft","draft_id":"d1","pet_id":"boba","name":"风格","style":{"personality":"冷静","expressionStyle":"简洁","responseHabits":"先回答重点","relationship":"伙伴","examples":["好的"]}}"#,
+        )
+        .expect("persona style wire shape");
+        match action {
+            SettingsAction::ApplyPersonaDraft { style, .. } => {
+                assert_eq!(style.expression_style, "简洁");
+                assert_eq!(style.examples, vec!["好的"]);
+            }
+            _ => panic!("unexpected action"),
+        }
+    }
 
     #[test]
     fn settings_action_uses_snake_case_for_variant_fields() {

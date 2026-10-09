@@ -52,6 +52,43 @@ export interface Persona {
   builtin: boolean;
 }
 
+export interface PersonaSourceMessage {
+  speaker: string;
+  text: string;
+  timestamp?: string | null;
+}
+
+export interface PersonaSourceProjection {
+  id?: string;
+  label?: string;
+  format?: string;
+  messageCount?: number;
+  speakers?: Array<{ name: string; count: number }>;
+  preview?: PersonaSourceMessage[];
+  error?: string;
+  parsing?: boolean;
+}
+
+export interface PersonaDraftData {
+  id: string;
+  name: string;
+  style: PersonaStyleProfile;
+  source: Record<string, unknown>;
+}
+
+export interface PersonaDraftProjection {
+  draft?: PersonaDraftData | null;
+  generating?: boolean;
+  error?: string;
+}
+
+export interface PersonaPreviewProjection {
+  requestId?: string | null;
+  inFlight?: boolean;
+  text?: string;
+  error?: string;
+}
+
 export interface PersonaSummary {
   id: string;
   name: string;
@@ -214,9 +251,9 @@ export interface SettingsSnapshot {
   memory: MemoryProjection;
   models: string[];
   conversation: ConversationProjection;
-  personaSource: Record<string, unknown>;
-  personaDraft: Record<string, unknown>;
-  personaPreview: Record<string, unknown>;
+  personaSource: PersonaSourceProjection;
+  personaDraft: PersonaDraftProjection;
+  personaPreview: PersonaPreviewProjection;
   importConflict: ImportConflict | null;
 }
 
@@ -248,6 +285,41 @@ export type SettingsAction =
   | { type: "savePersona" }
   | { type: "resetPersona" }
   | { type: "copyPersonaToPet"; target_pet_id: string }
+  | {
+      type: "parsePersonaSource";
+      request_id: string;
+      label: string;
+      format: string;
+      path?: string | null;
+      text?: string | null;
+    }
+  | {
+      type: "generatePersonaProfile";
+      request_id: string;
+      source_id: string;
+      kind: string;
+      label: string;
+      description: string;
+      target_speaker: string;
+      target_speaker_label: string;
+      start_index: number;
+      end_index: number;
+    }
+  | {
+      type: "applyPersonaDraft";
+      draft_id: string;
+      pet_id: string;
+      name: string;
+      style: PersonaStyleProfile;
+    }
+  | {
+      type: "previewPersonaDraft";
+      request_id: string;
+      pet_id: string;
+      draft_id: string;
+      prompt: string;
+    }
+  | { type: "clearPersonaDraft" }
   | { type: "importPersona"; path: string; overwrite: boolean }
   | { type: "exportPersona"; id: string; path: string }
   | { type: "updateDeepSeek"; config: Omit<DeepSeekConfig, "keyConfigured"> }

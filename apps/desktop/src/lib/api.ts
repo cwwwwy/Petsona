@@ -68,6 +68,10 @@ export function pickPersonaExport(defaultName: string): Promise<string | null> {
   return invoke<string | null>("pick_persona_export", { defaultName });
 }
 
+export function pickPersonaSource(): Promise<string | null> {
+  return invoke<string | null>("pick_persona_source");
+}
+
 export function pickMemoryImport(): Promise<string | null> {
   return invoke<string | null>("pick_memory_import");
 }

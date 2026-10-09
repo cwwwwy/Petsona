@@ -10,6 +10,7 @@ import {
   TextArea,
   TextField,
 } from "../components/ui";
+import { PersonaSourcePanel } from "../components/PersonaSourcePanel";
 import {
   loadSnapshot,
   pickPersonaExport,
@@ -235,6 +236,14 @@ export function PersonaPage({ snapshot, run }: PageProps) {
           placeholder="描述宠物的身份、边界和回答方式"
         />
       </Card>
+
+      <PersonaSourcePanel
+        snapshot={snapshot}
+        run={run}
+        onApplied={() => {
+          dirty.current = false;
+        }}
+      />
 
       {snapshot.status && (
         <p className="status-line">
