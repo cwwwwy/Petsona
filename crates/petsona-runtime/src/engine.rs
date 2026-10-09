@@ -3141,6 +3141,106 @@ mod tests {
         engine.stop();
     }
 
+    /// Data-layer round trip for the appearance/interaction config. The
+    /// pre-release UI only exposes scale/visibility/greeting/history, but the
+    /// click-through, always-on-top, gravity and auto-walk commands stay wired
+    /// so old configs keep loading and a later release can re-expose them.
+    #[test]
+    fn appearance_and_greeting_settings_apply_and_survive_a_restart() {
+        let home = engine_home_with_pet();
+        let paths = AppPaths::resolve(home.path().to_path_buf());
+        let mut config = AppConfig::load(&paths.config_file).expect("config");
+        config.active_pet = Some("test_fixture_v2".to_string());
+        config.save(&paths.config_file).expect("config with a pet");
+
+        let mut engine = RuntimeEngine::spawn(Some(home.path().to_path_buf()), || {}).unwrap();
+        for _ in 0..300 {
+            if engine.snapshot().ready && engine.snapshot().has_pet {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+
+        engine.send(RuntimeCommand::SetVisibility(false)).unwrap();
+        engine.send(RuntimeCommand::SetClickThrough(true)).unwrap();
+        engine.send(RuntimeCommand::SetScale(1.75)).unwrap();
+        engine.send(RuntimeCommand::SetAutoWalk(false)).unwrap();
+        engine.send(RuntimeCommand::SetGravity(true)).unwrap();
+        engine.send(RuntimeCommand::SetAlwaysOnTop(false)).unwrap();
+        engine
+            .send(RuntimeCommand::UpdateGreetingConfig(GreetingConfig {
+                enabled: false,
+                idle_minutes: 7,
+                cooldown_minutes: 33,
+                max_chars: 64,
+            }))
+            .unwrap();
+        engine
+            .send(RuntimeCommand::UpdateConversationConfig(
+                ConversationConfig {
+                    save_history: false,
+                },
+            ))
+            .unwrap();
+
+        let mut applied = false;
+        for _ in 0..300 {
+            let snapshot = engine.snapshot();
+            if !snapshot.pet_visible
+                && snapshot.click_through
+                && (snapshot.scale - 1.75).abs() < 0.001
+                && !snapshot.auto_walk
+                && snapshot.gravity_enabled
+                && !snapshot.always_on_top
+            {
+                applied = true;
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert!(applied, "window switches must reach the live projection");
+
+        let settings: serde_json::Value =
+            serde_json::from_str(&engine.text(RuntimeTextField::Settings)).expect("settings JSON");
+        assert_eq!(settings["greeting"]["enabled"], false);
+        assert_eq!(settings["greeting"]["idleMinutes"], 7);
+        assert_eq!(settings["conversation"]["saveHistory"], false);
+
+        engine.stop();
+
+        let config = AppConfig::load(&paths.config_file).expect("persisted config");
+        assert!(config.window.click_through);
+        assert!((config.window.scale - 1.75).abs() < 0.001);
+        assert!(!config.window.auto_walk.enabled);
+        assert!(config.window.gravity_enabled);
+        assert!(!config.window.always_on_top);
+        assert!(!config.greeting.enabled);
+        assert_eq!(config.greeting.idle_minutes, 7);
+        assert_eq!(config.greeting.cooldown_minutes, 33);
+        assert_eq!(config.greeting.max_chars, 64);
+        assert!(!config.conversation.save_history);
+
+        let mut restarted = RuntimeEngine::spawn(Some(home.path().to_path_buf()), || {}).unwrap();
+        let mut restored = false;
+        for _ in 0..300 {
+            let snapshot = restarted.snapshot();
+            if snapshot.ready
+                && snapshot.has_pet
+                && snapshot.click_through
+                && (snapshot.scale - 1.75).abs() < 0.001
+                && !snapshot.auto_walk
+                && snapshot.gravity_enabled
+                && !snapshot.always_on_top
+            {
+                restored = true;
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert!(restored, "window switches must be restored on restart");
+        restarted.stop();
+    }
+
     #[test]
     fn spawn_does_not_load_the_home_on_the_caller_thread() {
         let home = engine_home();

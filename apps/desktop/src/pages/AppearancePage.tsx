@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import {
   Badge,
-  Button,
   Card,
   NumberField,
   PageHeader,
@@ -10,7 +9,6 @@ import {
   TextArea,
 } from "../components/ui";
 import type { PageProps } from "../types";
-import { InlineNotice } from "../components/ui";
 
 const SCALE_STOPS = [0.5, 0.75, 1, 1.25, 1.5, 1.75, 2];
 
@@ -114,7 +112,7 @@ export function AppearancePage({ snapshot, run }: PageProps) {
         </div>
       </Card>
 
-      <Card title="显示与交互">
+      <Card title="显示">
         <SettingRow
           label="显示宠物"
           hint="隐藏后仍保留托盘与设置窗口，可随时恢复。"
@@ -123,46 +121,6 @@ export function AppearancePage({ snapshot, run }: PageProps) {
             label="显示宠物"
             checked={snapshot.petVisible}
             onChange={(value) => void run({ type: "setVisibility", value })}
-          />
-        </SettingRow>
-        <SettingRow
-          label="点击穿透"
-          hint="鼠标点击透明像素和宠物都会落到桌面；关闭后可直接点击宠物。"
-        >
-          <Switch
-            label="点击穿透"
-            checked={snapshot.clickThrough}
-            onChange={(value) => void run({ type: "setClickThrough", value })}
-          />
-        </SettingRow>
-        <SettingRow
-          label="始终置顶"
-          hint="让宠物保持在其他普通窗口之上。"
-        >
-          <Switch
-            label="始终置顶"
-            checked={snapshot.alwaysOnTop}
-            onChange={(value) => void run({ type: "setAlwaysOnTop", value })}
-          />
-        </SettingRow>
-        <SettingRow
-          label="重力下落"
-          hint="松开宠物后，如果悬在空中，会落到当前显示器工作区底部。"
-        >
-          <Switch
-            label="重力下落"
-            checked={snapshot.gravityEnabled}
-            onChange={(value) => void run({ type: "setGravity", value })}
-          />
-        </SettingRow>
-        <SettingRow
-          label="活动提醒"
-          hint="空闲一段时间后，让宠物在自己的活动范围内走一小段。"
-        >
-          <Switch
-            label="活动提醒"
-            checked={snapshot.autoWalk}
-            onChange={(value) => void run({ type: "setAutoWalk", value })}
           />
         </SettingRow>
       </Card>
@@ -232,10 +190,6 @@ export function AppearancePage({ snapshot, run }: PageProps) {
           <Badge tone="accent">跟随系统</Badge>
         </SettingRow>
       </Card>
-
-      <InlineNotice>
-        当前批次先接通配置读写；活动范围、速度和穿透快捷键等高级参数会在后续设置批次补充。
-      </InlineNotice>
     </div>
   );
 }
