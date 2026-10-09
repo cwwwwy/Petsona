@@ -68,11 +68,16 @@ pub enum SettingsAction {
     UpdatePersona { patch: PersonaPatch },
     SavePersona,
     ResetPersona,
+    CopyPersonaToPet { target_pet_id: String },
+    ImportPersona { path: String, overwrite: bool },
+    ExportPersona { id: String, path: String },
     UpdateDeepSeek { config: DeepSeekConfig },
     SaveDeepSeekKey { key: String },
     ListModels,
     UpdateGreeting { config: GreetingConfig },
     UpdateMemoryConfig { config: MemoryConfig },
+    ImportMemory { path: String },
+    ExportMemory { path: String },
     UpdateConversation { config: ConversationConfig },
     ClearMemory { scope: u8 },
     ForgetFact { id: String },
@@ -215,11 +220,28 @@ pub fn settings_action(engine: State<'_, Engine>, action: SettingsAction) -> Res
         SettingsAction::UpdatePersona { patch } => RuntimeCommand::UpdatePersona(Box::new(patch)),
         SettingsAction::SavePersona => RuntimeCommand::SavePersona,
         SettingsAction::ResetPersona => RuntimeCommand::ResetPersona,
+        SettingsAction::CopyPersonaToPet { target_pet_id } => {
+            RuntimeCommand::CopyPersonaToPet(target_pet_id)
+        }
+        SettingsAction::ImportPersona { path, overwrite } => RuntimeCommand::ImportPersona {
+            path: PathBuf::from(path),
+            overwrite,
+        },
+        SettingsAction::ExportPersona { id, path } => RuntimeCommand::ExportPersona {
+            id,
+            path: PathBuf::from(path),
+        },
         SettingsAction::UpdateDeepSeek { config } => RuntimeCommand::UpdateDeepSeekConfig(config),
         SettingsAction::SaveDeepSeekKey { key } => RuntimeCommand::SaveDeepSeekKey(key),
         SettingsAction::ListModels => RuntimeCommand::ListModels,
         SettingsAction::UpdateGreeting { config } => RuntimeCommand::UpdateGreetingConfig(config),
         SettingsAction::UpdateMemoryConfig { config } => RuntimeCommand::UpdateMemoryConfig(config),
+        SettingsAction::ImportMemory { path } => {
+            RuntimeCommand::ImportMemory(PathBuf::from(path))
+        }
+        SettingsAction::ExportMemory { path } => {
+            RuntimeCommand::ExportMemory(PathBuf::from(path))
+        }
         SettingsAction::UpdateConversation { config } => {
             RuntimeCommand::UpdateConversationConfig(config)
         }

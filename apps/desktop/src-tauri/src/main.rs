@@ -66,6 +66,10 @@ fn main() {
             dialog::pick_import_zip,
             dialog::pick_import_folder,
             dialog::pick_export_zip,
+            dialog::pick_persona_import,
+            dialog::pick_persona_export,
+            dialog::pick_memory_import,
+            dialog::pick_memory_export,
         ])
         .on_window_event(|window, event| match event {
             tauri::WindowEvent::CloseRequested { api, .. } => {

@@ -221,11 +221,16 @@ export type SettingsAction =
     }
   | { type: "savePersona" }
   | { type: "resetPersona" }
+  | { type: "copyPersonaToPet"; targetPetId: string }
+  | { type: "importPersona"; path: string; overwrite: boolean }
+  | { type: "exportPersona"; id: string; path: string }
   | { type: "updateDeepSeek"; config: Omit<DeepSeekConfig, "keyConfigured"> }
   | { type: "saveDeepSeekKey"; key: string }
   | { type: "listModels" }
   | { type: "updateGreeting"; config: GreetingConfig }
   | { type: "updateMemoryConfig"; config: MemoryConfig }
+  | { type: "importMemory"; path: string }
+  | { type: "exportMemory"; path: string }
   | { type: "updateConversation"; config: ConversationConfig }
   | { type: "clearMemory"; scope: 0 | 1 | 2 }
   | { type: "forgetFact"; id: string }

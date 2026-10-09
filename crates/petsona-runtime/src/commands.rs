@@ -199,6 +199,7 @@ pub enum RuntimeCommand {
     RefreshPersonas,
     CreatePersona(PersonaCreate),
     DuplicatePersona(PersonaDuplicate),
+    CopyPersonaToPet(String),
     SelectPersona(String),
     DeletePersona(String),
     ImportPersona {

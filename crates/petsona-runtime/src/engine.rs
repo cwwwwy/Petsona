@@ -662,6 +662,40 @@ where
             }
             true
         }
+        RuntimeCommand::CopyPersonaToPet(target_pet_id) => {
+            let target = runtime
+                .pets
+                .iter()
+                .find(|pet| pet.id == target_pet_id)
+                .cloned();
+            let Some(target) = target else {
+                runtime.status = "目标宠物不在本地宠物库中".to_string();
+                return true;
+            };
+            let source_id = runtime.persona.id.clone();
+            let copy_id = format!("{source_id}--{target_pet_id}");
+            let copy_name = format!("{}（{}）", runtime.persona.name, target.display_name);
+            match runtime.personas.duplicate(&source_id, &copy_id, &copy_name) {
+                Ok(copy) => {
+                    runtime
+                        .config
+                        .persona_by_pet
+                        .insert(target_pet_id.clone(), copy.id.clone());
+                    match runtime.save_config() {
+                        Ok(()) => {
+                            runtime.status = format!("已将说话方式复制到 {}", target.display_name);
+                        }
+                        Err(error) => {
+                            runtime.status = format!("复制后保存绑定失败：{error}");
+                        }
+                    }
+                }
+                Err(error) => {
+                    runtime.status = format!("复制人格失败：{error}");
+                }
+            }
+            true
+        }
         RuntimeCommand::ResetPersona => {
             cancel_active_conversation(runtime, "");
             // REQ-P03: 「重置为内置」restores the shipped speaking style but
@@ -3060,19 +3094,31 @@ mod tests {
     /// animation-cadence regression test.
     fn engine_home_with_pet() -> TempDir {
         let home = engine_home();
+        add_test_pet(&home, "v2-test-pet", "TestPet", "test_fixture_v2");
+        home
+    }
+
+    fn add_test_pet(home: &TempDir, directory: &str, name: &str, id: &str) {
         let paths = AppPaths::resolve(home.path().to_path_buf());
         let fixture =
             PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../petsona-core/testdata/v2-test-pet");
-        let destination = paths.pets_dir.join("v2-test-pet");
+        let destination = paths.pets_dir.join(directory);
         std::fs::create_dir_all(&destination).expect("fixture pet directory");
-        std::fs::copy(fixture.join("pet.json"), destination.join("pet.json"))
-            .expect("fixture manifest");
+        let manifest = std::fs::read_to_string(fixture.join("pet.json")).expect("fixture manifest");
+        let mut manifest: serde_json::Value =
+            serde_json::from_str(&manifest).expect("fixture manifest JSON");
+        manifest["id"] = serde_json::Value::String(id.to_string());
+        manifest["displayName"] = serde_json::Value::String(name.to_string());
+        std::fs::write(
+            destination.join("pet.json"),
+            serde_json::to_string_pretty(&manifest).expect("serialize fixture manifest"),
+        )
+        .expect("write fixture manifest");
         std::fs::copy(
             fixture.join("spritesheet.png"),
             destination.join("spritesheet.png"),
         )
         .expect("fixture spritesheet");
-        home
     }
 
     #[test]
@@ -3432,6 +3478,64 @@ mod tests {
             Some(&"default".to_string()),
             "the upgrade must bind the active persona to the active pet"
         );
+    }
+
+    #[test]
+    fn copying_a_persona_to_another_pet_creates_an_independent_binding() {
+        let home = engine_home();
+        add_test_pet(&home, "first-pet", "FirstPet", "first");
+        add_test_pet(&home, "second-pet", "SecondPet", "second");
+        let paths = AppPaths::resolve(home.path().to_path_buf());
+        let mut config = AppConfig::load(&paths.config_file).expect("config");
+        config.active_pet = Some("first".to_string());
+        config.active_persona = Some("default".to_string());
+        config
+            .save(&paths.config_file)
+            .expect("config with two pets");
+
+        let mut engine = RuntimeEngine::spawn(Some(home.path().to_path_buf()), || {}).unwrap();
+        for _ in 0..300 {
+            if engine.snapshot().ready && engine.text(RuntimeTextField::PetId) == "first" {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        let source_persona = engine.text(RuntimeTextField::PersonaId);
+
+        engine
+            .send(RuntimeCommand::CopyPersonaToPet("second".to_string()))
+            .expect("copy persona");
+        for _ in 0..300 {
+            if engine.text(RuntimeTextField::Status).contains("复制到") {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+
+        engine
+            .send(RuntimeCommand::SelectPet("second".to_string()))
+            .expect("select second pet");
+        for _ in 0..300 {
+            if engine.text(RuntimeTextField::PetId) == "second" {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        let copied_persona = engine.text(RuntimeTextField::PersonaId);
+        assert_ne!(source_persona, copied_persona);
+        assert!(copied_persona.ends_with("--second"));
+
+        engine
+            .send(RuntimeCommand::SelectPet("first".to_string()))
+            .expect("select first pet again");
+        for _ in 0..300 {
+            if engine.text(RuntimeTextField::PetId) == "first" {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert_eq!(engine.text(RuntimeTextField::PersonaId), source_persona);
+        engine.stop();
     }
 
     /// REQ-P02: choosing a speaking style binds it to the current pet, and a

@@ -44,6 +44,22 @@ export function pickExportZip(defaultName: string): Promise<string | null> {
   return invoke<string | null>("pick_export_zip", { defaultName });
 }
 
+export function pickPersonaImport(): Promise<string | null> {
+  return invoke<string | null>("pick_persona_import");
+}
+
+export function pickPersonaExport(defaultName: string): Promise<string | null> {
+  return invoke<string | null>("pick_persona_export", { defaultName });
+}
+
+export function pickMemoryImport(): Promise<string | null> {
+  return invoke<string | null>("pick_memory_import");
+}
+
+export function pickMemoryExport(defaultName: string): Promise<string | null> {
+  return invoke<string | null>("pick_memory_export", { defaultName });
+}
+
 export function petPreview(
   path: string,
   frameWidth: number,

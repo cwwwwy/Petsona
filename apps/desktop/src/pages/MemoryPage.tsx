@@ -10,6 +10,7 @@ import {
   Switch,
   TextField,
 } from "../components/ui";
+import { pickMemoryExport, pickMemoryImport } from "../lib/api";
 import type { PageProps } from "../types";
 
 const SOURCE_LABELS: Record<string, string> = {
@@ -26,6 +27,7 @@ export function MemoryPage({ snapshot, run }: PageProps) {
   const [editValue, setEditValue] = useState("");
   const [newKey, setNewKey] = useState("");
   const [newValue, setNewValue] = useState("");
+  const [busy, setBusy] = useState<"import" | "export" | null>(null);
 
   const startEdit = (id: string, key: string, value: string) => {
     setEditingId(id);
@@ -70,12 +72,53 @@ export function MemoryPage({ snapshot, run }: PageProps) {
     void run({ type: "clearMemory", scope });
   };
 
+  const exportMemory = async () => {
+    setBusy("export");
+    try {
+      const path = await pickMemoryExport(
+        `memory-${snapshot.petId || snapshot.persona.id || "petsona"}.json`,
+      );
+      if (path) await run({ type: "exportMemory", path });
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const importMemory = async () => {
+    if (!window.confirm("导入会覆盖当前宠物的记忆文件，确定继续吗？")) return;
+    setBusy("import");
+    try {
+      const path = await pickMemoryImport();
+      if (path) await run({ type: "importMemory", path });
+    } finally {
+      setBusy(null);
+    }
+  };
+
   return (
     <div className="page">
       <PageHeader
         eyebrow="记忆"
         title="它记得什么"
         description="记忆只保存在本机。只有启用模型服务并发送对话时，必要上下文才会出网。"
+        actions={
+          <div className="button-group">
+            <Button
+              variant="secondary"
+              disabled={busy !== null}
+              onClick={() => void importMemory()}
+            >
+              {busy === "import" ? "导入中…" : "导入"}
+            </Button>
+            <Button
+              variant="secondary"
+              disabled={busy !== null}
+              onClick={() => void exportMemory()}
+            >
+              {busy === "export" ? "导出中…" : "导出"}
+            </Button>
+          </div>
+        }
       />
 
       <Card title="记忆开关" description="关闭后，新的对话不会再生成长期偏好。">
@@ -211,6 +254,13 @@ export function MemoryPage({ snapshot, run }: PageProps) {
           />
         </SettingRow>
       </Card>
+
+      {snapshot.status && (
+        <p className="status-line">
+          <Badge tone={snapshot.status.includes("失败") ? "warning" : "neutral"}>状态</Badge>
+          {snapshot.status}
+        </p>
+      )}
 
       <Card
         title="清空记忆"

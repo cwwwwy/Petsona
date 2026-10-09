@@ -1139,3 +1139,46 @@ button {
   gap: 8px;
   margin-top: 18px;
 }
+
+/* M3-C persona and memory transfer */
+.modal-detail {
+  margin-top: 10px !important;
+  padding: 9px 10px;
+  overflow-wrap: anywhere;
+  border-radius: 8px;
+  background: var(--bg-hover);
+  color: var(--text-soft);
+  font: 11.5px/1.55 ui-monospace, "Cascadia Mono", Consolas, monospace !important;
+}
+
+.copy-target-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 280px;
+  margin-top: 14px;
+  overflow: auto;
+}
+
+.copy-target-list button {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+  padding: 10px 11px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: transparent;
+  color: var(--text);
+  text-align: left;
+}
+
+.copy-target-list button:hover {
+  border-color: color-mix(in srgb, var(--accent) 45%, transparent);
+  background: var(--accent-soft);
+}
+
+.copy-target-list span {
+  color: var(--text-faint);
+}

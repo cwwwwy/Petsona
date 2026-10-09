@@ -82,16 +82,21 @@ fn open_file_dialog(title: &str, filter: &str, default_extension: &str) -> Optio
 }
 
 #[cfg(windows)]
-fn save_file_dialog(title: &str, default_name: &str) -> Option<String> {
+fn save_file_dialog(
+    title: &str,
+    default_name: &str,
+    filter_text: &str,
+    default_extension: &str,
+) -> Option<String> {
     initialize_com();
     let mut buffer: Vec<u16> = OsStr::new(default_name)
         .encode_wide()
         .chain(Some(0))
         .collect();
     buffer.reserve(32_768);
-    let filter = wide("宠物压缩包 (*.zip)\0*.zip\0所有文件 (*.*)\0*.*\0\0");
+    let filter = wide(filter_text);
     let title = wide(title);
-    let default_extension = wide("zip");
+    let default_extension = wide(default_extension);
     let mut dialog = OPENFILENAMEW {
         lStructSize: std::mem::size_of::<OPENFILENAMEW>() as u32,
         hwndOwner: settings_owner(),
@@ -178,6 +183,84 @@ pub fn pick_import_folder() -> Result<Option<String>, String> {
 }
 
 #[tauri::command]
+pub fn pick_persona_import() -> Result<Option<String>, String> {
+    #[cfg(windows)]
+    {
+        Ok(open_file_dialog(
+            "导入人格 JSON",
+            "人格文件 (*.json)\0*.json\0所有文件 (*.*)\0*.*\0\0",
+            "json",
+        ))
+    }
+    #[cfg(not(windows))]
+    {
+        Err("当前平台暂未实现原生文件选择".to_string())
+    }
+}
+
+#[tauri::command]
+pub fn pick_persona_export(default_name: String) -> Result<Option<String>, String> {
+    #[cfg(windows)]
+    {
+        let name = if default_name.to_ascii_lowercase().ends_with(".json") {
+            default_name
+        } else {
+            format!("{default_name}.json")
+        };
+        Ok(save_file_dialog(
+            "导出人格 JSON",
+            &name,
+            "人格文件 (*.json)\0*.json\0所有文件 (*.*)\0*.*\0\0",
+            "json",
+        ))
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = default_name;
+        Err("当前平台暂未实现原生保存选择".to_string())
+    }
+}
+
+#[tauri::command]
+pub fn pick_memory_import() -> Result<Option<String>, String> {
+    #[cfg(windows)]
+    {
+        Ok(open_file_dialog(
+            "导入记忆 JSON",
+            "记忆文件 (*.json)\0*.json\0所有文件 (*.*)\0*.*\0\0",
+            "json",
+        ))
+    }
+    #[cfg(not(windows))]
+    {
+        Err("当前平台暂未实现原生文件选择".to_string())
+    }
+}
+
+#[tauri::command]
+pub fn pick_memory_export(default_name: String) -> Result<Option<String>, String> {
+    #[cfg(windows)]
+    {
+        let name = if default_name.to_ascii_lowercase().ends_with(".json") {
+            default_name
+        } else {
+            format!("{default_name}.json")
+        };
+        Ok(save_file_dialog(
+            "导出记忆 JSON",
+            &name,
+            "记忆文件 (*.json)\0*.json\0所有文件 (*.*)\0*.*\0\0",
+            "json",
+        ))
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = default_name;
+        Err("当前平台暂未实现原生保存选择".to_string())
+    }
+}
+
+#[tauri::command]
 pub fn pick_export_zip(default_name: String) -> Result<Option<String>, String> {
     #[cfg(windows)]
     {
@@ -186,7 +269,12 @@ pub fn pick_export_zip(default_name: String) -> Result<Option<String>, String> {
         } else {
             format!("{default_name}.zip")
         };
-        Ok(save_file_dialog("导出宠物", &name))
+        Ok(save_file_dialog(
+            "导出宠物",
+            &name,
+            "宠物压缩包 (*.zip)\0*.zip\0所有文件 (*.*)\0*.*\0\0",
+            "zip",
+        ))
     }
     #[cfg(not(windows))]
     {
