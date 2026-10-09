@@ -1182,3 +1182,50 @@ button {
 .copy-target-list span {
   color: var(--text-faint);
 }
+
+/* M3-D connection and system polish */
+.connection-control {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-width: 0;
+}
+
+.connection-control .control-input {
+  flex: 1;
+}
+
+.model-status {
+  padding: 8px 10px;
+  border-radius: 9px;
+  background: var(--bg-hover);
+}
+
+.model-status-success {
+  background: var(--positive-soft);
+  color: var(--positive);
+}
+
+.model-status-warning,
+.model-status-error {
+  background: var(--warning-soft);
+  color: var(--warning);
+}
+
+.about-links {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 16px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
+}
+
+.about-links span {
+  overflow: hidden;
+  color: var(--text-faint);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

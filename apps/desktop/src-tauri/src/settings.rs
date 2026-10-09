@@ -23,6 +23,8 @@ use super::Engine;
 pub struct SettingsSnapshot {
     pub app_version: String,
     pub platform: String,
+    pub arch: String,
+    pub debug_build: bool,
     pub revision: u64,
     pub ready: bool,
     pub faulted: bool,
@@ -168,6 +170,8 @@ pub fn settings_snapshot(
     Ok(SettingsSnapshot {
         app_version: app.package_info().version.to_string(),
         platform: std::env::consts::OS.to_string(),
+        arch: std::env::consts::ARCH.to_string(),
+        debug_build: cfg!(debug_assertions),
         revision: snapshot.revision,
         ready: snapshot.ready,
         faulted: snapshot.faulted,
@@ -236,12 +240,8 @@ pub fn settings_action(engine: State<'_, Engine>, action: SettingsAction) -> Res
         SettingsAction::ListModels => RuntimeCommand::ListModels,
         SettingsAction::UpdateGreeting { config } => RuntimeCommand::UpdateGreetingConfig(config),
         SettingsAction::UpdateMemoryConfig { config } => RuntimeCommand::UpdateMemoryConfig(config),
-        SettingsAction::ImportMemory { path } => {
-            RuntimeCommand::ImportMemory(PathBuf::from(path))
-        }
-        SettingsAction::ExportMemory { path } => {
-            RuntimeCommand::ExportMemory(PathBuf::from(path))
-        }
+        SettingsAction::ImportMemory { path } => RuntimeCommand::ImportMemory(PathBuf::from(path)),
+        SettingsAction::ExportMemory { path } => RuntimeCommand::ExportMemory(PathBuf::from(path)),
         SettingsAction::UpdateConversation { config } => {
             RuntimeCommand::UpdateConversationConfig(config)
         }
@@ -257,6 +257,41 @@ pub fn settings_action(engine: State<'_, Engine>, action: SettingsAction) -> Res
         .lock()
         .map_err(|_| "runtime engine lock is poisoned".to_string())?;
     engine.send(command).map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub fn open_external_url(url: String) -> Result<(), String> {
+    let url = url.trim();
+    if !(url.starts_with("https://") || url.starts_with("http://")) {
+        return Err("只允许打开 http/https 链接".to_string());
+    }
+
+    #[cfg(windows)]
+    {
+        std::process::Command::new("explorer.exe")
+            .arg(url)
+            .spawn()
+            .map(|_| ())
+            .map_err(|error| format!("无法打开链接：{error}"))
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        std::process::Command::new("open")
+            .arg(url)
+            .spawn()
+            .map(|_| ())
+            .map_err(|error| format!("无法打开链接：{error}"))
+    }
+
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        std::process::Command::new("xdg-open")
+            .arg(url)
+            .spawn()
+            .map(|_| ())
+            .map_err(|error| format!("无法打开链接：{error}"))
+    }
 }
 
 #[tauri::command]

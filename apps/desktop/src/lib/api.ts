@@ -32,6 +32,10 @@ export function openPath(path: string): Promise<void> {
   return invoke<void>("open_data_path", { path });
 }
 
+export function openExternalUrl(url: string): Promise<void> {
+  return invoke<void>("open_external_url", { url });
+}
+
 export function pickImportZip(): Promise<string | null> {
   return invoke<string | null>("pick_import_zip");
 }

@@ -168,6 +168,8 @@ export interface MemoryProjection {
 export interface SettingsSnapshot {
   appVersion: string;
   platform: string;
+  arch: string;
+  debugBuild: boolean;
   revision: number;
   ready: boolean;
   faulted: boolean;

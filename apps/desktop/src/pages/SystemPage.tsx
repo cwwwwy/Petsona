@@ -1,6 +1,9 @@
+import { useState } from "react";
 import { Badge, Button, Card, PageHeader, SettingRow } from "../components/ui";
-import { openPath } from "../lib/api";
+import { openExternalUrl, openPath } from "../lib/api";
 import type { PageProps } from "../types";
+
+const REPOSITORY_URL = "https://github.com/cwwwwy/Petsona";
 
 function shortPath(value: string): string {
   if (value.length <= 64) return value;
@@ -9,12 +12,40 @@ function shortPath(value: string): string {
 
 export function SystemPage({ snapshot }: PageProps) {
   const paths = snapshot.settings.paths;
+  const [notice, setNotice] = useState("");
 
   const open = async (path: string) => {
     try {
       await openPath(path);
     } catch (reason) {
-      window.alert(reason instanceof Error ? reason.message : String(reason));
+      setNotice(reason instanceof Error ? reason.message : String(reason));
+    }
+  };
+
+  const openRepository = async () => {
+    try {
+      await openExternalUrl(REPOSITORY_URL);
+    } catch (reason) {
+      setNotice(reason instanceof Error ? reason.message : String(reason));
+    }
+  };
+
+  const copyDiagnostics = async () => {
+    const text = [
+      `Petsona v${snapshot.appVersion}`,
+      `platform=${snapshot.platform}/${snapshot.arch}`,
+      `debug=${snapshot.debugBuild}`,
+      `stateServer=127.0.0.1:${snapshot.stateServerPort}`,
+      `revision=${snapshot.revision}`,
+      `status=${snapshot.status || ""}`,
+      `data=${paths.dataDir}`,
+      `logs=${paths.logsDir}`,
+    ].join("\n");
+    try {
+      await navigator.clipboard.writeText(text);
+      setNotice("诊断信息已复制到剪贴板。");
+    } catch {
+      setNotice(text);
     }
   };
 
@@ -24,6 +55,16 @@ export function SystemPage({ snapshot }: PageProps) {
         eyebrow="系统"
         title="关于与诊断"
         description="版本、运行状态和本机数据位置。不会在这里发送任何内容。"
+        actions={
+          <div className="button-group">
+            <Button variant="secondary" onClick={() => void copyDiagnostics()}>
+              复制诊断
+            </Button>
+            <Button variant="primary" onClick={() => void openRepository()}>
+              打开仓库
+            </Button>
+          </div>
+        }
       />
 
       <Card title="Petsona">
@@ -34,6 +75,12 @@ export function SystemPage({ snapshot }: PageProps) {
             <p>Rust 原生浮层 + TypeScript 内容界面</p>
           </div>
           <Badge tone="accent">v{snapshot.appVersion}</Badge>
+        </div>
+        <div className="about-links">
+          <span className="mono">{REPOSITORY_URL}</span>
+          <Button variant="ghost" onClick={() => void openRepository()}>
+            访问
+          </Button>
         </div>
       </Card>
 
@@ -49,8 +96,15 @@ export function SystemPage({ snapshot }: PageProps) {
         <SettingRow label="配置版本">
           <span className="mono">revision {snapshot.revision}</span>
         </SettingRow>
-        <SettingRow label="平台">
-          <span className="mono">{snapshot.platform}</span>
+        <SettingRow label="平台 / 架构">
+          <span className="mono">
+            {snapshot.platform} / {snapshot.arch}
+          </span>
+        </SettingRow>
+        <SettingRow label="构建类型">
+          <Badge tone={snapshot.debugBuild ? "warning" : "positive"}>
+            {snapshot.debugBuild ? "调试版" : "发布版"}
+          </Badge>
         </SettingRow>
         {snapshot.status && (
           <SettingRow label="最近状态">
@@ -116,6 +170,12 @@ export function SystemPage({ snapshot }: PageProps) {
           </div>
         </SettingRow>
       </Card>
+
+      {notice && (
+        <Card title="提示">
+          <p className="muted wrap">{notice}</p>
+        </Card>
+      )}
     </div>
   );
 }

@@ -62,6 +62,7 @@ fn main() {
             settings::settings_snapshot,
             settings::settings_action,
             settings::open_data_path,
+            settings::open_external_url,
             settings::pet_preview,
             dialog::pick_import_zip,
             dialog::pick_import_folder,
