@@ -1,5 +1,6 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod dialog;
 #[cfg(windows)]
 mod gdi_text;
 mod logging;
@@ -61,6 +62,10 @@ fn main() {
             settings::settings_snapshot,
             settings::settings_action,
             settings::open_data_path,
+            settings::pet_preview,
+            dialog::pick_import_zip,
+            dialog::pick_import_folder,
+            dialog::pick_export_zip,
         ])
         .on_window_event(|window, event| match event {
             tauri::WindowEvent::CloseRequested { api, .. } => {

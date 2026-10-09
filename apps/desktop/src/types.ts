@@ -13,6 +13,13 @@ export interface PetInfo {
   spritesheet: string;
   cellWidth: number;
   cellHeight: number;
+  dir?: string;
+}
+
+export interface ImportConflict {
+  id: string;
+  name: string;
+  path: string;
 }
 
 export interface CodexPetInfo extends PetInfo {
@@ -184,7 +191,7 @@ export interface SettingsSnapshot {
   deepseek: DeepSeekConfig;
   memory: MemoryProjection;
   models: string[];
-  importConflict: unknown;
+  importConflict: ImportConflict | null;
 }
 
 export type SettingsAction =
@@ -197,6 +204,10 @@ export type SettingsAction =
   | { type: "selectPet"; id: string }
   | { type: "refreshPets" }
   | { type: "scanCodexPets" }
+  | { type: "importPet"; path: string; overwrite: boolean }
+  | { type: "clearImportConflict" }
+  | { type: "exportPet"; id: string; path: string }
+  | { type: "deletePet"; id: string }
   | {
       type: "updatePersona";
       patch: {

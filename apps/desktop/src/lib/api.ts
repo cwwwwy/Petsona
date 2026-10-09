@@ -31,3 +31,23 @@ export function applyAction(action: SettingsAction): Promise<void> {
 export function openPath(path: string): Promise<void> {
   return invoke<void>("open_data_path", { path });
 }
+
+export function pickImportZip(): Promise<string | null> {
+  return invoke<string | null>("pick_import_zip");
+}
+
+export function pickImportFolder(): Promise<string | null> {
+  return invoke<string | null>("pick_import_folder");
+}
+
+export function pickExportZip(defaultName: string): Promise<string | null> {
+  return invoke<string | null>("pick_export_zip", { defaultName });
+}
+
+export function petPreview(
+  path: string,
+  frameWidth: number,
+  frameHeight: number,
+): Promise<number[]> {
+  return invoke<number[]>("pet_preview", { path, frameWidth, frameHeight });
+}

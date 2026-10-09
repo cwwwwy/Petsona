@@ -2,9 +2,12 @@
 //! state: every read is a projection of the runtime, and every write is a
 //! `RuntimeCommand` executed by the existing serialized worker.
 
+use std::io::Cursor;
 use std::path::PathBuf;
 
-use petsona_core::config::{ConversationConfig, DeepSeekConfig, GreetingConfig, MemoryConfig};
+use petsona_core::config::{
+    AppPaths, ConversationConfig, DeepSeekConfig, GreetingConfig, MemoryConfig,
+};
 use petsona_runtime::commands::{
     MemoryFactInput, MemoryFactUpdate, MemoryScope, PersonaPatch, RuntimeCommand,
 };
@@ -58,6 +61,10 @@ pub enum SettingsAction {
     SelectPet { id: String },
     RefreshPets,
     ScanCodexPets,
+    ImportPet { path: String, overwrite: bool },
+    ClearImportConflict,
+    ExportPet { id: String, path: String },
+    DeletePet { id: String },
     UpdatePersona { patch: PersonaPatch },
     SavePersona,
     ResetPersona,
@@ -93,6 +100,52 @@ fn parse_json_array(text: String) -> Value {
         Value::Array(array) => Value::Array(array),
         _ => serde_json::json!([]),
     }
+}
+
+fn pet_asset_is_allowed(path: &std::path::Path) -> bool {
+    let Ok(canonical) = std::fs::canonicalize(path) else {
+        return false;
+    };
+    let mut roots = vec![AppPaths::default().pets_dir];
+    if let Some(codex) = petsona_core::pet::codex_pets_dir() {
+        roots.push(codex);
+    }
+    roots.into_iter().any(|root| {
+        std::fs::canonicalize(root)
+            .map(|root| canonical.starts_with(root))
+            .unwrap_or(false)
+    })
+}
+
+/// Returns a small PNG data payload for the first sprite frame. The frontend
+/// turns it into a Blob URL; paths outside the pet/Codex roots are rejected.
+#[tauri::command]
+pub fn pet_preview(path: String, frame_width: u32, frame_height: u32) -> Result<Vec<u8>, String> {
+    let path = PathBuf::from(path);
+    if !pet_asset_is_allowed(&path) {
+        return Err("预览路径不在宠物库或 Codex 宠物目录中".to_string());
+    }
+
+    let source = image::open(&path).map_err(|error| format!("无法读取宠物图集：{error}"))?;
+    let width = source.width().max(1);
+    let height = source.height().max(1);
+    let frame_width = frame_width.clamp(1, width);
+    let frame_height = frame_height.clamp(1, height);
+    let crop = source.crop_imm(0, 0, frame_width, frame_height);
+    let target_width = 128u32.min(frame_width);
+    let target_height = ((u64::from(frame_height) * u64::from(target_width))
+        / u64::from(frame_width))
+    .max(1) as u32;
+    let preview = crop.resize(
+        target_width,
+        target_height,
+        image::imageops::FilterType::Lanczos3,
+    );
+    let mut output = Cursor::new(Vec::new());
+    preview
+        .write_to(&mut output, image::ImageFormat::Png)
+        .map_err(|error| format!("无法生成宠物预览：{error}"))?;
+    Ok(output.into_inner())
 }
 
 #[tauri::command]
@@ -149,6 +202,16 @@ pub fn settings_action(engine: State<'_, Engine>, action: SettingsAction) -> Res
         SettingsAction::SelectPet { id } => RuntimeCommand::SelectPet(id),
         SettingsAction::RefreshPets => RuntimeCommand::RefreshPets,
         SettingsAction::ScanCodexPets => RuntimeCommand::ScanCodexPets,
+        SettingsAction::ImportPet { path, overwrite } => RuntimeCommand::ImportPet {
+            path: PathBuf::from(path),
+            overwrite,
+        },
+        SettingsAction::ClearImportConflict => RuntimeCommand::ClearImportConflict,
+        SettingsAction::ExportPet { id, path } => RuntimeCommand::ExportPet {
+            id,
+            path: PathBuf::from(path),
+        },
+        SettingsAction::DeletePet { id } => RuntimeCommand::DeletePet(id),
         SettingsAction::UpdatePersona { patch } => RuntimeCommand::UpdatePersona(Box::new(patch)),
         SettingsAction::SavePersona => RuntimeCommand::SavePersona,
         SettingsAction::ResetPersona => RuntimeCommand::ResetPersona,

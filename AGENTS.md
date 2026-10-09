@@ -54,7 +54,7 @@ cargo test --workspace          # core + runtime；状态协议测试需要绑�
 
 ## 跨对话工作流（规划 → 执行 → 审查）
 
-- 当前任务线：`desktop-shell-rust-ts`（P0/M0/M1/M2 已提交并人工通过；M3-A 设置壳与 runtime IPC 已实现待人工验收；macOS 可行性留 M5）。
+- 当前任务线：`desktop-shell-rust-ts`（P0/M0/M1/M2 已提交并人工通过；M3-A 已提交并经用户人工验收通过；M3-B 宠物导入/导出/预览已实现待人工验收；macOS 可行性留 M5）。
 - **规划**：只读调查，明确目标/非目标、逐文件增改删、约束、REQ 编号、依赖、验收矩阵、命令与完成条件；
   授权落盘后才写指定文档，不写产品代码。
 - **执行**：先复述关键目标与验收标准，再按计划实施；可作计划内局部实现选择，不得自行缩减功能、
@@ -68,18 +68,23 @@ cargo test --workspace          # core + runtime；状态协议测试需要绑�
 
 ## 当前状态（2026-10-09）
 
-- HEAD `8fe2326`：M2-B-04 编辑条与故障提示已提交并由用户人工验收通过；工作区当前为 M3-A 未提交改动。
+- HEAD `b5dda69`：M3-A 设置壳与 runtime IPC 已提交；工作区当前为 M3-B 未提交改动。
 - M1/M2 已完成：runtime 直连、单实例/协议/托盘/空库首启、真实图集动画、拖动与位置记忆、注视、气泡、编辑条、
   Composer；自动冒烟无鼠标，鼠标类项目按验收清单人工执行。
-- M3-A（当前未提交）：Tauri IPC `settings_snapshot` / `settings_action` / `open_data_path`；runtime 新增 `settings`
+- M3-A（已提交 `b5dda69`，2026-10-09 用户验收通过）：Tauri IPC `settings_snapshot` / `settings_action` / `open_data_path`；runtime 新增 `settings`
   JSON 投影（配置、路径、活动宠物/人格、首启状态）；React/TS 六页设置壳（宠物 / 外观与交互 / 人格 / 记忆 / 连接与问候 / 系统），
   响应式侧栏（≤780px 仅图标），系统主题热跟随；已接通缩放、点击穿透、置顶、重力、活动提醒、空闲问候、窗口显隐、
   宠物切换与 Codex 扫描、说话方式保存/重置、记忆编辑/分级清空、模型供应商与模型拉取状态、目录打开。
   启动期快照已做集合/对象归一化，前端在 runtime ready 前不挂载设置页，并加了模块异常可见兜底，避免白屏。
+- M3-B（当前未提交）：零新增第三方依赖，`windows-sys` 调用 Common Dialog / Shell API 实现 ZIP、文件夹与导出保存对话框；
+  `pet_preview` 只允许 Petsona 宠物库与 `~/.codex/pets` 下的图集，裁切首帧为 128px PNG；本地列表和 Codex 候选均显示缩略图；
+  单一“导入”菜单、同 ID 覆盖确认、导出 ZIP、确认删除、Codex 双击导入均已接通。
 - M3-A 证据：`tsc --noEmit`、`vite build`、根 workspace fmt/clippy 通过；新增
   `settings_projection_contains_paths_and_editable_config` 单测通过；Windows MSVC 调试构建通过；隔离数据目录实机截图
   确认六页侧栏与卡片布局渲染；真实 Boba 目录修复后也能正常显示；`desktop-smoke.ps1` 无鼠标完整回归 EXIT=0（启动 1.29–1.40s）。
-- M3 后续：M3-B 宠物导入/导出/删除/覆盖确认与预览；M3-C 人格复制/导入/导出与记忆导入/导出；M3-D 连接高级项、
+- M3-B 证据：`tsc --noEmit` / `vite build` / Windows MSVC 构建 / 桌面壳单测通过；真实 Boba 截图确认首帧缩略图与操作栏；
+  `desktop-smoke.ps1` 无鼠标回归 EXIT=0（启动 1.32–1.39s）。
+- 下一步：M3-B 人工验收通过后进入 M3-C 人格复制/导入/导出与记忆导入/导出；M3-D 连接高级项、
   模型失败态与系统页收尾；每批完成后由用户人工验收。
 - 构建入口：`scripts/desktop-build-windows.ps1`（Windows）；冒烟 `scripts/desktop-smoke.ps1`；截图 `scripts/desktop-shot.ps1`。
 - 旧世界验收知识已迁移：行为矩阵在 `docs/DESKTOP_VERIFICATION.md`，产品决策在计划文档「继承的产品决策」。
