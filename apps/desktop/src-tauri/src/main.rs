@@ -171,17 +171,23 @@ fn build_tray(app: &mut tauri::App, engine: Engine) -> tauri::Result<()> {
     Ok(())
 }
 
+/// Presents a hidden or minimized content window without recreating it, so a
+/// tray menu action always returns the user to a focused, usable window.
+fn present_window<R: tauri::Runtime>(window: &tauri::WebviewWindow<R>) {
+    let _ = window.unminimize();
+    let _ = window.show();
+    let _ = window.set_focus();
+}
+
 fn show_settings_window(app: &AppHandle) {
     if let Some(window) = app.get_webview_window("settings") {
-        let _ = window.show();
-        let _ = window.set_focus();
+        present_window(&window);
     }
 }
 
 pub(crate) fn show_chat_window(app: &AppHandle) {
     if let Some(window) = app.get_webview_window("chat") {
-        let _ = window.show();
-        let _ = window.set_focus();
+        present_window(&window);
     }
 }
 

@@ -84,6 +84,11 @@ button {
   color: inherit;
 }
 
+:where(button, a, summary):focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
 .app-shell {
   display: grid;
   grid-template-columns: 238px minmax(0, 1fr);
