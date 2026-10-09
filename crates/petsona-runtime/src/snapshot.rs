@@ -28,6 +28,7 @@ pub enum RuntimeTextField {
     PersonaSource,
     PersonaDraft,
     PersonaPreview,
+    Settings,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -81,6 +82,7 @@ pub struct RuntimeTexts {
     pub persona_source: String,
     pub persona_draft: String,
     pub persona_preview: String,
+    pub settings: String,
 }
 
 impl RuntimeTexts {
@@ -110,6 +112,7 @@ impl RuntimeTexts {
             RuntimeTextField::PersonaSource => &self.persona_source,
             RuntimeTextField::PersonaDraft => &self.persona_draft,
             RuntimeTextField::PersonaPreview => &self.persona_preview,
+            RuntimeTextField::Settings => &self.settings,
         }
     }
 }

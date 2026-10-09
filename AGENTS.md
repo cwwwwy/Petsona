@@ -11,7 +11,7 @@ Petsona 是 Windows / macOS 桌宠与 AI 伴侣。项目正按 `desktop-shell-ru
 **WebView 不渲染宠物浮层。** 旧 C#/WinUI 与 Swift/AppKit 前端、C ABI（`petsona-ffi`）已于 2026-10-08 删除；
 完整快照为 git `6bca241`，需要对照时只读 `git show 6bca241:<path>` 取回，不恢复死代码到工作树。
 
-平台现状：Windows 为主线（在新壳上重建）；macOS 在 M5 平齐。产品入口 `apps/desktop` 处于 M0 建设期。
+平台现状：Windows 为主线（M2 浮层已实机验收，M3 设置页建设中）；macOS 在 M5 平齐。产品入口 `apps/desktop` 已进入 M3。
 
 ## 目录
 
@@ -54,7 +54,7 @@ cargo test --workspace          # core + runtime；状态协议测试需要绑�
 
 ## 跨对话工作流（规划 → 执行 → 审查）
 
-- 当前任务线：`desktop-shell-rust-ts`（P0/M0/M1/M2-A/M2-B-01/M2-B-02/M2-B-03 已提交并人工通过；M2-B-04 编辑条+故障提示已实现待实机验收；macOS 可行性待补；M2 验收后进入 M3 设置 UI）。
+- 当前任务线：`desktop-shell-rust-ts`（P0/M0/M1/M2 已提交并人工通过；M3-A 设置壳与 runtime IPC 已实现待人工验收；macOS 可行性留 M5）。
 - **规划**：只读调查，明确目标/非目标、逐文件增改删、约束、REQ 编号、依赖、验收矩阵、命令与完成条件；
   授权落盘后才写指定文档，不写产品代码。
 - **执行**：先复述关键目标与验收标准，再按计划实施；可作计划内局部实现选择，不得自行缩减功能、
@@ -66,26 +66,22 @@ cargo test --workspace          # core + runtime；状态协议测试需要绑�
   执行时工作区与结果位置；保留失败与 SKIP；旧入口/历史结果不能替代当前验收。
 - **完成**：所有必需项通过、有证据、无未解决审查项才可宣布完成；人工未做时写“待验收”，不降低标准。
 
-## 当前状态（2026-10-08）
+## 当前状态（2026-10-09）
 
-- P0 `1e3b5c1`、M0 `534d0f8` 已提交；当前未提交为 M1 批次（runtime 接入 + 冒烟扩展）。
-- `crates/petsona-core` / `petsona-runtime` 门禁 **114/114**（core 86 / runtime 28）。
-- M1：`apps/desktop` 直接依赖 `petsona-runtime`（无 FFI）——数据目录/`PETSONA_HOME`、日志、`petsona.lock` 单实例、
-  `stateServer.port` 协议（/health /pets /state + TTL/400/clear）、托盘（设置… / 显示-隐藏 / 退出）、
-  空库首启自动开设置、退出释放端口，均由 runtime 驱动；浮层可见性 = `ready && has_pet && pet_visible`。
-  `scripts/desktop-smoke.ps1` 完整冒烟 EXIT=0；启动（含 runtime 与宠物加载）**0.75–0.88s**。
-- M2-A（未提交）：浮层改为 runtime 驱动——真实图集渲染（boba 已实机验证）、33ms 轮询动画、scale×DPI（钳制 ≥1）与 bottom-centre 锚点、
-  拖动结束写 `startPosition` 并在启动时恢复、全程 `rcWork` 夹取；`desktop-smoke.ps1` EXIT=0（几何 288×312=192×208×1.5、动画 2 帧、位置往返 dx=0）。
-- M2-B-01（当前未提交）：注视采样并入 16ms 轮询，移植 GazeFilter/GazeStabilizer（进入 80%/退出 100% 短边、死区 35%、
-  22.5° 16 方向 + 7° 迟滞 + 2px 最小移动，命中后每拍重发单位向量）；拖动/隐藏时 ClearGaze。
-- M2-B-02（当前未提交）：原生气泡窗口 `PetsonaOverlayWindow` + `gdi_text.rs`（GDI+ 中文文字）；150ms 淡入、
-  remaining/total 进度条、悬停轮询暂停/续跑、宠物上方优先/顶部翻转、`rcWork` 夹取；协议气泡固定 8s 生命周期。
-- M2-B-03（当前未提交）：`PetsonaComposerWindow` + 原生 EDIT（多行/`ES_WANTRETURN`）——Enter 发送并清空、Shift+Enter 换行、
-  Esc 关闭保留草稿、打开时前台聚焦（1.5s 重试）、跟随宠物并侧挂、主题同步；入口=点击气泡（+ `--open-composer` / `WM_APP+1` 测试口）。
-- M2-B-04（当前未提交）：`PetsonaStripWindow` 编辑条（36×6→72×6、悬停 120ms 展开、220ms 自动打开或点击立即打开 Composer、
-  贴近任务栏侧挂旋转）；Composer 复用 `ChooseSide` 并锁定打开侧；故障提示气泡（锁冲突 3 秒退出、其他故障 60 秒保持）。
-- 构建入口：`scripts/desktop-build-windows.ps1`（Windows）；冒烟 `scripts/desktop-smoke.ps1`（`-SkipMouseChecks` 供鼠标忙时）；
-  截图 `scripts/desktop-shot.ps1`。
+- HEAD `8fe2326`：M2-B-04 编辑条与故障提示已提交并由用户人工验收通过；工作区当前为 M3-A 未提交改动。
+- M1/M2 已完成：runtime 直连、单实例/协议/托盘/空库首启、真实图集动画、拖动与位置记忆、注视、气泡、编辑条、
+  Composer；自动冒烟无鼠标，鼠标类项目按验收清单人工执行。
+- M3-A（当前未提交）：Tauri IPC `settings_snapshot` / `settings_action` / `open_data_path`；runtime 新增 `settings`
+  JSON 投影（配置、路径、活动宠物/人格、首启状态）；React/TS 六页设置壳（宠物 / 外观与交互 / 人格 / 记忆 / 连接与问候 / 系统），
+  响应式侧栏（≤780px 仅图标），系统主题热跟随；已接通缩放、点击穿透、置顶、重力、活动提醒、空闲问候、窗口显隐、
+  宠物切换与 Codex 扫描、说话方式保存/重置、记忆编辑/分级清空、模型供应商与模型拉取状态、目录打开。
+  启动期快照已做集合/对象归一化，前端在 runtime ready 前不挂载设置页，并加了模块异常可见兜底，避免白屏。
+- M3-A 证据：`tsc --noEmit`、`vite build`、根 workspace fmt/clippy 通过；新增
+  `settings_projection_contains_paths_and_editable_config` 单测通过；Windows MSVC 调试构建通过；隔离数据目录实机截图
+  确认六页侧栏与卡片布局渲染；真实 Boba 目录修复后也能正常显示；`desktop-smoke.ps1` 无鼠标完整回归 EXIT=0（启动 1.29–1.40s）。
+- M3 后续：M3-B 宠物导入/导出/删除/覆盖确认与预览；M3-C 人格复制/导入/导出与记忆导入/导出；M3-D 连接高级项、
+  模型失败态与系统页收尾；每批完成后由用户人工验收。
+- 构建入口：`scripts/desktop-build-windows.ps1`（Windows）；冒烟 `scripts/desktop-smoke.ps1`；截图 `scripts/desktop-shot.ps1`。
 - 旧世界验收知识已迁移：行为矩阵在 `docs/DESKTOP_VERIFICATION.md`，产品决策在计划文档「继承的产品决策」。
 - 发布目标：新壳首个正式版 `windows-v0.1.0`（旧 `0.1.0-rc.1` 未发布，作废）。
 
@@ -126,6 +122,9 @@ cargo test --workspace          # core + runtime；状态协议测试需要绑�
 - **位置记忆必须物理像素**：工作区夹取用显示器 `rcWork`（任务栏为边界）；混合 DPI 与多屏仍需实机验证。
 - **HKCU Run 在受限会话会 ACCESS_DENIED**：该场景测试应明确 SKIP，不误报失败。
 - **不要每帧重复发窗口尺寸 / 层级**：用缓存比较，避免 `SetWindowPos` 造成的闪烁。
+- **启动期快照不能假设 ready**：runtime 投影在 ready 前文本为空；IPC 归一化必须让集合字段返回 `[]`、对象字段返回 `{}`，
+  前端在 ready 前只显示启动页。否则 `null.find(...)` 会在 React 渲染期抛错，表现为无提示白屏。
+- **WebView 页面必须有加载失败兜底**：模块脚本失败或渲染异常时至少显示错误面板；否则只能看到空白窗口，日志也不会给出 JS 异常。
 - **窗口类不设光标会“冻住”光标形状**：注册窗口类时设箭头光标并处理 `WM_SETCURSOR`（托盘 owner 窗口同样）。
 - **`HTTRANSPARENT` 只在同线程窗口可靠转发**：跨进程需要 `WS_EX_TRANSPARENT`，会引入抖动——
   “像素级穿透”与“零闪烁”需要权衡；旧实现的取舍落在 `git show 6bca241:apps/windows/...` 可查。

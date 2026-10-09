@@ -5,6 +5,7 @@ mod gdi_text;
 mod logging;
 #[cfg(windows)]
 mod overlay;
+mod settings;
 
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -21,7 +22,7 @@ use tauri::{
 
 /// The shell owns the runtime handle; the worker thread owns all disk and
 /// protocol state (same ownership split the old FFI exposed).
-type Engine = Arc<Mutex<RuntimeEngine>>;
+pub(crate) type Engine = Arc<Mutex<RuntimeEngine>>;
 
 fn main() {
     logging::mark_start();
@@ -55,6 +56,12 @@ fn main() {
 
     let engine_for_setup = Arc::clone(&engine);
     tauri::Builder::default()
+        .manage(Arc::clone(&engine))
+        .invoke_handler(tauri::generate_handler![
+            settings::settings_snapshot,
+            settings::settings_action,
+            settings::open_data_path,
+        ])
         .on_window_event(|window, event| match event {
             tauri::WindowEvent::CloseRequested { api, .. } => {
                 // Closing the settings window hides it; the shell keeps running
@@ -63,6 +70,9 @@ fn main() {
                 let _ = window.hide();
             }
             tauri::WindowEvent::ThemeChanged(theme) => {
+                // Re-apply "follow system" so the native title bar redraws in
+                // the same event loop turn as the WebView's color-scheme.
+                let _ = window.set_theme(None);
                 #[cfg(windows)]
                 overlay::set_dark_theme(matches!(theme, tauri::Theme::Dark));
             }

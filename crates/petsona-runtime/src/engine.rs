@@ -2798,6 +2798,25 @@ fn publish_projection(runtime: &PetsonaRuntime, projection: &Arc<SharedProjectio
         "error": runtime.persona_preview_error,
     })
     .to_string();
+    let settings = serde_json::json!({
+        "activePet": runtime.config.active_pet,
+        "activePersona": runtime.config.active_persona,
+        "firstRun": runtime.config.first_run,
+        "window": runtime.config.window,
+        "greeting": runtime.config.greeting,
+        "memory": runtime.config.memory,
+        "conversation": runtime.config.conversation,
+        "stateServer": runtime.config.state_server,
+        "paths": {
+            "dataDir": runtime.paths.config_dir,
+            "petsDir": runtime.paths.pets_dir,
+            "personasDir": runtime.paths.personas_dir,
+            "logsDir": runtime.paths.logs_dir,
+            "configFile": runtime.paths.config_file,
+            "memoryFile": runtime.paths.memory_file,
+        },
+    })
+    .to_string();
     let mut texts = RuntimeTexts {
         pets,
         codex_pets,
@@ -2811,6 +2830,7 @@ fn publish_projection(runtime: &PetsonaRuntime, projection: &Arc<SharedProjectio
         persona_source,
         persona_draft,
         persona_preview,
+        settings,
         persona_id: runtime.persona.id.clone(),
         persona_name: runtime.persona.name.clone(),
         ..RuntimeTexts::default()
@@ -3053,6 +3073,26 @@ mod tests {
         )
         .expect("fixture spritesheet");
         home
+    }
+
+    #[test]
+    fn settings_projection_contains_paths_and_editable_config() {
+        let home = engine_home();
+        let mut engine = RuntimeEngine::spawn(Some(home.path().to_path_buf()), || {}).unwrap();
+        for _ in 0..50 {
+            if engine.snapshot().ready {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+
+        let settings: serde_json::Value =
+            serde_json::from_str(&engine.text(RuntimeTextField::Settings)).expect("settings JSON");
+        assert!(settings["paths"]["dataDir"].as_str().is_some());
+        assert!(settings["paths"]["logsDir"].as_str().is_some());
+        assert_eq!(settings["window"]["scale"], 1.0);
+        assert_eq!(settings["greeting"]["enabled"], true);
+        engine.stop();
     }
 
     #[test]

@@ -7,6 +7,59 @@
   </head>
   <body>
     <div id="root"></div>
+    <script>
+      // A module-load/runtime failure must never leave users with an empty
+      // window. This bootstrap handler runs before the application bundle.
+      (function () {
+        var shown = false;
+        function textOf(value) {
+          if (!value) return "未知错误";
+          if (typeof value === "string") return value;
+          if (value.stack) return value.stack;
+          try {
+            return JSON.stringify(value);
+          } catch (_) {
+            return String(value);
+          }
+        }
+        function showFailure(value) {
+          if (shown) return;
+          shown = true;
+          var root = document.getElementById("root");
+          if (!root) return;
+          var panel = document.createElement("main");
+          panel.setAttribute("role", "alert");
+          panel.style.cssText =
+            "max-width:720px;margin:80px auto;padding:24px;font:14px/1.6 'Segoe UI','Microsoft YaHei',sans-serif;color:#172033;background:#fff;border:1px solid rgba(15,23,42,.14);border-radius:14px;box-shadow:0 18px 40px rgba(15,23,42,.08)";
+          var title = document.createElement("h1");
+          title.textContent = "设置页加载失败";
+          title.style.cssText = "margin:0 0 10px;font-size:20px";
+          var hint = document.createElement("p");
+          hint.textContent = "请把下面的错误信息反馈给开发人员；关闭并重新打开设置页可重试。";
+          hint.style.cssText = "margin:0 0 14px;color:#5f6b7f";
+          var detail = document.createElement("pre");
+          detail.textContent = textOf(value);
+          detail.style.cssText =
+            "margin:0;padding:12px;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere;background:#f3f4f6;border-radius:9px;font:12px/1.55 ui-monospace,Consolas,monospace";
+          panel.appendChild(title);
+          panel.appendChild(hint);
+          panel.appendChild(detail);
+          root.replaceChildren(panel);
+        }
+        window.addEventListener(
+          "error",
+          function (event) {
+            if (event.error) showFailure(event.error);
+            else if (event.message) showFailure(event.message);
+            else showFailure("资源加载失败");
+          },
+          true,
+        );
+        window.addEventListener("unhandledrejection", function (event) {
+          showFailure(event.reason);
+        });
+      })();
+    </script>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

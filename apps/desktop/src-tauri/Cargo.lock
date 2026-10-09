@@ -2319,7 +2319,10 @@ name = "petsona-desktop"
 version = "0.1.0"
 dependencies = [
  "image",
+ "petsona-core",
  "petsona-runtime",
+ "serde",
+ "serde_json",
  "tauri",
  "tauri-build",
  "windows-sys 0.61.2",

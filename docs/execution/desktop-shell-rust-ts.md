@@ -264,3 +264,73 @@
 - 编辑条悬停展开（120ms）与悬停 220ms 打开 Composer、点击立即打开；
 - 拖动宠物贴近任务栏 → 编辑条侧挂并旋转、悬停竖向展开；Composer 在侧边打开并保持该侧；
 - （可选）再次手动启动第二实例观察右下角提示与 3 秒退出。
+
+## M3-A 设置壳与 runtime IPC（2026-10-09 接续）
+
+### 范围与本批决定
+
+- 用户确认 M2-B-04 人工验收通过；本批按既定 M3「TS 六页设置」启动，拆为 M3-A（壳 + IPC + 日常设置）→ M3-B（宠物导入/导出/预览）
+  → M3-C（人格/记忆导入导出）→ M3-D（连接/系统收尾），每批结束单独交付人工验收。
+- 架构边界保持：Rust 仍是唯一业务状态；TS 只通过 JSON IPC 调用 `RuntimeCommand` / 读取 `RuntimeTexts`，不直接读写
+  `config.json`、记忆文件或宠物库。
+
+### REQ 状态
+
+| REQ | 可验证要求 | 实现状态 | 自动验证 | 人工验收 | 剩余工作 |
+|---|---|---|---|---|---|
+| M3-A-01 | 六页设置导航（宠物 / 外观与交互 / 人格 / 记忆 / 连接与问候 / 系统），每页有图标，≤780px 收纳为仅图标 | 已实现 | `tsc --noEmit` / `vite build` 通过；隔离实机截图确认 | 待用户缩放窗口确认 | 无 |
+| M3-A-02 | runtime 投影 `settings` JSON：窗口、问候、记忆、会话、状态服务、路径、活动宠物/人格、首启 | 已实现 | 新增单测通过 | 不适用 | 无 |
+| M3-A-03 | Tauri IPC：`settings_snapshot`、`settings_action`、`open_data_path`；动作映射到既有 RuntimeCommand | 已实现 | Windows MSVC debug 构建通过 | 各页面操作时验收 | 无 |
+| M3-A-04 | 宠物页读取真实本地宠物与 Codex 扫描结果；单击选择、双击/按钮切换 | 已实现 | 构建通过 | 待用户用真实/夹具宠物确认 | 导入、导出、删除、预览留 M3-B |
+| M3-A-05 | 外观与交互：缩放滑块（0.5–2.0）、显隐、穿透、置顶、重力、活动提醒、空闲问候、聊天历史开关即时生效 | 已实现 | 构建通过 | 待用户拖动滑块/开关确认 | 活动范围等高级参数后续补充 |
+| M3-A-06 | 人格页：语气预设与自定义、emoji、问候文案、系统提示词、保存/重置（与当前宠物绑定） | 已实现 | 构建通过 | 待用户编辑并切换宠物确认 | 复制/导入/导出留 M3-C |
+| M3-A-07 | 记忆页：事实列表与来源、编辑/删除/新增、容量与保留配置、分级清空、隐私说明 | 已实现 | 构建通过 | 待用户用现有事实确认 | 导入/导出留 M3-C |
+| M3-A-08 | 连接与问候：供应商 deepseek/custom、URL、Key（密文状态/清除）、模型输入与拉取、高级参数、问候节奏 | 已实现 | 构建通过 | 待用户确认 Key/拉取失败提示 | 文件选择与更细高级项留 M3-D |
+| M3-A-09 | 系统页：版本、运行状态、协议端口、数据/宠物/日志/config/memory 路径可直接打开 | 已实现 | 构建通过 | 待用户点“打开”确认 | 仓库链接待发布信息落定 |
+| M3-A-10 | 系统主题热切换：WebView CSS 与原生标题栏同步重绘 | 已实现（`ThemeChanged -> window.set_theme(None)` + overlay theme） | 构建通过 | 待用户切换 Windows 深浅色确认 | 无 |
+| M3-A-11 | 启动期快照稳定性：runtime 未 ready 时空文本只能投影为空数组/空对象；前端在 ready 前不挂载页面；模块/渲染异常必须显示可见错误而非白屏 | 已实现 | Windows 桌面壳单测通过；真实 Boba 目录实机截图恢复；无鼠标冒烟回归通过 | 待用户重开设置确认 | 无 |
+
+### 命令证据
+
+| 证据ID/时间 | REQ | 环境 | 操作 | 结果 |
+|---|---|---|---|---|
+| E-M3-A-01 | M3-A-01..10 | WSL | `apps/desktop`: `tsc --noEmit` | exit 0 |
+| E-M3-A-02 | M3-A-01..10 | WSL | `apps/desktop`: `vite build` | exit 0；dist 生成 |
+| E-M3-A-03 | M3-A-02 | WSL | `cargo test -p petsona-runtime settings_projection_contains_paths_and_editable_config` | exit 0；1 passed |
+| E-M3-A-04 | M3-A-02 | WSL | `cargo fmt --all -- --check`、`cargo clippy --workspace --all-targets -- -D warnings` | exit 0 |
+| E-M3-A-05 | M3-A-03 | Windows MSVC | `scripts/desktop-build-windows.ps1` | exit 0；`C:\Users\happyddz\petsona-build\desktop-target\debug\petsona-desktop.exe` |
+| E-M3-A-06 | M3-A-01 | Windows 隔离数据目录（port 17901，自动 12s 退出） | 启动 `--show-settings` + 截图 | `%TEMP%\petsona-m3a-settings-layout.png`（936×639）：六页侧栏、图标、卡片布局渲染正确；默认 920px 窗口展开文字导航，≤780px 收纳为图标 |
+| E-M3-A-07 | M3-A-02 | WSL 受限沙箱 | `cargo test --workspace` | **环境性失败保留**：80 passed；6 failed 均为沙箱禁止 `bind 127.0.0.1:0`（含 persona generation stub 的本地监听），不是代码回归；放行环境需复跑 |
+| E-M3-A-08 | M3-A-01..10 回归 | Windows 隔离数据目录 | `scripts/desktop-smoke.ps1`（无鼠标） | **EXIT=0**：启动 1326–1384ms、位置/几何/动画/编辑条/设置聚焦/单实例/协议气泡/Composer 草稿与发送/退出释放端口/空库首启全部通过；M3-A 未破坏 M1/M2 |
+| E-M3-A-09 | M3-A-11 复现 | Windows 真实数据目录（Boba） | `--show-settings` + 截图 | **失败保留**：设置窗全白；WebView HTML 已加载但标题仍为 `Petsona`，前端模块未完成渲染 |
+| E-M3-A-10 | M3-A-11 根因 | Windows 真实数据目录 | 内联启动错误兜底 + 截图 | 捕获 `TypeError: Cannot read properties of null (reading 'find')`；首次快照发生在 runtime ready 前，`pets` 等空文本被解析为 `null`，`PetsPage` 对 `null` 调用 `.find()` |
+| E-M3-A-11 | M3-A-11 修复 | Windows MSVC | `cargo test --bin petsona-desktop` | exit 0；1 passed（空/坏 JSON 归一化为 `[]` / `{}`） |
+| E-M3-A-12 | M3-A-11 修复 | Windows 真实数据目录（Boba） | 重建后 `--show-settings` + 截图 | `%TEMP%\petsona-m3a-real-fixed.png`：Boba 当前宠物、1 个本地宠物包、六页导航与卡片正常显示 |
+| E-M3-A-13 | M3-A-11 回归 | Windows 隔离数据目录 | `scripts/desktop-smoke.ps1`（无鼠标） | **EXIT=0**：启动 1286–1400ms；位置/几何/动画/编辑条/设置聚焦/单实例/协议气泡/Composer/退出/空库首启全部通过 |
+
+### 白屏根因与修复（E-M3-A-09..13）
+
+- 根因：设置窗在 runtime ready 前读取第一份快照；`RuntimeTexts` 的 `pets`/`personas`/`models` 等字段此时仍为空字符串，
+  `settings_snapshot` 把空文本解析成 `null`，`PetsPage` 调用 `snapshot.pets.find(...)` 时抛异常，React 未渲染兜底所以只显示白屏。
+- 修复：
+  1. IPC 投影强制归一化：空/坏文本对集合字段返回 `[]`，对对象字段返回 `{}`；
+  2. 前端在 `snapshot.ready === false && !snapshot.faulted` 时只显示启动页，不挂载设置页组件；
+  3. `index.html` 增加模块加载/未处理异常兜底面板，后续失败不会再无声白屏；
+  4. 新增桌面壳单测覆盖空/坏 JSON 归一化。
+- 验证：真实 Boba 目录恢复正常；隔离冒烟全绿；Windows 调试版重新构建成功。
+
+### 待人工验收（本轮）
+
+1. 从托盘打开设置：默认宽度应显示文字导航；手动缩小窗口到约 780px 以下应只剩图标。
+2. 缩放滑块拖动时宠物应实时变化；显隐、穿透、置顶、重力、活动提醒开关应即时生效。
+3. 人格页修改语气、emoji、问候文案并保存；重启后仍保留；重置为内置可用。
+4. 记忆页编辑/新增/删除事实、清空偏好/事件/全部需有确认；隐私文案可见。
+5. 连接与问候页：DeepSeek/custom 切换、Key 密文状态、拉取模型失败提示、问候四项即时生效。
+6. 系统页打开数据/日志目录；检查版本号与端口。
+7. 切换 Windows 深浅色：内容与标题栏应同时热切换，不重开窗口。
+
+### 本批未做（后续批次）
+
+- 宠物导入文件/ZIP 选择、导出、删除、覆盖确认、列表预览、Codex 候选导入（M3-B）。
+- 人格复制/导入/导出、记忆导入/导出（M3-C）。
+- 连接页更细的高级项、系统页仓库链接与发布信息收尾（M3-D）。
