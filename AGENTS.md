@@ -54,7 +54,7 @@ cargo test --workspace          # core + runtime；状态协议测试需要绑�
 
 ## 跨对话工作流（规划 → 执行 → 审查）
 
-- 当前任务线：`desktop-shell-rust-ts`（P0/M0/M1/M2 已提交并人工通过；M3-A 已提交并经用户人工验收通过；M3-B 已提交并经用户人工验收通过；M3-C 已提交并验收关闭；M3-D 连接失败态与系统页收尾已实现待人工验收；macOS 可行性留 M5）。
+- 当前任务线：`desktop-shell-rust-ts`（P0/M0/M1/M2 已提交并人工通过；M3-A 已提交并经用户人工验收通过；M3-B 已提交并经用户人工验收通过；M3-C 已提交并验收关闭；M3-D 已提交并经用户人工验收通过；M4-A 聊天窗口与流式会话已实现待人工验收；macOS 可行性留 M5）。
 - **规划**：只读调查，明确目标/非目标、逐文件增改删、约束、REQ 编号、依赖、验收矩阵、命令与完成条件；
   授权落盘后才写指定文档，不写产品代码。
 - **执行**：先复述关键目标与验收标准，再按计划实施；可作计划内局部实现选择，不得自行缩减功能、
@@ -68,7 +68,7 @@ cargo test --workspace          # core + runtime；状态协议测试需要绑�
 
 ## 当前状态（2026-10-09）
 
-- HEAD `4f8a902`：M3-C 人格/记忆导入导出已提交；工作区当前为 M3-D 未提交改动。
+- HEAD `bffab9d`：M3-D 连接与系统页收尾已提交；工作区当前为 M4-A 未提交改动。
 - M1/M2 已完成：runtime 直连、单实例/协议/托盘/空库首启、真实图集动画、拖动与位置记忆、注视、气泡、编辑条、
   Composer；自动冒烟无鼠标，鼠标类项目按验收清单人工执行。
 - M3-A（已提交 `b5dda69`，2026-10-09 用户验收通过）：Tauri IPC `settings_snapshot` / `settings_action` / `open_data_path`；runtime 新增 `settings`
@@ -89,10 +89,15 @@ cargo test --workspace          # core + runtime；状态协议测试需要绑�
   人格导入支持同 ID 覆盖确认，记忆导入前强制确认。
 - M3-C 证据：runtime 独立绑定单测通过；`tsc`/`vite`/Windows 构建/桌面壳单测通过；
   `desktop-smoke.ps1` 无鼠标回归 EXIT=0（启动 1.38–1.43s）。
-- M3-D（当前未提交）：连接页移除重复的空闲问候，仅保留在外观与交互；模型拉取增加加载/成功/空结果/失败状态；
+- M3-D（已提交 `bffab9d`，2026-10-09 用户验收通过）：连接页移除重复的空闲问候，仅保留在外观与交互；模型拉取增加加载/成功/空结果/失败状态；
   Base URL 格式校验、Key 配置状态提示；系统页增加 GitHub 仓库链接、平台/架构、调试/发布类型与复制诊断。
 - M3-D 证据：`tsc`/`vite`/Windows 构建/桌面壳单测通过；`desktop-smoke.ps1` 无鼠标回归 EXIT=0（启动 1.38–1.54s）。
-- 下一步：M3-D 人工验收通过后进入 M4 聊天线（流式聊天、历史查看/清除、人格来源、记忆审阅）。
+- M4-A（当前未提交）：新增 `chat` WebView 窗口与托盘“聊天与历史”入口；聊天使用 runtime `StartConversation` 流式命令，
+  支持停止、失败/取消重试、历史分页、清空确认、Enter/Shift+Enter/IME；已有原生 Composer 保持不变。
+- M4-A 证据：`tsc`/`vite`/Windows 构建/桌面壳 3 项单测通过；`--show-chat` 实机截图正常；
+  `desktop-smoke.ps1` 无鼠标回归 EXIT=0（启动 1.39–1.48s）。
+- 下一步：M4-B 人格来源（手动/粘贴/TXT/JSON/聊天记录生成草稿、试聊后应用）；M4-C 记忆审阅候选。
+
 - 构建入口：`scripts/desktop-build-windows.ps1`（Windows）；冒烟 `scripts/desktop-smoke.ps1`；截图 `scripts/desktop-shot.ps1`。
 - 旧世界验收知识已迁移：行为矩阵在 `docs/DESKTOP_VERIFICATION.md`，产品决策在计划文档「继承的产品决策」。
 - 发布目标：新壳首个正式版 `windows-v0.1.0`（旧 `0.1.0-rc.1` 未发布，作废）。

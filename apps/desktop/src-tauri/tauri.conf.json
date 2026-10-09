@@ -19,6 +19,17 @@
         "resizable": true,
         "center": true,
         "visible": false
+      },
+      {
+        "label": "chat",
+        "title": "Petsona 聊天",
+        "width": 430,
+        "height": 640,
+        "minWidth": 360,
+        "minHeight": 420,
+        "resizable": true,
+        "center": true,
+        "visible": false
       }
     ],
     "security": {
@@ -27,6 +38,8 @@
   },
   "bundle": {
     "active": false,
-    "icon": ["icons/icon.ico"]
+    "icon": [
+      "icons/icon.ico"
+    ]
   }
 }

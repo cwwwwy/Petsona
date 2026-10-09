@@ -260,7 +260,7 @@ export function PersonaPage({ snapshot, run }: PageProps) {
                   type="button"
                   onClick={() => {
                     setCopyOpen(false);
-                    void run({ type: "copyPersonaToPet", targetPetId: pet.id });
+                    void run({ type: "copyPersonaToPet", target_pet_id: pet.id });
                   }}
                 >
                   <strong>{pet.name}</strong>

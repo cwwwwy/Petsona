@@ -31,6 +31,7 @@ fn main() {
 
     let args: Vec<String> = std::env::args().collect();
     let show_settings = args.iter().any(|arg| arg == "--show-settings");
+    let show_chat = args.iter().any(|arg| arg == "--show-chat");
     // Dev/test flag: open the composer shortly after startup (used by the
     // mouse-free smoke to verify the native EDIT control end to end).
     let open_composer = args.iter().any(|arg| arg == "--open-composer");
@@ -104,6 +105,11 @@ fn main() {
                 logging::log("tauri: settings window shown (--show-settings)");
             }
 
+            if show_chat {
+                show_chat_window(app.handle());
+                logging::log("tauri: chat window shown (--show-chat)");
+            }
+
             if open_composer {
                 thread::spawn(|| {
                     for _ in 0..8 {
@@ -134,10 +140,11 @@ fn main() {
 
 fn build_tray(app: &mut tauri::App, engine: Engine) -> tauri::Result<()> {
     let show = MenuItem::with_id(app, "show", "设置…", true, None::<&str>)?;
+    let chat = MenuItem::with_id(app, "chat", "聊天与历史", true, None::<&str>)?;
     let toggle = MenuItem::with_id(app, "toggle", "显示 / 隐藏宠物", true, None::<&str>)?;
     let separator = PredefinedMenuItem::separator(app)?;
     let quit = MenuItem::with_id(app, "quit", "退出", true, None::<&str>)?;
-    let menu = Menu::with_items(app, &[&show, &toggle, &separator, &quit])?;
+    let menu = Menu::with_items(app, &[&show, &chat, &toggle, &separator, &quit])?;
 
     let icon = tauri::image::Image::from_bytes(include_bytes!(
         "../../../../packaging/windows/Petsona.ico"
@@ -151,6 +158,7 @@ fn build_tray(app: &mut tauri::App, engine: Engine) -> tauri::Result<()> {
         .show_menu_on_left_click(true)
         .on_menu_event(move |app, event| match event.id.as_ref() {
             "show" => show_settings_window(app),
+            "chat" => show_chat_window(app),
             "toggle" => toggle_pet_visibility(&engine_for_menu),
             "quit" => stop_and_exit(app, &engine_for_menu),
             _ => {}
@@ -161,6 +169,13 @@ fn build_tray(app: &mut tauri::App, engine: Engine) -> tauri::Result<()> {
 
 fn show_settings_window(app: &AppHandle) {
     if let Some(window) = app.get_webview_window("settings") {
+        let _ = window.show();
+        let _ = window.set_focus();
+    }
+}
+
+fn show_chat_window(app: &AppHandle) {
+    if let Some(window) = app.get_webview_window("chat") {
         let _ = window.show();
         let _ = window.set_focus();
     }

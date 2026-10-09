@@ -2,6 +2,10 @@ import type { SettingsAction, SettingsSnapshot } from "../types";
 
 interface TauriInternals {
   invoke<T>(command: string, args?: Record<string, unknown>): Promise<T>;
+  metadata?: {
+    currentWindow?: { label?: string };
+    currentWebview?: { label?: string };
+  };
 }
 
 declare global {
@@ -18,6 +22,14 @@ function invoke<T>(command: string, args?: Record<string, unknown>): Promise<T> 
     );
   }
   return internals.invoke<T>(command, args);
+}
+
+export function currentWindowLabel(): string {
+  return (
+    window.__TAURI_INTERNALS__?.metadata?.currentWindow?.label ??
+    window.__TAURI_INTERNALS__?.metadata?.currentWebview?.label ??
+    "settings"
+  );
 }
 
 export function loadSnapshot(): Promise<SettingsSnapshot> {

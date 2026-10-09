@@ -2,7 +2,6 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { applyAction, loadSnapshot } from "./api";
 import type { SettingsAction, SettingsSnapshot } from "../types";
 
-const POLL_MS = 700;
 const AFTER_ACTION_MS = 120;
 
 function sleep(milliseconds: number): Promise<void> {
@@ -17,7 +16,7 @@ export interface SettingsController {
   apply: (action: SettingsAction) => Promise<void>;
 }
 
-export function useSettings(): SettingsController {
+export function useSettings(pollMs = 700): SettingsController {
   const [snapshot, setSnapshot] = useState<SettingsSnapshot | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -51,12 +50,12 @@ export function useSettings(): SettingsController {
     void refresh();
     const timer = window.setInterval(() => {
       if (!document.hidden) void refresh();
-    }, POLL_MS);
+    }, pollMs);
     return () => {
       mounted.current = false;
       window.clearInterval(timer);
     };
-  }, [refresh]);
+  }, [pollMs, refresh]);
 
   return { snapshot, loading, error, refresh, apply };
 }

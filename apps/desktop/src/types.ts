@@ -135,6 +135,26 @@ export interface SettingsConfig {
   paths: SettingsPaths;
 }
 
+export interface ConversationTurn {
+  id: string;
+  requestId?: string | null;
+  user: boolean;
+  text: string;
+  status: string;
+  createdAt: number;
+}
+
+export interface ConversationProjection {
+  petId?: string | null;
+  saveHistory: boolean;
+  requestId?: string | null;
+  inFlight: boolean;
+  error: string;
+  totalCount: number;
+  hasEarlier: boolean;
+  turns: ConversationTurn[];
+}
+
 export interface MemoryFact {
   id: string;
   key: string;
@@ -193,6 +213,10 @@ export interface SettingsSnapshot {
   deepseek: DeepSeekConfig;
   memory: MemoryProjection;
   models: string[];
+  conversation: ConversationProjection;
+  personaSource: Record<string, unknown>;
+  personaDraft: Record<string, unknown>;
+  personaPreview: Record<string, unknown>;
   importConflict: ImportConflict | null;
 }
 
@@ -223,7 +247,7 @@ export type SettingsAction =
     }
   | { type: "savePersona" }
   | { type: "resetPersona" }
-  | { type: "copyPersonaToPet"; targetPetId: string }
+  | { type: "copyPersonaToPet"; target_pet_id: string }
   | { type: "importPersona"; path: string; overwrite: boolean }
   | { type: "exportPersona"; id: string; path: string }
   | { type: "updateDeepSeek"; config: Omit<DeepSeekConfig, "keyConfigured"> }
@@ -234,6 +258,16 @@ export type SettingsAction =
   | { type: "importMemory"; path: string }
   | { type: "exportMemory"; path: string }
   | { type: "updateConversation"; config: ConversationConfig }
+  | {
+      type: "startConversation";
+      request_id: string;
+      pet_id: string;
+      text: string;
+      retry_turn_id?: string | null;
+    }
+  | { type: "cancelConversation"; request_id: string }
+  | { type: "clearConversationHistory"; pet_id: string }
+  | { type: "loadEarlierConversationHistory"; pet_id: string }
   | { type: "clearMemory"; scope: 0 | 1 | 2 }
   | { type: "forgetFact"; id: string }
   | { type: "updateFact"; fact: Pick<MemoryFact, "id" | "key" | "value" | "confidence"> }

@@ -9,7 +9,8 @@ use petsona_core::config::{
     AppPaths, ConversationConfig, DeepSeekConfig, GreetingConfig, MemoryConfig,
 };
 use petsona_runtime::commands::{
-    MemoryFactInput, MemoryFactUpdate, MemoryScope, PersonaPatch, RuntimeCommand,
+    ConversationRequest, MemoryFactInput, MemoryFactUpdate, MemoryScope, PersonaPatch,
+    RuntimeCommand,
 };
 use petsona_runtime::snapshot::RuntimeTextField;
 use serde::{Deserialize, Serialize};
@@ -48,43 +49,116 @@ pub struct SettingsSnapshot {
     pub deepseek: Value,
     pub memory: Value,
     pub models: Value,
+    pub conversation: Value,
+    pub persona_source: Value,
+    pub persona_draft: Value,
+    pub persona_preview: Value,
     pub import_conflict: Value,
 }
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(tag = "type", rename_all = "camelCase")]
 pub enum SettingsAction {
-    SetScale { value: f32 },
-    SetClickThrough { value: bool },
-    SetAlwaysOnTop { value: bool },
-    SetGravity { value: bool },
-    SetAutoWalk { value: bool },
-    SetVisibility { value: bool },
-    SelectPet { id: String },
+    SetScale {
+        value: f32,
+    },
+    SetClickThrough {
+        value: bool,
+    },
+    SetAlwaysOnTop {
+        value: bool,
+    },
+    SetGravity {
+        value: bool,
+    },
+    SetAutoWalk {
+        value: bool,
+    },
+    SetVisibility {
+        value: bool,
+    },
+    SelectPet {
+        id: String,
+    },
     RefreshPets,
     ScanCodexPets,
-    ImportPet { path: String, overwrite: bool },
+    ImportPet {
+        path: String,
+        overwrite: bool,
+    },
     ClearImportConflict,
-    ExportPet { id: String, path: String },
-    DeletePet { id: String },
-    UpdatePersona { patch: PersonaPatch },
+    ExportPet {
+        id: String,
+        path: String,
+    },
+    DeletePet {
+        id: String,
+    },
+    UpdatePersona {
+        patch: PersonaPatch,
+    },
     SavePersona,
     ResetPersona,
-    CopyPersonaToPet { target_pet_id: String },
-    ImportPersona { path: String, overwrite: bool },
-    ExportPersona { id: String, path: String },
-    UpdateDeepSeek { config: DeepSeekConfig },
-    SaveDeepSeekKey { key: String },
+    CopyPersonaToPet {
+        target_pet_id: String,
+    },
+    ImportPersona {
+        path: String,
+        overwrite: bool,
+    },
+    ExportPersona {
+        id: String,
+        path: String,
+    },
+    UpdateDeepSeek {
+        config: DeepSeekConfig,
+    },
+    SaveDeepSeekKey {
+        key: String,
+    },
     ListModels,
-    UpdateGreeting { config: GreetingConfig },
-    UpdateMemoryConfig { config: MemoryConfig },
-    ImportMemory { path: String },
-    ExportMemory { path: String },
-    UpdateConversation { config: ConversationConfig },
-    ClearMemory { scope: u8 },
-    ForgetFact { id: String },
-    UpdateFact { fact: MemoryFactUpdate },
-    RememberFact { fact: MemoryFactInput },
+    UpdateGreeting {
+        config: GreetingConfig,
+    },
+    UpdateMemoryConfig {
+        config: MemoryConfig,
+    },
+    ImportMemory {
+        path: String,
+    },
+    ExportMemory {
+        path: String,
+    },
+    UpdateConversation {
+        config: ConversationConfig,
+    },
+    StartConversation {
+        request_id: String,
+        pet_id: String,
+        text: String,
+        retry_turn_id: Option<String>,
+    },
+    CancelConversation {
+        request_id: String,
+    },
+    ClearConversationHistory {
+        pet_id: String,
+    },
+    LoadEarlierConversationHistory {
+        pet_id: String,
+    },
+    ClearMemory {
+        scope: u8,
+    },
+    ForgetFact {
+        id: String,
+    },
+    UpdateFact {
+        fact: MemoryFactUpdate,
+    },
+    RememberFact {
+        fact: MemoryFactInput,
+    },
 }
 
 fn parse_json(text: String) -> Value {
@@ -195,6 +269,10 @@ pub fn settings_snapshot(
         deepseek: parse_json_object(text(RuntimeTextField::DeepSeekConfig)),
         memory: parse_json_object(text(RuntimeTextField::Memory)),
         models: parse_json_array(text(RuntimeTextField::Models)),
+        conversation: parse_json_object(text(RuntimeTextField::Conversation)),
+        persona_source: parse_json_object(text(RuntimeTextField::PersonaSource)),
+        persona_draft: parse_json_object(text(RuntimeTextField::PersonaDraft)),
+        persona_preview: parse_json_object(text(RuntimeTextField::PersonaPreview)),
         import_conflict: parse_json(import_conflict_text),
     })
 }
@@ -244,6 +322,26 @@ pub fn settings_action(engine: State<'_, Engine>, action: SettingsAction) -> Res
         SettingsAction::ExportMemory { path } => RuntimeCommand::ExportMemory(PathBuf::from(path)),
         SettingsAction::UpdateConversation { config } => {
             RuntimeCommand::UpdateConversationConfig(config)
+        }
+        SettingsAction::StartConversation {
+            request_id,
+            pet_id,
+            text,
+            retry_turn_id,
+        } => RuntimeCommand::StartConversation(ConversationRequest {
+            request_id,
+            pet_id,
+            text,
+            retry_turn_id,
+        }),
+        SettingsAction::CancelConversation { request_id } => {
+            RuntimeCommand::CancelConversation(request_id)
+        }
+        SettingsAction::ClearConversationHistory { pet_id } => {
+            RuntimeCommand::ClearConversationHistory(pet_id)
+        }
+        SettingsAction::LoadEarlierConversationHistory { pet_id } => {
+            RuntimeCommand::LoadEarlierConversationHistory(pet_id)
         }
         SettingsAction::ClearMemory { scope } => {
             RuntimeCommand::ClearMemoryScope(MemoryScope::from_wire(scope as f64))
@@ -337,6 +435,41 @@ pub fn open_data_path(path: String) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn settings_action_uses_snake_case_for_variant_fields() {
+        let action: SettingsAction =
+            serde_json::from_str(r#"{"type":"copyPersonaToPet","target_pet_id":"rocky"}"#)
+                .expect("copy action wire shape");
+        match action {
+            SettingsAction::CopyPersonaToPet { target_pet_id } => {
+                assert_eq!(target_pet_id, "rocky");
+            }
+            _ => panic!("unexpected action"),
+        }
+    }
+
+    #[test]
+    fn settings_action_accepts_chat_wire_shape() {
+        let action: SettingsAction = serde_json::from_str(
+            r#"{"type":"startConversation","request_id":"r1","pet_id":"boba","text":"hi","retry_turn_id":null}"#,
+        )
+        .expect("chat action wire shape");
+        match action {
+            SettingsAction::StartConversation {
+                request_id,
+                pet_id,
+                text,
+                retry_turn_id,
+            } => {
+                assert_eq!(request_id, "r1");
+                assert_eq!(pet_id, "boba");
+                assert_eq!(text, "hi");
+                assert!(retry_turn_id.is_none());
+            }
+            _ => panic!("unexpected action"),
+        }
+    }
 
     #[test]
     fn empty_runtime_text_normalises_to_collections() {
