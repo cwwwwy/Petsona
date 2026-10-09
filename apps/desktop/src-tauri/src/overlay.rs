@@ -21,31 +21,39 @@ use petsona_runtime::commands::RuntimeCommand;
 use petsona_runtime::engine::RuntimeEngine;
 use petsona_runtime::snapshot::RuntimeTextField;
 
+use crate::gdi_text;
+use crate::logging::log;
 use windows_sys::Win32::Foundation::{HWND, LPARAM, LRESULT, POINT, RECT, SIZE, WPARAM};
 use windows_sys::Win32::Graphics::Dwm::{
     DwmSetWindowAttribute, DWMWA_BORDER_COLOR, DWMWA_WINDOW_CORNER_PREFERENCE,
 };
 use windows_sys::Win32::Graphics::Gdi::{
-    CreateCompatibleDC, CreateDIBSection, DeleteDC, DeleteObject, GetDC, GetMonitorInfoW,
-    MonitorFromPoint, MonitorFromRect, ReleaseDC, SelectObject, BITMAPINFO, BITMAPINFOHEADER,
-    BI_RGB, BLENDFUNCTION, DIB_RGB_COLORS, HGDIOBJ, MONITORINFO, MONITOR_DEFAULTTONEAREST,
-    MONITOR_DEFAULTTOPRIMARY,
+    BeginPaint, CreateCompatibleDC, CreateDIBSection, CreateRoundRectRgn, CreateSolidBrush,
+    DeleteDC, DeleteObject, DrawTextW, Ellipse, EndPaint, FillRect, GetDC, GetMonitorInfoW,
+    GetStockObject, InvalidateRect, MonitorFromPoint, MonitorFromRect, ReleaseDC, SelectObject,
+    SetBkColor, SetBkMode, SetTextColor, SetWindowRgn, BITMAPINFO, BITMAPINFOHEADER, BI_RGB,
+    BLENDFUNCTION, DEFAULT_GUI_FONT, DIB_RGB_COLORS, DT_CENTER, DT_SINGLELINE, DT_VCENTER, HGDIOBJ,
+    MONITORINFO, MONITOR_DEFAULTTONEAREST, MONITOR_DEFAULTTOPRIMARY, NULL_PEN, PAINTSTRUCT,
+    TRANSPARENT,
 };
 use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows_sys::Win32::UI::HiDpi::GetDpiForWindow;
-use windows_sys::Win32::UI::Input::KeyboardAndMouse::{ReleaseCapture, SetCapture};
-use windows_sys::Win32::UI::WindowsAndMessaging::{
-    CreateWindowExW, DefWindowProcW, DispatchMessageW, GetCursorPos, GetMessageW,
-    GetWindowLongPtrW, GetWindowRect, KillTimer, LoadCursorW, PostQuitMessage, RegisterClassExW,
-    SetCursor, SetTimer, SetWindowLongPtrW, SetWindowPos, ShowWindow, TranslateMessage,
-    UpdateLayeredWindow, GWL_EXSTYLE, IDC_ARROW, MSG, SWP_NOACTIVATE, SWP_NOSIZE, SWP_NOZORDER,
-    SW_HIDE, SW_SHOWNOACTIVATE, ULW_ALPHA, WM_DESTROY, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEMOVE,
-    WM_NCHITTEST, WM_SETCURSOR, WM_TIMER, WNDCLASSEXW, WS_EX_LAYERED, WS_EX_NOACTIVATE,
-    WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_EX_TRANSPARENT, WS_POPUP,
+use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
+    GetKeyState, ReleaseCapture, SetCapture, SetFocus, VK_ESCAPE, VK_RETURN, VK_SHIFT,
 };
-
-use crate::gdi_text;
-use crate::logging::log;
+use windows_sys::Win32::UI::WindowsAndMessaging::{
+    CallWindowProcW, CreateWindowExW, DefWindowProcW, DispatchMessageW, GetClientRect,
+    GetCursorPos, GetForegroundWindow, GetMessageW, GetWindowLongPtrW, GetWindowRect,
+    GetWindowTextLengthW, GetWindowTextW, KillTimer, LoadCursorW, PostMessageW, PostQuitMessage,
+    RegisterClassExW, SendMessageW, SetCursor, SetForegroundWindow, SetTimer, SetWindowLongPtrW,
+    SetWindowPos, SetWindowTextW, ShowWindow, TranslateMessage, UpdateLayeredWindow,
+    ES_AUTOVSCROLL, ES_LEFT, ES_MULTILINE, ES_WANTRETURN, GWLP_USERDATA, GWL_EXSTYLE, GWL_WNDPROC,
+    IDC_ARROW, IDC_HAND, MSG, SWP_NOACTIVATE, SWP_NOSIZE, SWP_NOZORDER, SW_HIDE, SW_SHOW,
+    SW_SHOWNOACTIVATE, ULW_ALPHA, WM_APP, WM_CTLCOLOREDIT, WM_DESTROY, WM_ERASEBKGND, WM_KEYDOWN,
+    WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEMOVE, WM_NCHITTEST, WM_PAINT, WM_SETCURSOR, WM_TIMER,
+    WNDCLASSEXW, WS_CHILD, WS_EX_LAYERED, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST,
+    WS_EX_TRANSPARENT, WS_POPUP, WS_VISIBLE,
+};
 
 const CLASS_NAME: &str = "PetsonaPetWindow";
 const VISUAL_TIMER: usize = 1;
@@ -94,6 +102,24 @@ const DARK_TEXT: u32 = 0xFFF0_F0F0;
 const DARK_ACCENT: u32 = 0xFF00_99FF;
 const DARK_TRACK: u32 = 0x46FF_FFFF;
 
+const COMPOSER_CLASS_NAME: &str = "PetsonaComposerWindow";
+const COMPOSER_WIDTH: i32 = 360;
+const COMPOSER_HEIGHT: i32 = 56;
+const COMPOSER_RADIUS: i32 = 12;
+const COMPOSER_SEND_SIZE: i32 = 40;
+const COMPOSER_EDIT_ID: i32 = 1001;
+/// Posted to the pet window to open the composer (also used by test hooks).
+pub const WM_OPEN_COMPOSER: u32 = WM_APP + 1;
+
+// GDI COLORREF is 0x00BBGGRR.
+const COLOR_LIGHT_BG: u32 = 0x00FF_FFFF;
+const COLOR_LIGHT_TEXT: u32 = 0x0020_2020;
+const COLOR_LIGHT_ACCENT: u32 = 0x00D4_7800;
+const COLOR_DARK_BG: u32 = 0x002B_2B2B;
+const COLOR_DARK_TEXT: u32 = 0x00F0_F0F0;
+const COLOR_DARK_ACCENT: u32 = 0x00FF_9900;
+const COLOR_ARROW: u32 = 0x00FF_FFFF;
+
 static DARK_THEME: AtomicBool = AtomicBool::new(false);
 
 /// Called by the shell when the system/app theme changes.
@@ -132,10 +158,23 @@ struct BubbleState {
     visible: bool,
 }
 
+struct ComposerState {
+    hwnd: HWND,
+    edit: HWND,
+    open: bool,
+    draft: String,
+    button_hovered: bool,
+    focus_deadline: Option<Instant>,
+    position: (i32, i32),
+    bg_brush: isize,
+    brush_dark: bool,
+}
+
 struct State {
     engine: Arc<Mutex<RuntimeEngine>>,
     pet_hwnd: HWND,
     bubble_hwnd: HWND,
+    composer: ComposerState,
     bubble: BubbleState,
     atlas: Option<Atlas>,
     frames: HashMap<(u32, i32, i32), Frame>,
@@ -160,6 +199,8 @@ thread_local! {
 
 static PET_CLASS: OnceLock<bool> = OnceLock::new();
 static BUBBLE_CLASS: OnceLock<bool> = OnceLock::new();
+static COMPOSER_CLASS: OnceLock<bool> = OnceLock::new();
+static PET_HWND: std::sync::atomic::AtomicIsize = std::sync::atomic::AtomicIsize::new(0);
 
 /// Spawns the overlay thread that owns the pet window and its message pump.
 pub fn spawn(engine: Arc<Mutex<RuntimeEngine>>) {
@@ -172,7 +213,9 @@ pub fn spawn(engine: Arc<Mutex<RuntimeEngine>>) {
 }
 
 unsafe fn thread_main(engine: Arc<Mutex<RuntimeEngine>>) {
-    if !register_class(CLASS_NAME, &PET_CLASS) || !register_class(BUBBLE_CLASS_NAME, &BUBBLE_CLASS)
+    if !register_class(CLASS_NAME, &PET_CLASS)
+        || !register_class(BUBBLE_CLASS_NAME, &BUBBLE_CLASS)
+        || !register_class(COMPOSER_CLASS_NAME, &COMPOSER_CLASS)
     {
         log("overlay: RegisterClassExW failed");
         return;
@@ -186,11 +229,39 @@ unsafe fn thread_main(engine: Arc<Mutex<RuntimeEngine>>) {
     apply_dwm_attributes(hwnd);
     let bubble_hwnd = create_window(BUBBLE_CLASS_NAME, "Petsona");
     apply_dwm_attributes(bubble_hwnd);
+    let composer_hwnd = create_composer_window();
+    let composer_edit = if composer_hwnd.is_null() {
+        ptr::null_mut()
+    } else {
+        let edit = create_composer_edit(composer_hwnd);
+        if !edit.is_null() {
+            let old = SetWindowLongPtrW(
+                edit,
+                GWL_WNDPROC,
+                edit_proc as unsafe extern "system" fn(HWND, u32, WPARAM, LPARAM) -> LRESULT
+                    as usize as isize,
+            );
+            SetWindowLongPtrW(edit, GWLP_USERDATA, old);
+        }
+        edit
+    };
+    PET_HWND.store(hwnd as isize, Ordering::Relaxed);
 
     let state = Box::new(State {
         engine,
         pet_hwnd: hwnd,
         bubble_hwnd,
+        composer: ComposerState {
+            hwnd: composer_hwnd,
+            edit: composer_edit,
+            open: false,
+            draft: String::new(),
+            button_hovered: false,
+            focus_deadline: None,
+            position: (i32::MIN, i32::MIN),
+            bg_brush: 0,
+            brush_dark: false,
+        },
         bubble: BubbleState {
             hovered: false,
             paused_generation: -1,
@@ -316,12 +387,15 @@ unsafe extern "system" fn wnd_proc(
                     Some(1)
                 }
                 WM_LBUTTONUP => {
-                    log("bubble: clicked");
+                    open_composer(state);
                     Some(0)
                 }
                 WM_DESTROY => Some(0),
                 _ => None,
             };
+        }
+        if !state.composer.hwnd.is_null() && hwnd == state.composer.hwnd {
+            return composer_wnd_proc_msg(hwnd, msg, wparam, lparam, state);
         }
         match msg {
             WM_TIMER => {
@@ -346,6 +420,10 @@ unsafe extern "system" fn wnd_proc(
                 Some(0)
             }
             WM_NCHITTEST => Some(on_nchittest(hwnd, state, lparam)),
+            WM_OPEN_COMPOSER => {
+                open_composer(state);
+                Some(0)
+            }
             WM_SETCURSOR => {
                 SetCursor(LoadCursorW(ptr::null_mut(), IDC_ARROW));
                 Some(1)
@@ -400,6 +478,7 @@ unsafe fn refresh(hwnd: HWND, state: &mut State) {
         render_frame(hwnd, state, &snapshot, &atlas_path);
     }
     update_bubble(state);
+    update_composer(state);
 }
 
 /// Renders the current runtime frame; returns false when the atlas could not
@@ -847,6 +926,7 @@ unsafe fn on_mouse_move(hwnd: HWND, state: &mut State) {
         0,
         SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE,
     );
+    update_composer(state);
 }
 
 unsafe fn on_lbutton_up(hwnd: HWND, state: &mut State) {
@@ -1373,6 +1453,426 @@ unsafe fn position_bubble(pet: RECT, width: i32, height: i32) -> (i32, i32) {
     x = clamped.left;
     y = clamped.top;
     (x, y)
+}
+
+// ---------------------------------------------------------------------------
+// Composer: a focusable, chrome-free popup with a native EDIT control.
+// Enter sends, Shift+Enter inserts a newline, Esc closes with the draft kept.
+// ---------------------------------------------------------------------------
+
+fn with_state<R>(f: impl FnOnce(&mut State) -> R, fallback: R) -> R {
+    STATE.with(|cell| {
+        let mut guard = match cell.try_borrow_mut() {
+            Ok(guard) => guard,
+            Err(_) => return fallback,
+        };
+        match guard.as_mut() {
+            Some(state) => f(state),
+            None => fallback,
+        }
+    })
+}
+
+unsafe fn create_composer_window() -> HWND {
+    let class_w = wide(COMPOSER_CLASS_NAME);
+    let title_w = wide("Petsona");
+    let hwnd = CreateWindowExW(
+        WS_EX_TOOLWINDOW,
+        class_w.as_ptr(),
+        title_w.as_ptr(),
+        WS_POPUP,
+        0,
+        0,
+        COMPOSER_WIDTH,
+        COMPOSER_HEIGHT,
+        ptr::null_mut(),
+        ptr::null_mut(),
+        GetModuleHandleW(ptr::null()),
+        ptr::null(),
+    );
+    if !hwnd.is_null() {
+        let region = CreateRoundRectRgn(
+            0,
+            0,
+            COMPOSER_WIDTH + 1,
+            COMPOSER_HEIGHT + 1,
+            COMPOSER_RADIUS * 2,
+            COMPOSER_RADIUS * 2,
+        );
+        if !region.is_null() {
+            SetWindowRgn(hwnd, region, 1);
+        }
+    }
+    hwnd
+}
+
+unsafe fn create_composer_edit(parent: HWND) -> HWND {
+    let class_w = wide("EDIT");
+    let style: u32 = WS_CHILD
+        | WS_VISIBLE
+        | (ES_LEFT as u32)
+        | (ES_MULTILINE as u32)
+        | (ES_AUTOVSCROLL as u32)
+        | (ES_WANTRETURN as u32);
+    let edit = CreateWindowExW(
+        0,
+        class_w.as_ptr(),
+        ptr::null(),
+        style,
+        16,
+        10,
+        COMPOSER_WIDTH - 16 - COMPOSER_SEND_SIZE - 24,
+        COMPOSER_HEIGHT - 20,
+        parent,
+        COMPOSER_EDIT_ID as isize as *mut c_void,
+        GetModuleHandleW(ptr::null()),
+        ptr::null(),
+    );
+    if !edit.is_null() {
+        // WM_SETFONT = 0x0030
+        SendMessageW(
+            edit,
+            0x0030,
+            GetStockObject(DEFAULT_GUI_FONT) as isize as usize,
+            1,
+        );
+    }
+    edit
+}
+
+unsafe fn composer_wnd_proc_msg(
+    hwnd: HWND,
+    msg: u32,
+    wparam: WPARAM,
+    lparam: LPARAM,
+    state: &mut State,
+) -> Option<LRESULT> {
+    match msg {
+        WM_PAINT => {
+            paint_composer(state);
+            Some(0)
+        }
+        WM_ERASEBKGND => Some(1),
+        WM_CTLCOLOREDIT => {
+            let dc = wparam as *mut c_void;
+            let dark = DARK_THEME.load(Ordering::Relaxed);
+            if state.composer.bg_brush == 0 || state.composer.brush_dark != dark {
+                if state.composer.bg_brush != 0 {
+                    DeleteObject(state.composer.bg_brush as HGDIOBJ);
+                }
+                let bg = if dark { COLOR_DARK_BG } else { COLOR_LIGHT_BG };
+                state.composer.bg_brush = CreateSolidBrush(bg) as isize;
+                state.composer.brush_dark = dark;
+            }
+            let bg = if dark { COLOR_DARK_BG } else { COLOR_LIGHT_BG };
+            let text = if dark {
+                COLOR_DARK_TEXT
+            } else {
+                COLOR_LIGHT_TEXT
+            };
+            SetBkColor(dc, bg);
+            SetTextColor(dc, text);
+            Some(state.composer.bg_brush)
+        }
+        WM_MOUSEMOVE => {
+            let x = (lparam as usize & 0xFFFF) as u16 as i16 as i32;
+            let y = ((lparam as usize >> 16) & 0xFFFF) as u16 as i16 as i32;
+            let hovered = in_send_button(x, y);
+            if hovered != state.composer.button_hovered {
+                state.composer.button_hovered = hovered;
+                InvalidateRect(hwnd, ptr::null(), 0);
+            }
+            Some(0)
+        }
+        WM_LBUTTONUP => {
+            let x = (lparam as usize & 0xFFFF) as u16 as i16 as i32;
+            let y = ((lparam as usize >> 16) & 0xFFFF) as u16 as i16 as i32;
+            if in_send_button(x, y) {
+                let text = read_window_text(state.composer.edit);
+                if composer_send(state, &text) {
+                    let empty = wide("");
+                    SetWindowTextW(state.composer.edit, empty.as_ptr());
+                }
+            }
+            Some(0)
+        }
+        WM_SETCURSOR => {
+            let cursor_name = if state.composer.button_hovered {
+                IDC_HAND
+            } else {
+                IDC_ARROW
+            };
+            SetCursor(LoadCursorW(ptr::null_mut(), cursor_name));
+            Some(1)
+        }
+        WM_DESTROY => Some(0),
+        _ => None,
+    }
+}
+
+unsafe fn paint_composer(state: &mut State) {
+    let hwnd = state.composer.hwnd;
+    let mut ps: PAINTSTRUCT = std::mem::zeroed();
+    let dc = BeginPaint(hwnd, &mut ps);
+    if dc.is_null() {
+        EndPaint(hwnd, &ps);
+        return;
+    }
+    let mut rect: RECT = std::mem::zeroed();
+    GetClientRect(hwnd, &mut rect);
+    let dark = DARK_THEME.load(Ordering::Relaxed);
+    let bg = if dark { COLOR_DARK_BG } else { COLOR_LIGHT_BG };
+    let background = CreateSolidBrush(bg);
+    if !background.is_null() {
+        FillRect(dc, &rect, background);
+        DeleteObject(background as HGDIOBJ);
+    }
+
+    let accent = if dark {
+        COLOR_DARK_ACCENT
+    } else {
+        COLOR_LIGHT_ACCENT
+    };
+    let button_x = COMPOSER_WIDTH - 8 - COMPOSER_SEND_SIZE;
+    let button_y = (COMPOSER_HEIGHT - COMPOSER_SEND_SIZE) / 2;
+    let brush = CreateSolidBrush(accent);
+    if !brush.is_null() {
+        let old_brush = SelectObject(dc, brush);
+        let old_pen = SelectObject(dc, GetStockObject(NULL_PEN));
+        let _ = Ellipse(
+            dc,
+            button_x,
+            button_y,
+            button_x + COMPOSER_SEND_SIZE,
+            button_y + COMPOSER_SEND_SIZE,
+        );
+        SelectObject(dc, old_pen);
+        SelectObject(dc, old_brush);
+        DeleteObject(brush as HGDIOBJ);
+    }
+
+    let font = GetStockObject(DEFAULT_GUI_FONT);
+    let old_font = SelectObject(dc, font);
+    SetBkMode(dc, TRANSPARENT as i32);
+    SetTextColor(dc, COLOR_ARROW);
+    let arrow = wide("↑");
+    let mut text_rect = RECT {
+        left: button_x,
+        top: button_y,
+        right: button_x + COMPOSER_SEND_SIZE,
+        bottom: button_y + COMPOSER_SEND_SIZE,
+    };
+    DrawTextW(
+        dc,
+        arrow.as_ptr(),
+        -1,
+        &mut text_rect,
+        DT_CENTER | DT_VCENTER | DT_SINGLELINE,
+    );
+    SelectObject(dc, old_font);
+    EndPaint(hwnd, &ps);
+}
+
+fn in_send_button(x: i32, y: i32) -> bool {
+    let button_x = COMPOSER_WIDTH - 8 - COMPOSER_SEND_SIZE;
+    let button_y = (COMPOSER_HEIGHT - COMPOSER_SEND_SIZE) / 2;
+    x >= button_x
+        && x < button_x + COMPOSER_SEND_SIZE
+        && y >= button_y
+        && y < button_y + COMPOSER_SEND_SIZE
+}
+
+unsafe fn read_window_text(hwnd: HWND) -> String {
+    let length = GetWindowTextLengthW(hwnd);
+    if length <= 0 {
+        return String::new();
+    }
+    let mut buffer = vec![0u16; (length + 1) as usize];
+    let copied = GetWindowTextW(hwnd, buffer.as_mut_ptr(), buffer.len() as i32);
+    if copied <= 0 {
+        return String::new();
+    }
+    String::from_utf16_lossy(&buffer[..copied as usize])
+}
+
+/// Sends the composed text through the runtime; returns whether it was sent.
+fn composer_send(state: &mut State, text: &str) -> bool {
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        return false;
+    }
+    if let Ok(engine) = state.engine.lock() {
+        let _ = engine.send(RuntimeCommand::SendConversation(trimmed.to_string()));
+    }
+    state.composer.draft.clear();
+    log("composer: sent");
+    true
+}
+
+fn open_composer(state: &mut State) {
+    if state.composer.hwnd.is_null() || state.composer.edit.is_null() {
+        return;
+    }
+    state.composer.open = true;
+    state.composer.focus_deadline = Some(Instant::now() + std::time::Duration::from_millis(1500));
+    unsafe {
+        let draft = wide(&state.composer.draft);
+        SetWindowTextW(state.composer.edit, draft.as_ptr());
+        update_composer(state);
+        ShowWindow(state.composer.hwnd, SW_SHOW);
+        SetForegroundWindow(state.composer.hwnd);
+        SetFocus(state.composer.edit);
+    }
+    log("composer: opened");
+}
+
+/// Keeps the composer under the pet and retries taking focus for 1.5 s.
+fn update_composer(state: &mut State) {
+    if state.composer.hwnd.is_null() || !state.composer.open {
+        return;
+    }
+    unsafe {
+        let mut pet_rect: RECT = std::mem::zeroed();
+        if GetWindowRect(state.pet_hwnd, &mut pet_rect) == 0 {
+            return;
+        }
+        let (x, y) = position_composer(pet_rect, COMPOSER_WIDTH, COMPOSER_HEIGHT);
+        if state.composer.position != (x, y) {
+            state.composer.position = (x, y);
+            SetWindowPos(
+                state.composer.hwnd,
+                ptr::null_mut(),
+                x,
+                y,
+                0,
+                0,
+                SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE,
+            );
+        }
+
+        if let Some(deadline) = state.composer.focus_deadline {
+            if Instant::now() >= deadline {
+                state.composer.focus_deadline = None;
+            } else if GetForegroundWindow() != state.composer.hwnd {
+                SetForegroundWindow(state.composer.hwnd);
+                SetFocus(state.composer.edit);
+            } else {
+                state.composer.focus_deadline = None;
+                SetFocus(state.composer.edit);
+            }
+        }
+    }
+}
+
+unsafe fn work_area_for_rect(rect: RECT) -> RECT {
+    let mut info: MONITORINFO = std::mem::zeroed();
+    info.cbSize = std::mem::size_of::<MONITORINFO>() as u32;
+    let monitor = MonitorFromRect(&rect, MONITOR_DEFAULTTONEAREST);
+    if monitor.is_null() || GetMonitorInfoW(monitor, &mut info) == 0 {
+        return RECT {
+            left: 0,
+            top: 0,
+            right: 1920,
+            bottom: 1080,
+        };
+    }
+    info.rcWork
+}
+
+/// Below the pet by default; near the bottom/taskbar it moves to the side with
+/// more room (mirroring the edit-strip placement rules), then clamps.
+unsafe fn position_composer(pet: RECT, width: i32, height: i32) -> (i32, i32) {
+    let work = work_area_for_rect(pet);
+    let pet_width = pet.right - pet.left;
+    let pet_height = pet.bottom - pet.top;
+    let centre_x = pet.left + pet_width / 2;
+    let centre_y = pet.top + pet_height / 2;
+
+    let mut x = centre_x - width / 2;
+    let mut y = pet.bottom + 8;
+    if y + height > work.bottom - EDGE_MARGIN {
+        let left_space = pet.left - work.left;
+        let right_space = work.right - pet.right;
+        if right_space >= left_space && right_space >= width + EDGE_MARGIN {
+            x = pet.right + EDGE_MARGIN;
+            y = centre_y - height / 2;
+        } else if left_space >= width + EDGE_MARGIN {
+            x = pet.left - width - EDGE_MARGIN;
+            y = centre_y - height / 2;
+        } else {
+            y = pet.top - height - EDGE_MARGIN;
+        }
+    }
+
+    let desired = RECT {
+        left: x,
+        top: y,
+        right: x + width,
+        bottom: y + height,
+    };
+    let clamped = clamp_to_work_area(desired);
+    (clamped.left, clamped.top)
+}
+
+unsafe extern "system" fn edit_proc(
+    hwnd: HWND,
+    msg: u32,
+    wparam: WPARAM,
+    lparam: LPARAM,
+) -> LRESULT {
+    if msg == WM_KEYDOWN {
+        if wparam == VK_ESCAPE as usize {
+            let text = read_window_text(hwnd);
+            let composer = with_state(
+                |state| {
+                    state.composer.draft = text;
+                    state.composer.open = false;
+                    state.composer.hwnd
+                },
+                ptr::null_mut(),
+            );
+            if !composer.is_null() {
+                ShowWindow(composer, SW_HIDE);
+                log("composer: closed (draft kept)");
+            }
+            return 0;
+        }
+        if wparam == VK_RETURN as usize {
+            let shift_down = (GetKeyState(VK_SHIFT as i32) as u16 & 0x8000) != 0;
+            if !shift_down {
+                let text = read_window_text(hwnd);
+                let sent = with_state(|state| composer_send(state, &text), false);
+                if sent {
+                    let empty = wide("");
+                    let result = SetWindowTextW(hwnd, empty.as_ptr());
+                    let remaining = read_window_text(hwnd);
+                    log(&format!(
+                        "composer: cleared result={} remaining='{remaining}'",
+                        result
+                    ));
+                }
+                return 0;
+            }
+        }
+    }
+
+    let old = GetWindowLongPtrW(hwnd, GWLP_USERDATA);
+    if old != 0 {
+        let previous: Option<unsafe extern "system" fn(HWND, u32, WPARAM, LPARAM) -> LRESULT> =
+            std::mem::transmute(old);
+        return CallWindowProcW(previous, hwnd, msg, wparam, lparam);
+    }
+    DefWindowProcW(hwnd, msg, wparam, lparam)
+}
+
+/// Posts `WM_OPEN_COMPOSER` to the pet window (test hook / future entries).
+pub fn request_open_composer() {
+    let hwnd = PET_HWND.load(Ordering::Relaxed);
+    if hwnd != 0 {
+        unsafe {
+            PostMessageW(hwnd as HWND, WM_OPEN_COMPOSER, 0, 0);
+        }
+    }
 }
 
 fn wide(text: &str) -> Vec<u16> {

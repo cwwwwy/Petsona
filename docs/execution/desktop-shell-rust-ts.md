@@ -211,3 +211,30 @@
 ### 待人工（用户）
 
 - 淡入观感；悬停暂停与移开续跑；宠物贴近屏幕顶部时气泡翻到下方；连续新消息重新淡入；点击气泡当前为 no-op（Composer 在 M2-B-04 接入）。
+
+
+## M2-B-03 Composer 输入框（2026-10-08 接续）
+
+- 实现：可激活的无边框弹出窗 `PetsonaComposerWindow`（360×56、圆角 region 12、WS_EX_TOOLWINDOW 不含任务栏/Alt-Tab），
+  内含原生 **EDIT 子控件**（多行 + `ES_WANTRETURN`，IME 原生支持）与自绘圆形发送键（`↑`，GDI Ellipse + DrawText）；
+  底色/文字随主题（`WM_CTLCOLOREDIT` + `WM_PAINT`，主题经 Tauri `ThemeChanged` 同步）。
+- 行为（对齐旧 ComposerWindow）：
+  - Enter 发送（`RuntimeCommand::SendConversation`）并清空输入；**Shift+Enter 换行**（`ES_WANTRETURN` 默认行为）；
+  - Esc 关闭并**保留草稿**；再次打开恢复草稿；
+  - 打开即尝试前台聚焦（`SetForegroundWindow`+`SetFocus`，1.5s 重试）；
+  - 跟随宠物：每帧与拖动中重定位（位置未变时不重复 `SetWindowPos`）；下方空间不足时移到左/右余量更大一侧，之后 `rcWork` 夹取；
+  - 入口：**点击气泡**打开（编辑条 M2-B-04 接入后同入口）；另有开发参数 `--open-composer` 与测试消息 `WM_APP+1`。
+- 冒烟为**仅窗口消息**（不移动鼠标）：`AllowSetForegroundWindow` 授予前台 → `WM_APP+1` 打开 → `WM_CHAR` 输入 → `WM_GETTEXT` 读回
+  → `WM_KEYDOWN` Esc/Return 驱动关闭/发送；清空断言以应用日志为准（跨进程 `WM_GETTEXT` 回读可能滞后）。
+
+### 证据
+
+| 证据ID/时间 | 操作 | 结果 |
+|---|---|---|
+| E-M2-B-03a | `--open-composer` 启动 + 截图 `%TEMP%\petsona-composer-shot.png` | 白色圆角卡片 + 蓝色 `↑` 发送键渲染正确 |
+| E-M2-B-03b | 无鼠标冒烟 `desktop-smoke.ps1`（新增 composer 段） | **EXIT=0**：composer visible=True；foreground=composer=True；edit found=True；typed='hi'；Esc 隐藏=True；reopen 草稿='hi'；Enter 发送并清空（app log `cleared result=1 remaining=''`）；其余全部回归通过 |
+
+### 待人工
+
+- 中文 IME 组合不误发；Shift+Enter 换行；真实点击气泡打开并可直接输入；
+- 拖动宠物时输入框跟随、贴近任务栏时左右侧挂；发送后运行时反应（无 Key 时记录错误属预期）。

@@ -29,6 +29,9 @@ fn main() {
 
     let args: Vec<String> = std::env::args().collect();
     let show_settings = args.iter().any(|arg| arg == "--show-settings");
+    // Dev/test flag: open the composer shortly after startup (used by the
+    // mouse-free smoke to verify the native EDIT control end to end).
+    let open_composer = args.iter().any(|arg| arg == "--open-composer");
     let exit_after_ms = args
         .iter()
         .position(|arg| arg == "--exit-after-ms")
@@ -79,6 +82,16 @@ fn main() {
             if show_settings {
                 show_settings_window(app.handle());
                 logging::log("tauri: settings window shown (--show-settings)");
+            }
+
+            if open_composer {
+                thread::spawn(|| {
+                    for _ in 0..8 {
+                        thread::sleep(Duration::from_millis(700));
+                        #[cfg(windows)]
+                        overlay::request_open_composer();
+                    }
+                });
             }
 
             start_watcher(app.handle().clone(), Arc::clone(&engine_for_setup));

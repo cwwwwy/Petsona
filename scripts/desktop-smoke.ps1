@@ -29,6 +29,7 @@ $ErrorActionPreference = 'Stop'
 
 Add-Type -TypeDefinition @'
 using System;
+using System.Text;
 using System.Runtime.InteropServices;
 
 public static class SmokeNative
@@ -53,6 +54,23 @@ public static class SmokeNative
 
     [DllImport("user32.dll")]
     public static extern IntPtr GetForegroundWindow();
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    public static extern IntPtr FindWindowExW(IntPtr parent, IntPtr after, string className, string windowName);
+
+    [DllImport("user32.dll")]
+    public static extern bool PostMessageW(IntPtr hWnd, uint msg, UIntPtr wParam, IntPtr lParam);
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    public static extern int GetWindowTextW(IntPtr hWnd, StringBuilder text, int count);
+
+    // WM_GETTEXT is marshalled across processes, so it can read a control in
+    // another process (unlike GetWindowText).
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    public static extern IntPtr SendMessageW(IntPtr hWnd, uint msg, IntPtr wParam, StringBuilder lParam);
+
+    [DllImport("user32.dll")]
+    public static extern bool AllowSetForegroundWindow(uint processId);
 
     [DllImport("user32.dll")]
     public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint lpdwProcessId);
@@ -314,6 +332,85 @@ $clearBody = '{"source":"smoke","action":"clear"}'
 Invoke-RestMethod -Method Post -Uri ("http://127.0.0.1:{0}/state" -f $PetPort) -ContentType 'application/json; charset=utf-8' -Body $clearBody -TimeoutSec 2 | Out-Null
 Write-Host '  action:clear accepted'
 
+Stop-Petsona
+
+# ---------------- composer (keyboard only, no cursor input) ----------------
+Write-Host '== composer (posted key events, no mouse) =='
+Stop-Petsona
+# start from an empty shell log so the composer assertions are unambiguous
+Remove-Item -LiteralPath (Join-Path $env:TEMP 'petsona-desktop.log') -ErrorAction SilentlyContinue
+$proc = Start-Process -FilePath $Exe -PassThru
+if (-not (Wait-PetVisible 20000)) { throw 'pet window not visible for the composer test' }
+$petHwnd = Get-PetWindow
+
+function Get-ComposerWindow {
+    $hwnd = [SmokeNative]::FindWindowW('PetsonaComposerWindow', [NullString]::Value)
+    if ($hwnd -eq [IntPtr]::Zero) { return $null }
+    return $hwnd
+}
+function Get-ComposerText([IntPtr]$Edit) {
+    $buffer = New-Object System.Text.StringBuilder 512
+    [void][SmokeNative]::SendMessageW($Edit, 0x000D, [IntPtr]512, $buffer)
+    return $buffer.ToString()
+}
+function Wait-ComposerVisible([int]$TimeoutMs) {
+    $watch = [System.Diagnostics.Stopwatch]::StartNew()
+    while ($watch.ElapsedMilliseconds -lt $TimeoutMs) {
+        $c = Get-ComposerWindow
+        if ($c -and [SmokeNative]::IsWindowVisible($c)) { return $c }
+        Start-Sleep -Milliseconds 100
+    }
+    return $null
+}
+
+# open via the pet window message (WM_APP + 1); grant this process foreground
+# rights first so the composer can take focus without a real click
+[void][SmokeNative]::AllowSetForegroundWindow([uint32]$proc.Id)
+[void][SmokeNative]::PostMessageW($petHwnd, 0x8001, [UIntPtr]::Zero, [IntPtr]::Zero)
+$composer = Wait-ComposerVisible 8000
+Write-Host ("  composer visible: {0}" -f [bool]$composer)
+if (-not $composer) { throw 'composer did not open' }
+$fg = [SmokeNative]::GetForegroundWindow()
+Write-Host ("  foreground is composer: {0}" -f ($fg -eq $composer))
+$edit = [SmokeNative]::FindWindowExW($composer, [IntPtr]::Zero, 'Edit', [NullString]::Value)
+Write-Host ("  edit control found: {0}" -f [bool]$edit)
+
+# type "hi" by posting WM_CHAR to the edit control
+foreach ($char in @([char]'h', [char]'i')) {
+    [void][SmokeNative]::PostMessageW($edit, 0x0102, [UIntPtr][int]$char, [IntPtr]::Zero)
+}
+Start-Sleep -Milliseconds 400
+$typed = Get-ComposerText $edit
+Write-Host ("  typed text: '{0}'  (expected 'hi')" -f $typed)
+
+# Esc closes and keeps the draft
+[void][SmokeNative]::PostMessageW($edit, 0x0100, [UIntPtr]0x1B, [IntPtr]::Zero)
+Start-Sleep -Milliseconds 500
+$hidden = -not [SmokeNative]::IsWindowVisible($composer)
+Write-Host ("  composer hidden after Esc: {0}" -f $hidden)
+
+# reopen: the draft must still be there
+[void][SmokeNative]::PostMessageW($petHwnd, 0x8001, [UIntPtr]::Zero, [IntPtr]::Zero)
+$composer = Wait-ComposerVisible 8000
+$draft = ''
+if ($composer) { $draft = Get-ComposerText $edit }
+Write-Host ("  draft restored after reopen: '{0}'  (expected 'hi')" -f $draft)
+
+# Enter sends and clears the input. Cross-process WM_GETTEXT reads of a
+# control can be stale, so the app log is the authoritative check here.
+[void][SmokeNative]::PostMessageW($edit, 0x0100, [UIntPtr]0x0D, [IntPtr]::Zero)
+$clearedInApp = $false
+$watch = [System.Diagnostics.Stopwatch]::StartNew()
+while ($watch.ElapsedMilliseconds -lt 3000) {
+    $tail = Get-Content -LiteralPath (Join-Path $env:TEMP 'petsona-desktop.log') -Tail 8 -ErrorAction SilentlyContinue
+    if ($tail -match "composer: cleared result=1 remaining=''") { $clearedInApp = $true; break }
+    Start-Sleep -Milliseconds 150
+}
+Write-Host ("  input cleared after Enter: {0}  (app log)" -f $clearedInApp)
+
+# Esc again for cleanliness
+[void][SmokeNative]::PostMessageW($edit, 0x0100, [UIntPtr]0x1B, [IntPtr]::Zero)
+Start-Sleep -Milliseconds 400
 Stop-Petsona
 
 # ---------------- 5. graceful exit releases the port ----------------
