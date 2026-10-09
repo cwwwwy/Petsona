@@ -4,7 +4,7 @@
 
 - 计划路径/版本：`docs/plans/pre-release-full-acceptance.md` v1.0。
 - 开始日期：2026-10-09。
-- 当前阶段：FA 前端内容界面；FA-0～FA-5 已关闭；FA-6 连接/系统/聊天自动证据与素材已就绪，待人工验收。
+- 当前阶段：FA 全部 6 轮已关闭；NA 原生交互接线完成（点击/双击/拖动 running），待人工验收。
 - 环境原则：使用隔离 `PETSONA_HOME`、独立端口；真实 `%APPDATA%\Petsona` 与 Codex 原始宠物目录只读。
 
 ## FA 阶段
@@ -17,7 +17,7 @@
 | FA-3 外观与交互 | 已关闭 | 四项无行为开关已从 UI 下架（配置/命令保留兼容）；前端与 Windows 构建通过 | 2026-10-09 用户复测通过 | v1.1 收缩后关闭；修复已提交 `b1d0538` |
 | FA-4 人格页 | 已关闭 | 人格库 13 项 + 运行时人格 4 项测试通过；导入/聊天记录素材与共享 Key 检查就绪 | 2026-10-09 用户通过 | 原生点击交互缺失转入 NA 待办 |
 | FA-5 记忆页 | 已关闭 | 核心记忆 15 项 + 运行时 2 项测试通过；隔离目录已播种 2 条 pending 候选与归档事实；导入样例就绪 | 2026-10-09 用户通过 | 无遗留 |
-| FA-6 连接/系统/聊天 | 待人工验收 | 流式聊天 8 项 + 模型拉取 1 项测试通过；隔离目录已播种 60 条聊天历史；Key 隔离策略已定 | 待用户 | Key 保存/清除用自定义槽，不动 DeepSeek Key |
+| FA-6 连接/系统/聊天 | 已关闭 | 流式聊天 8 项 + 模型拉取 1 项测试通过；隔离目录已播种 60 条聊天历史；Key 隔离策略已定 | 2026-10-09 用户通过 | FA 六轮全部完成 |
 
 ## FA-0 证据
 
@@ -217,55 +217,41 @@
    - 重新导入 `memory-import.json` 恢复偏好 → “清空事件” → 事件清空、偏好保留；
    - “清空全部” → 偏好与事件均清空。
 
-## NA 待办（原生浮层与输入，FA 后执行）
+## NA 原生浮层与输入（2026-10-09）
 
-来源：FA-4 验收期间用户发现“点击宠物无互动动作”。代码核对：
+### 背景与实现
 
-- 旧 C# 语义（`git show 6bca241:apps/windows/Petsona/AppController.cs`）：单击（320ms 防双击冲突）→ `SetState waving` + 气泡“你好，我在这里”(5s)；双击 → `SetState jumping`；拖动每 80ms 重发 running-left/right。
-- 新 Rust 壳现状：`overlay.rs::on_lbutton_up` 只记录 `pet: clicked`；全壳从未发送 `SetState`/`ShowBubble` → 单击、双击、拖动状态都未接线。
-- 结论：属 NA 轮待实现项，不是 FA-4 回归；runtime 侧 `SetState`/`ShowBubble` 命令与防回绕逻辑已存在并有测试。
+FA-4 验收期间用户发现“点击宠物无互动动作”。旧 C# 语义（`git show 6bca241:apps/windows/Petsona/AppController.cs`）：
+单击（320ms 防双击冲突）→ `SetState waving` + 气泡“你好，我在这里”(5s)；双击 → `SetState jumping`；
+拖动按最新横向步进播放 running-left/right（3px 反向滤波，80ms 重发，300ms TTL，松手回 idle）。
+新 Rust 壳原状：`overlay.rs::on_lbutton_up` 只记录 `pet: clicked`，全壳从未发送 `SetState`/`ShowBubble`。
 
-NA 待实现/验收清单：
+本次接线（`apps/desktop/src-tauri/src/overlay.rs`）：
 
-1. 单击宠物（未拖动）→ 320ms 后 waving + 气泡“你好，我在这里”（约 5s 消失）。
-2. 双击宠物 → jumping；单击延迟需被双击取消。
-3. 拖动宠物 → 按方向播放 running-left/right，松手回 idle；重复拖动不重置帧。
-4. 拖动跟手、工作区夹取、位置重启恢复。
-5. 注视全方向与近距离边界观感（已实现，待复测）。
-6. 透明像素穿透、宠物本体可点、光标保持普通箭头。
+- 按下 320ms 定时器 → 单击触发 waving + 气泡“你好，我在这里”(5s)；320ms 内二次按下 → 取消单击并触发 jumping。
+- 拖动越过 4px 阈值时取消待发单击，按最新横向步进发送 running-left/right（反向需累计 3px，80ms 重发一次，TTL 300ms）；松手发送 idle(1ms) 立即回到待机。
+- 新增纯函数 `next_drag_direction` 覆盖方向滤波，Windows 单测可回归。
 
-## FA-6 证据（2026-10-09）
+### 证据
 
-| 证据ID | REQ | 环境 | 操作 | 结果 |
-|---|---|---|---|---|
-| E-FA6-01 | FA-6-7/8 数据层 | WSL（放行回环） | `cargo test -p petsona-runtime --lib conversation` | exit 0；8 passed（流式分片/多字节 UTF-8、未终止响应拒绝、中途取消、HTTP 错误细节等） |
-| E-FA6-02 | FA-6-2 数据层 | WSL（放行回环） | `cargo test -p petsona-runtime --lib list_models` | exit 0；1 passed（模型目录投影） |
-| E-FA6-03 | FA-6-9 环境 | Windows 隔离目录 | 应用未运行时写入 `%TEMP%\petsona-preaccept\conversations\626f6261.json`（boba，60 条：30 用户 + 30 回复，version 1） | 已就绪；分页阈值 50 条，打开时应有“加载更早的记录” |
-| E-FA6-04 | FA-6-3 隔离策略 | Windows 凭据库 | 只读检查 `com.petsona.desktop` 存在 `provider/deepseek`；Key 保存/清除用**自定义**服务商（槽 `provider/custom`）验证 | DeepSeek Key 不受影响 |
+| 证据ID | 内容 | 结果 |
+|---|---|---|
+| E-NA-01 | 桌壳单测（含新增 `drag_direction_uses_the_latest_step_with_a_flip_filter`） | exit 0；**12 passed** |
+| E-NA-02 | 无鼠标冒烟点击段（PostMessage 模拟，不移动光标） | **单击：log=True / bubble=True / state=waving=True；双击：log=True / state=jumping=True** |
+| E-NA-03 | 无鼠标冒烟回归 | 启动 1332–1438ms；位置/几何/动画/编辑条/设置聚焦/单实例/协议/Composer/退出/空库全部通过 |
+| E-NA-04 | 环境说明 | 该次 `foreground is composer` 软检查为 False（真实桌面交互干扰）；此前干净运行均为 True，本次不作为回归，NA 人工复测核对 |
 
-### FA-6 待人工验收清单
+### NA 待人工验收清单
 
-前置：`%TEMP%\petsona-preaccept`（当前 boba，60 条历史）；DeepSeek Key 已配置（共享凭据，只读使用）。
-
-1. FA-6-1：连接页顺序为 服务商 → Base URL → API Key → 模型 → 高级参数；各控件可操作、改动自动保存（Key 单独保存）。
-2. FA-6-2 模型拉取：
-   - 成功：服务商 DeepSeek → “拉取模型” → 显示“已拉取 N 个模型”，可从列表选择；
-   - 失败：切“自定义”，Base URL 填 `http://127.0.0.1:9/v1` → 拉取 → 显示“拉取模型列表失败：…（可手动填写模型名）”；
-   - 空结果（可选，默认 SKIP）：代码路径为“服务商没有返回任何模型；请手动填写模型名”，需要本地空响应 stub 才能复现。
-3. FA-6-3 Key 保存/清除（**隔离策略**）：
-   - 服务商保持“自定义”，输入假 Key `fa6-test-key` → 保存 → 显示已配置密文状态；
-   - 点“清除” → 确认框 → 变为未配置；
-   - 切回 DeepSeek → 仍显示已配置（证明未动 DeepSeek Key）。
-4. FA-6-4 系统页：版本（当前 shell 0.1.0，M6 统一）、架构、构建类型、数据目录/日志路径指向 `%TEMP%\petsona-preaccept`、协议端口 17920 均正确。
-5. FA-6-5：点“打开仓库” → 默认浏览器打开仓库；点“复制诊断” → 提示已复制，可粘贴检查。
-6. FA-6-6：右键托盘 → “聊天与历史” → 独立聊天窗出现且前台聚焦。
-7. FA-6-7：发送一条消息 → 流式显示；生成中点“停止” → 显示“已停止”；点“重试” → 重新流式生成。
-8. FA-6-8：Enter 发送、Shift+Enter 换行；中文输入法组合期间回车只上屏、不误发。
-9. FA-6-9 历史加载/清空：
-   - 打开聊天默认显示最近 50 条，出现“加载更早的记录”；
-   - 点击后出现第 1~10 条；
-   - 发送新消息后重开聊天/重启应用 → 新消息仍在；
-   - 点“清空” → 确认框 → 历史清空，重启后仍为空（记忆页事实不应被删除）。
+1. 单击宠物：约 0.3s 后挥手动作 + 气泡“你好，我在这里”；气泡淡入、倒计时进度、悬停暂停、移开续跑、约 5s 消失。
+2. 双击宠物：跳跃动作；双击不会先触发挥手/气泡。
+3. 拖动宠物：跟手移动；按拖动方向播放 running（左/右），中途反向时方向及时切换、无抖动；松手立即回待机。
+4. 边界：拖到屏幕四边/任务栏上沿时宠物完整留在工作区；松手后重启位置恢复。
+5. 穿透：透明像素点击落到桌面；宠物本体可点击；光标保持普通箭头。
+6. 注视：宠物四周及上方共 16 方向跟随；近距离不频繁抖动；离开范围回中性。
+7. 编辑条：贴近任务栏时侧挂/旋转；悬停约 220ms 展开并聚焦；点击立即打开 Composer。
+8. 气泡：靠近屏幕顶部时翻转到宠物下方；新气泡重置计时。
+9. Composer：无边框跟随宠物；Enter 发送 / Shift+Enter 换行 / Esc 保留草稿；中文输入法组合期间 Enter 不误发。
 
 ## 证据与限制
 

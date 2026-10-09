@@ -15,8 +15,9 @@ use std::ffi::c_void;
 use std::ptr;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
+use petsona_core::pet::PetState;
 use petsona_runtime::commands::RuntimeCommand;
 use petsona_runtime::engine::RuntimeEngine;
 use petsona_runtime::snapshot::RuntimeTextField;
@@ -60,6 +61,16 @@ const VISUAL_TIMER: usize = 1;
 const HIT_TIMER: usize = 2;
 const VISUAL_INTERVAL_MS: u32 = 33;
 const HIT_INTERVAL_MS: u32 = 16;
+/// Single-click delay: a second press inside this window is a double click
+/// (ported from `PetWindow.ClickDelayMs`, git 6bca241).
+const CLICK_TIMER: usize = 3;
+const CLICK_DELAY_MS: u32 = 320;
+/// Drag locomotion: re-raise every `DRAG_STATE_RESEND_MS` with a
+/// `DRAG_STATE_TTL_MS` lifetime so stopping the drag falls back to idle.
+const DRAG_STATE_TTL_MS: u64 = 300;
+const DRAG_STATE_RESEND_MS: u128 = 80;
+/// Counter-movement needed before a drag flips its running direction.
+const DRAG_DIRECTION_FLIP_PX: i32 = 3;
 /// Gaze ellipse: enter margin 80% / exit margin 100% of the short side, and
 /// a 35% centre dead zone (ported from `GazeFilter.cs`, git 6bca241).
 const GAZE_ENTER_MARGIN: f32 = 0.80;
@@ -222,6 +233,11 @@ struct State {
     moved: bool,
     drag_cursor: (i32, i32),
     drag_offset: (i32, i32),
+    last_move_cursor: (i32, i32),
+    drag_direction: Option<PetState>,
+    drag_direction_accumulator: i32,
+    drag_state_sent_at: Option<Instant>,
+    last_click_at: Option<Instant>,
     transparent: Option<bool>,
     gaze_active: bool,
     gaze_direction: i32,
@@ -341,6 +357,11 @@ unsafe fn thread_main(engine: Arc<Mutex<RuntimeEngine>>) {
         moved: false,
         drag_cursor: (0, 0),
         drag_offset: (0, 0),
+        last_move_cursor: (0, 0),
+        drag_direction: None,
+        drag_direction_accumulator: 0,
+        drag_state_sent_at: None,
+        last_click_at: None,
         transparent: None,
         gaze_active: false,
         gaze_direction: -1,
@@ -479,6 +500,8 @@ unsafe extern "system" fn wnd_proc(
                 } else if wparam == HIT_TIMER {
                     update_pass_through(hwnd, state);
                     update_gaze(hwnd, state);
+                } else if wparam == CLICK_TIMER {
+                    on_click_timer(hwnd, state);
                 }
                 Some(0)
             }
@@ -506,6 +529,7 @@ unsafe extern "system" fn wnd_proc(
             WM_DESTROY => {
                 KillTimer(hwnd, VISUAL_TIMER);
                 KillTimer(hwnd, HIT_TIMER);
+                KillTimer(hwnd, CLICK_TIMER);
                 PostQuitMessage(0);
                 Some(0)
             }
@@ -972,7 +996,104 @@ unsafe fn present_pixels(hwnd: HWND, pixels: &[u8], width: i32, height: i32, opa
     ReleaseDC(ptr::null_mut(), screen_dc);
 }
 
+fn raise_pet_state(state: &State, pet_state: PetState) {
+    if let Ok(engine) = state.engine.lock() {
+        let _ = engine.send(RuntimeCommand::SetState {
+            state: pet_state,
+            ttl: None,
+        });
+    }
+}
+
+fn send_drag_state(state: &mut State, direction: PetState) {
+    if let Ok(engine) = state.engine.lock() {
+        let _ = engine.send(RuntimeCommand::SetState {
+            state: direction,
+            ttl: Some(Duration::from_millis(DRAG_STATE_TTL_MS)),
+        });
+    }
+    state.drag_direction = Some(direction);
+    state.drag_direction_accumulator = 0;
+    state.drag_state_sent_at = Some(Instant::now());
+}
+
+fn reset_drag_state(state: &mut State) {
+    if state.drag_direction.take().is_some() {
+        if let Ok(engine) = state.engine.lock() {
+            let _ = engine.send(RuntimeCommand::SetState {
+                state: PetState::Idle,
+                ttl: Some(Duration::from_millis(1)),
+            });
+        }
+    }
+    state.drag_direction_accumulator = 0;
+    state.drag_state_sent_at = None;
+}
+
+/// Direction update for drag locomotion: the latest horizontal step wins, but
+/// a flip needs `DRAG_DIRECTION_FLIP_PX` of accumulated counter movement so
+/// hand jitter cannot flap the pose (ported from `PetWindow.cs`).
+fn next_drag_direction(
+    current: Option<PetState>,
+    step_x: i32,
+    accumulator: &mut i32,
+) -> Option<PetState> {
+    if step_x == 0 {
+        return None;
+    }
+    let candidate = if step_x > 0 {
+        PetState::RunningRight
+    } else {
+        PetState::RunningLeft
+    };
+    match current {
+        None => Some(candidate),
+        Some(state) if state == candidate => {
+            *accumulator = 0;
+            None
+        }
+        Some(_) => {
+            *accumulator += step_x.abs();
+            if *accumulator >= DRAG_DIRECTION_FLIP_PX {
+                *accumulator = 0;
+                Some(candidate)
+            } else {
+                None
+            }
+        }
+    }
+}
+
+unsafe fn on_click_timer(hwnd: HWND, state: &mut State) {
+    KillTimer(hwnd, CLICK_TIMER);
+    state.last_click_at = None;
+    if let Ok(engine) = state.engine.lock() {
+        let _ = engine.send(RuntimeCommand::SetState {
+            state: PetState::Waving,
+            ttl: None,
+        });
+        let _ = engine.send(RuntimeCommand::ShowBubble {
+            text: "你好，我在这里".to_string(),
+            ttl: Duration::from_secs(5),
+        });
+    }
+    log("pet: single click -> waving + bubble");
+}
+
 unsafe fn on_lbutton_down(hwnd: HWND, state: &mut State) {
+    // Old semantics: a second press inside the click window is a double click;
+    // it cancels the pending single click and never starts a drag.
+    if state
+        .last_click_at
+        .is_some_and(|at| at.elapsed() <= Duration::from_millis(u64::from(CLICK_DELAY_MS)))
+    {
+        state.last_click_at = None;
+        KillTimer(hwnd, CLICK_TIMER);
+        raise_pet_state(state, PetState::Jumping);
+        log("pet: double click -> jumping");
+        return;
+    }
+
     let mut cursor: POINT = std::mem::zeroed();
     if GetCursorPos(&mut cursor) == 0 {
         return;
@@ -984,8 +1105,14 @@ unsafe fn on_lbutton_down(hwnd: HWND, state: &mut State) {
     state.dragging = true;
     state.moved = false;
     state.drag_cursor = (cursor.x, cursor.y);
+    state.last_move_cursor = (cursor.x, cursor.y);
     state.drag_offset = (cursor.x - rect.left, cursor.y - rect.top);
+    state.drag_direction = None;
+    state.drag_direction_accumulator = 0;
+    state.drag_state_sent_at = None;
+    state.last_click_at = Some(Instant::now());
     SetCapture(hwnd);
+    SetTimer(hwnd, CLICK_TIMER, CLICK_DELAY_MS, None);
     log(&format!(
         "pet: mouse down cursor=({},{}) rect=({},{})",
         cursor.x, cursor.y, rect.left, rect.top
@@ -1004,6 +1131,10 @@ unsafe fn on_mouse_move(hwnd: HWND, state: &mut State) {
     let dy = cursor.y - state.drag_cursor.1;
     if !state.moved && (dx.abs() + dy.abs()) >= DRAG_THRESHOLD {
         state.moved = true;
+        // A real drag cancels the pending single click.
+        KillTimer(hwnd, CLICK_TIMER);
+        state.last_click_at = None;
+        state.last_move_cursor = (cursor.x, cursor.y);
         log("pet: drag started");
     }
 
@@ -1030,6 +1161,24 @@ unsafe fn on_mouse_move(hwnd: HWND, state: &mut State) {
         SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE,
     );
     update_composer(state);
+
+    if !state.moved {
+        return;
+    }
+    let step_x = cursor.x - state.last_move_cursor.0;
+    state.last_move_cursor = (cursor.x, cursor.y);
+    if let Some(direction) = next_drag_direction(
+        state.drag_direction,
+        step_x,
+        &mut state.drag_direction_accumulator,
+    ) {
+        send_drag_state(state, direction);
+    }
+    if let (Some(direction), Some(sent_at)) = (state.drag_direction, state.drag_state_sent_at) {
+        if sent_at.elapsed().as_millis() >= DRAG_STATE_RESEND_MS {
+            send_drag_state(state, direction);
+        }
+    }
 }
 
 unsafe fn on_lbutton_up(hwnd: HWND, state: &mut State) {
@@ -1049,8 +1198,9 @@ unsafe fn on_lbutton_up(hwnd: HWND, state: &mut State) {
             }
             log(&format!("pet: drag ended at ({},{})", rect.left, rect.top));
         }
+        reset_drag_state(state);
     } else {
-        log("pet: clicked");
+        log("pet: click pending");
     }
 }
 
@@ -2225,4 +2375,37 @@ pub fn request_open_composer() {
 
 fn wide(text: &str) -> Vec<u16> {
     text.encode_utf16().chain(std::iter::once(0)).collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{next_drag_direction, PetState};
+
+    #[test]
+    fn drag_direction_uses_the_latest_step_with_a_flip_filter() {
+        let mut accumulator = 0;
+        assert_eq!(
+            next_drag_direction(None, 5, &mut accumulator),
+            Some(PetState::RunningRight)
+        );
+        assert_eq!(
+            next_drag_direction(Some(PetState::RunningRight), 4, &mut accumulator),
+            None
+        );
+        assert_eq!(accumulator, 0);
+        assert_eq!(
+            next_drag_direction(Some(PetState::RunningRight), -2, &mut accumulator),
+            None
+        );
+        assert_eq!(accumulator, 2);
+        assert_eq!(
+            next_drag_direction(Some(PetState::RunningRight), -1, &mut accumulator),
+            Some(PetState::RunningLeft)
+        );
+        assert_eq!(accumulator, 0);
+        assert_eq!(
+            next_drag_direction(Some(PetState::RunningLeft), 0, &mut accumulator),
+            None
+        );
+    }
 }

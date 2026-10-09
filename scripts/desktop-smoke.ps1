@@ -387,6 +387,56 @@ $clearBody = '{"source":"smoke","action":"clear"}'
 Invoke-RestMethod -Method Post -Uri ("http://127.0.0.1:{0}/state" -f $PetPort) -ContentType 'application/json; charset=utf-8' -Body $clearBody -TimeoutSec 2 | Out-Null
 Write-Host '  action:clear accepted'
 
+# ---------------- click interactions (posted messages, no cursor input) ----------------
+Write-Host '== click interactions (posted messages, no mouse) =='
+$pet = Get-PetWindow
+$clickRect = New-Object SmokeNative+RECT
+[void][SmokeNative]::GetWindowRect($pet, [ref]$clickRect)
+$clickX = [int](($clickRect.Right - $clickRect.Left) / 2)
+$clickY = [int](($clickRect.Bottom - $clickRect.Top) / 2)
+$clickLParam = [IntPtr](($clickY -shl 16) -bor ($clickX -band 0xFFFF))
+$shellLog = Join-Path $env:TEMP 'petsona-desktop.log'
+
+# single click: down + up, then the overlay's 320 ms timer raises waving and
+# shows the 5 s greeting bubble
+[void][SmokeNative]::PostMessageW($pet, 0x0201, [UIntPtr]1, $clickLParam)
+[void][SmokeNative]::PostMessageW($pet, 0x0202, [UIntPtr]0, $clickLParam)
+$singleSeen = $false
+$clickBubbleSeen = $false
+$wavingSeen = $false
+$watch = [System.Diagnostics.Stopwatch]::StartNew()
+while ($watch.ElapsedMilliseconds -lt 2500) {
+    $tail = Get-Content -LiteralPath $shellLog -Tail 14 -ErrorAction SilentlyContinue
+    if ($tail -match 'pet: single click -> waving') { $singleSeen = $true }
+    $bubble = Get-BubbleWindow
+    if ($bubble -and [SmokeNative]::IsWindowVisible($bubble)) { $clickBubbleSeen = $true }
+    $h = Get-Health $PetPort
+    if ($h -and $h.state -eq 'waving') { $wavingSeen = $true }
+    if ($singleSeen -and $clickBubbleSeen) { break }
+    Start-Sleep -Milliseconds 50
+}
+Write-Host ("  single click: log={0} bubble={1} state=waving seen={2}" -f $singleSeen, $clickBubbleSeen, $wavingSeen)
+
+# double click: two presses inside the 320 ms window cancel the single click
+# and raise jumping
+[void][SmokeNative]::PostMessageW($pet, 0x0201, [UIntPtr]1, $clickLParam)
+Start-Sleep -Milliseconds 60
+[void][SmokeNative]::PostMessageW($pet, 0x0202, [UIntPtr]0, $clickLParam)
+[void][SmokeNative]::PostMessageW($pet, 0x0201, [UIntPtr]1, $clickLParam)
+[void][SmokeNative]::PostMessageW($pet, 0x0202, [UIntPtr]0, $clickLParam)
+$doubleSeen = $false
+$jumpingSeen = $false
+$watch = [System.Diagnostics.Stopwatch]::StartNew()
+while ($watch.ElapsedMilliseconds -lt 2000) {
+    $tail = Get-Content -LiteralPath $shellLog -Tail 14 -ErrorAction SilentlyContinue
+    if ($tail -match 'pet: double click -> jumping') { $doubleSeen = $true }
+    $h = Get-Health $PetPort
+    if ($h -and $h.state -eq 'jumping') { $jumpingSeen = $true }
+    if ($doubleSeen -and $jumpingSeen) { break }
+    Start-Sleep -Milliseconds 40
+}
+Write-Host ("  double click: log={0} state=jumping seen={1}" -f $doubleSeen, $jumpingSeen)
+
 Stop-Petsona
 
 # ---------------- composer (keyboard only, no cursor input) ----------------
