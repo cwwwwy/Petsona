@@ -241,17 +241,47 @@ FA-4 验收期间用户发现“点击宠物无互动动作”。旧 C# 语义�
 | E-NA-03 | 无鼠标冒烟回归 | 启动 1332–1438ms；位置/几何/动画/编辑条/设置聚焦/单实例/协议/Composer/退出/空库全部通过 |
 | E-NA-04 | 环境说明 | 该次 `foreground is composer` 软检查为 False（真实桌面交互干扰）；此前干净运行均为 True，本次不作为回归，NA 人工复测核对 |
 
+### NA-3 尺寸/抗锯齿/输入注视（2026-10-09 用户反馈）
+
+| 项 | 实现 |
+|---|---|
+| 输入框缩小 | 360×56 → **296×44**；发送键 36 → 30px；编辑区与内边距同步收紧 |
+| 抗锯齿 | 首次尝试把输入框改成 `WS_EX_LAYERED` + `UpdateLayeredWindow` 逐像素表面（与气泡同套渲染）——**失败并如实记录**：层叠父窗不合成子控件，EDIT 文本不可见（截图证据）。改为普通窗 + **DWM 圆角/1px 边框**（系统级抗锯齿，随主题换色）+ **GDI+ 抗锯齿**绘制发送键圆形与纸飞机，保留子 EDIT |
+| 输入时注视 | 输入框获得前台焦点时，宠物改为注视**编辑光标**（`GetCaretPos` + 编辑窗原点换算；取不到时用编辑框中心），绕过注视椭圆边距；焦点离开后恢复鼠标注视 |
+| 冒烟新增 | `composer focus drives gaze`（运行时投影 `look-row-*`）；文本可见性用带文字的截图人工核对 |
+
+### NA-2 交互与视觉重做（2026-10-09 用户反馈）
+
+用户反馈与决定：输入框没有始终置顶；编辑条删除，改为悬停宠物下滑打开 / 上滑关闭；气泡进度条与输入框外观突兀，需要更好看的实现。
+
+| 项 | 实现 |
+|---|---|
+| 输入框置顶 | 根因：`create_composer_window` 的 ex-style 只有 `WS_EX_TOOLWINDOW`。改为 `WS_EX_TOOLWINDOW \| WS_EX_TOPMOST`；冒烟新增 `composer WS_EX_TOPMOST` 检查 |
+| 编辑条移除 | 删除 `PetsonaStripWindow` 类、窗口、状态、渲染、动画与悬停触发；冒烟改为断言该类不存在 |
+| 滚轮手势 | 用户澄清“上/下滑”指滚轮。宠物窗不持有焦点，故在浮层线程安装 `WH_MOUSE_LL` 低级钩子：仅当 `WindowFromPoint` 命中宠物时转发；滚轮向下打开输入框、向上关闭；其余事件 `CallNextHookEx` 原样放行，不影响正常滚动；`wheel_action` 纯函数 + 单测 |
+| 气泡进度 | 3px 全宽进度条 → 2px 内缩发丝（圆角、弱化轨道）+ 最后 700ms 整体淡出；悬停暂停时剩余时间不变，淡出保持 |
+| 输入框外观 | 尺寸收到 296×44（发送键 30px）；胶囊形圆角、柔和字段色（浅 #F6F8FB / 深 #252B36）、Microsoft YaHei UI 字体（替换 DEFAULT_GUI_FONT）、圆形发送键 + 纸飞机图形、悬停提亮 |
+
+证据：
+
+| 证据ID | 内容 | 结果 |
+|---|---|---|
+| E-NA-05 | `cargo test`（新增 `wheel_down_opens_and_wheel_up_closes_the_composer`） | exit 0；**13 passed** |
+| E-NA-06 | 无鼠标冒烟 | `edit strip removed: True`；`composer WS_EX_TOPMOST: True`；`foreground is composer: True`；滚轮路径 `up-when-closed stays closed=True / down opens=True / up closes=True`；启动日志 `mouse wheel hook installed`；单击/双击/Composer/协议/退出全部通过 |
+| E-NA-07 | 视觉 QA 截图 | `%TEMP%\petsona-qa-bubble.png`（发丝进度 + 淡出）、`%TEMP%\petsona-qa-composer.png`（296×44 + 纸飞机发送键）、`%TEMP%\petsona-qa-composer-text.png`（EDIT 文本可见） |
+| E-NA-08 | 冒烟（NA-3） | `composer WS_EX_TOPMOST: True`；`composer focus drives gaze: True`；`typed text: 'hi'`；滚轮 up/down 路径与既有回归全部通过 |
+
 ### NA 待人工验收清单
 
-1. 单击宠物：约 0.3s 后挥手动作 + 气泡“你好，我在这里”；气泡淡入、倒计时进度、悬停暂停、移开续跑、约 5s 消失。
+1. 单击宠物：约 0.3s 后挥手动作 + 气泡“你好，我在这里”；气泡淡入、发丝倒计时、悬停暂停、移开续跑、约 5s 淡出。
 2. 双击宠物：跳跃动作；双击不会先触发挥手/气泡。
 3. 拖动宠物：跟手移动；按拖动方向播放 running（左/右），中途反向时方向及时切换、无抖动；松手立即回待机。
 4. 边界：拖到屏幕四边/任务栏上沿时宠物完整留在工作区；松手后重启位置恢复。
 5. 穿透：透明像素点击落到桌面；宠物本体可点击；光标保持普通箭头。
 6. 注视：宠物四周及上方共 16 方向跟随；近距离不频繁抖动；离开范围回中性。
-7. 编辑条：贴近任务栏时侧挂/旋转；悬停约 220ms 展开并聚焦；点击立即打开 Composer。
+7. 滚轮手势：鼠标停在宠物上，滚轮向下 → 输入框打开并聚焦；滚轮向上 → 输入框关闭（草稿保留）；编辑条不应再出现；在其他窗口上滚动不受影响。
 8. 气泡：靠近屏幕顶部时翻转到宠物下方；新气泡重置计时。
-9. Composer：无边框跟随宠物；Enter 发送 / Shift+Enter 换行 / Esc 保留草稿；中文输入法组合期间 Enter 不误发。
+9. Composer：尺寸更小、边缘无锯齿（两种主题各看一次）；始终置顶；输入时宠物注视输入光标；Enter 发送 / Shift+Enter 换行 / Esc 保留草稿；中文输入法组合期间 Enter 不误发。
 
 ## 证据与限制
 

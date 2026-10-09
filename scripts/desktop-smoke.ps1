@@ -133,12 +133,6 @@ function Get-SettingsWindow([int]$ProcessId) {
     return $candidate
 }
 
-function Get-StripWindow {
-    $hwnd = [SmokeNative]::FindWindowW('PetsonaStripWindow', [NullString]::Value)
-    if ($hwnd -eq [IntPtr]::Zero) { return $null }
-    return $hwnd
-}
-
 function Get-BubbleWindow {
     # Only visible bubbles count: the other instance may own a hidden one.
     $hwnd = [SmokeNative]::FindVisibleByClass('PetsonaOverlayWindow')
@@ -269,16 +263,9 @@ Write-Host ("  animation distinct frames over 14 samples: {0}  (expected >1)" -f
 $foreground = [SmokeNative]::GetForegroundWindow()
 Write-Host ("  foreground is pet window: {0}  (expected False)" -f ($foreground -eq $hwnd))
 
-# the compact edit strip rides under the pet while the composer is closed
-$strip = Get-StripWindow
-$stripShown = [bool]$strip -and [SmokeNative]::IsWindowVisible($strip)
-$stripSize = ''
-if ($stripShown) {
-    $stripRect = New-Object SmokeNative+RECT
-    [void][SmokeNative]::GetWindowRect($strip, [ref]$stripRect)
-    $stripSize = "{0}x{1}" -f ($stripRect.Right - $stripRect.Left), ($stripRect.Bottom - $stripRect.Top)
-}
-Write-Host ("  edit strip visible: {0} size={1}  (expected 36x6)" -f $stripShown, $stripSize)
+# the edit strip is retired: its window class must not exist anymore
+$strip = [SmokeNative]::FindWindowW('PetsonaStripWindow', [NullString]::Value)
+Write-Host ("  edit strip removed: {0}  (expected True)" -f ($strip -eq [IntPtr]::Zero))
 
 Stop-Petsona
 
@@ -475,13 +462,24 @@ function Wait-ComposerVisible([int]$TimeoutMs) {
 $composer = Wait-ComposerVisible 8000
 Write-Host ("  composer visible: {0}" -f [bool]$composer)
 if (-not $composer) { throw 'composer did not open' }
+$composerStyle = [SmokeNative]::GetExStyle($composer)
+Write-Host ("  composer WS_EX_TOPMOST: {0}  (expected True)" -f (($composerStyle -band $WS_EX_TOPMOST) -ne 0))
 Start-Sleep -Milliseconds 300
-$stripWhileOpen = Get-StripWindow
-Write-Host ("  edit strip hidden while composer open: {0}" -f (-not $stripWhileOpen -or -not [SmokeNative]::IsWindowVisible($stripWhileOpen)))
 $fg = [SmokeNative]::GetForegroundWindow()
 Write-Host ("  foreground is composer: {0}" -f ($fg -eq $composer))
 $edit = [SmokeNative]::FindWindowExW($composer, [IntPtr]::Zero, 'Edit', [NullString]::Value)
 Write-Host ("  edit control found: {0}" -f [bool]$edit)
+
+# while the composer owns focus the pet must watch the text caret, which the
+# runtime projects as one of the V2 look rows
+$typingGaze = $false
+$watch = [System.Diagnostics.Stopwatch]::StartNew()
+while ($watch.ElapsedMilliseconds -lt 1500) {
+    $h = Get-Health $PetPort
+    if ($h -and $h.state -like 'look-row-*') { $typingGaze = $true; break }
+    Start-Sleep -Milliseconds 60
+}
+Write-Host ("  composer focus drives gaze: {0}  (expected True)" -f $typingGaze)
 
 # type "hi" by posting WM_CHAR to the edit control
 foreach ($char in @([char]'h', [char]'i')) {
@@ -496,9 +494,20 @@ Write-Host ("  typed text: '{0}'  (expected 'hi')" -f $typed)
 Start-Sleep -Milliseconds 500
 $hidden = -not [SmokeNative]::IsWindowVisible($composer)
 Write-Host ("  composer hidden after Esc: {0}" -f $hidden)
+
+# wheel gesture path: the WH_MOUSE_LL hook only posts WM_WHEEL_GESTURE while
+# the cursor rests on the pet; posting it directly exercises the same handler
+# without cursor input. Wheel up while closed is a no-op, wheel down opens,
+# wheel up closes (0xFF88 is the low word of -120).
+[void][SmokeNative]::PostMessageW($petHwnd, 0x8002, [UIntPtr]120, [IntPtr]::Zero)
 Start-Sleep -Milliseconds 300
-$stripBack = Get-StripWindow
-Write-Host ("  edit strip back after Esc: {0}" -f ([bool]$stripBack -and [SmokeNative]::IsWindowVisible($stripBack)))
+$wheelUpClosed = -not [SmokeNative]::IsWindowVisible($composer)
+[void][SmokeNative]::PostMessageW($petHwnd, 0x8002, [UIntPtr]65416, [IntPtr]::Zero)
+$wheelOpened = [bool](Wait-ComposerVisible 3000)
+[void][SmokeNative]::PostMessageW($petHwnd, 0x8002, [UIntPtr]120, [IntPtr]::Zero)
+Start-Sleep -Milliseconds 400
+$wheelClosed = -not [SmokeNative]::IsWindowVisible($composer)
+Write-Host ("  wheel gesture: up-when-closed stays closed={0}; down opens={1}; up closes={2}" -f $wheelUpClosed, $wheelOpened, $wheelClosed)
 
 # reopen: the draft must still be there
 [void][SmokeNative]::PostMessageW($petHwnd, 0x8001, [UIntPtr]::Zero, [IntPtr]::Zero)
@@ -566,7 +575,7 @@ Write-Host '  - position memory: drag, quit, relaunch -> pet returns to the last
 Write-Host '  - cursor over the pet stays the normal arrow (no busy ring)'
 Write-Host '  - gaze: look follows the cursor in all 16 directions (including above the pet),'
 Write-Host '    stays neutral very close to the centre, and does not jitter near the boundary'
-Write-Host '  - bubble: hover pauses the progress bar and resume continues from the remaining time;'
+Write-Host '  - bubble: hover pauses the hairline countdown and resume continues from the remaining time;'
 Write-Host '    near the top of the screen the bubble flips below the pet; fade-in is visible'
 Write-Host '  - tray: settings / show-hide / quit'
 

@@ -13,7 +13,7 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::ffi::c_void;
 use std::ptr;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicIsize, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
@@ -29,13 +29,18 @@ use windows_sys::Win32::Graphics::Dwm::{
     DwmSetWindowAttribute, DWMWA_BORDER_COLOR, DWMWA_WINDOW_CORNER_PREFERENCE,
 };
 use windows_sys::Win32::Graphics::Gdi::{
-    BeginPaint, CreateCompatibleDC, CreateDIBSection, CreateRoundRectRgn, CreateSolidBrush,
-    DeleteDC, DeleteObject, DrawTextW, Ellipse, EndPaint, FillRect, GetDC, GetMonitorInfoW,
-    GetStockObject, InvalidateRect, MonitorFromPoint, MonitorFromRect, ReleaseDC, SelectObject,
-    SetBkColor, SetBkMode, SetTextColor, SetWindowRgn, BITMAPINFO, BITMAPINFOHEADER, BI_RGB,
-    BLENDFUNCTION, DEFAULT_GUI_FONT, DIB_RGB_COLORS, DT_CENTER, DT_SINGLELINE, DT_VCENTER, HGDIOBJ,
-    MONITORINFO, MONITOR_DEFAULTTONEAREST, MONITOR_DEFAULTTOPRIMARY, NULL_PEN, PAINTSTRUCT,
-    TRANSPARENT,
+    BeginPaint, CreateCompatibleDC, CreateDIBSection, CreateFontW, CreateSolidBrush, DeleteDC,
+    DeleteObject, EndPaint, FillRect, GetDC, GetMonitorInfoW, GetStockObject, InvalidateRect,
+    MonitorFromPoint, MonitorFromRect, ReleaseDC, SelectObject, SetBkColor, SetTextColor,
+    BITMAPINFO, BITMAPINFOHEADER, BI_RGB, BLENDFUNCTION, CLEARTYPE_QUALITY, CLIP_DEFAULT_PRECIS,
+    DEFAULT_CHARSET, DEFAULT_GUI_FONT, DEFAULT_PITCH, DIB_RGB_COLORS, FF_DONTCARE, FW_NORMAL,
+    HGDIOBJ, MONITORINFO, MONITOR_DEFAULTTONEAREST, MONITOR_DEFAULTTOPRIMARY, OUT_DEFAULT_PRECIS,
+    PAINTSTRUCT,
+};
+use windows_sys::Win32::Graphics::GdiPlus::{
+    FillModeWinding, GdipCreateFromHDC, GdipCreateSolidFill, GdipDeleteBrush, GdipDeleteGraphics,
+    GdipFillEllipse, GdipFillPolygon, GdipSetSmoothingMode, GpBrush, GpGraphics, GpSolidFill,
+    PointF, SmoothingModeAntiAlias,
 };
 use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows_sys::Win32::UI::HiDpi::GetDpiForWindow;
@@ -43,17 +48,18 @@ use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
     GetKeyState, ReleaseCapture, SetCapture, SetFocus, VK_ESCAPE, VK_RETURN, VK_SHIFT,
 };
 use windows_sys::Win32::UI::WindowsAndMessaging::{
-    CallWindowProcW, CreateWindowExW, DefWindowProcW, DispatchMessageW, GetClientRect,
-    GetCursorPos, GetForegroundWindow, GetMessageW, GetWindowLongPtrW, GetWindowRect,
-    GetWindowTextLengthW, GetWindowTextW, KillTimer, LoadCursorW, PostMessageW, PostQuitMessage,
-    RegisterClassExW, SendMessageW, SetCursor, SetForegroundWindow, SetTimer, SetWindowLongPtrW,
-    SetWindowPos, SetWindowTextW, ShowWindow, TranslateMessage, UpdateLayeredWindow,
-    ES_AUTOVSCROLL, ES_LEFT, ES_MULTILINE, ES_WANTRETURN, GWLP_USERDATA, GWL_EXSTYLE, GWL_WNDPROC,
-    IDC_ARROW, IDC_HAND, MSG, SWP_NOACTIVATE, SWP_NOSIZE, SWP_NOZORDER, SW_HIDE, SW_SHOW,
-    SW_SHOWNOACTIVATE, ULW_ALPHA, WM_APP, WM_CTLCOLOREDIT, WM_DESTROY, WM_ERASEBKGND, WM_KEYDOWN,
-    WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEMOVE, WM_NCHITTEST, WM_PAINT, WM_SETCURSOR, WM_TIMER,
-    WNDCLASSEXW, WS_CHILD, WS_EX_LAYERED, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST,
-    WS_EX_TRANSPARENT, WS_POPUP, WS_VISIBLE,
+    CallNextHookEx, CallWindowProcW, CreateWindowExW, DefWindowProcW, DispatchMessageW,
+    GetCaretPos, GetClientRect, GetCursorPos, GetForegroundWindow, GetMessageW, GetWindowLongPtrW,
+    GetWindowRect, GetWindowTextLengthW, GetWindowTextW, KillTimer, LoadCursorW, PostMessageW,
+    PostQuitMessage, RegisterClassExW, SendMessageW, SetCursor, SetForegroundWindow, SetTimer,
+    SetWindowLongPtrW, SetWindowPos, SetWindowTextW, SetWindowsHookExW, ShowWindow,
+    TranslateMessage, UnhookWindowsHookEx, UpdateLayeredWindow, WindowFromPoint, ES_AUTOVSCROLL,
+    ES_LEFT, ES_MULTILINE, ES_WANTRETURN, GWLP_USERDATA, GWL_EXSTYLE, GWL_WNDPROC, IDC_ARROW,
+    IDC_HAND, MSG, MSLLHOOKSTRUCT, SWP_NOACTIVATE, SWP_NOSIZE, SWP_NOZORDER, SW_HIDE, SW_SHOW,
+    SW_SHOWNOACTIVATE, ULW_ALPHA, WH_MOUSE_LL, WM_APP, WM_CTLCOLOREDIT, WM_DESTROY, WM_ERASEBKGND,
+    WM_KEYDOWN, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEMOVE, WM_MOUSEWHEEL, WM_NCHITTEST, WM_PAINT,
+    WM_SETCURSOR, WM_TIMER, WNDCLASSEXW, WS_CHILD, WS_EX_LAYERED, WS_EX_NOACTIVATE,
+    WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_EX_TRANSPARENT, WS_POPUP, WS_VISIBLE,
 };
 
 const CLASS_NAME: &str = "PetsonaPetWindow";
@@ -97,7 +103,9 @@ const BUBBLE_PADDING_X: f32 = 16.0;
 const BUBBLE_PADDING_Y: f32 = 12.0;
 const BUBBLE_MAX_TEXT_WIDTH: f32 = 300.0;
 const BUBBLE_RADIUS: f32 = 12.0;
-const BUBBLE_PROGRESS_HEIGHT: i32 = 3;
+const BUBBLE_PROGRESS_HEIGHT: i32 = 2;
+const BUBBLE_PROGRESS_INSET: i32 = 14;
+const BUBBLE_FADE_OUT_MS: u64 = 700;
 const BUBBLE_GAP: i32 = 10;
 const EDGE_MARGIN: i32 = 8;
 
@@ -106,40 +114,37 @@ const LIGHT_FILL: u32 = 0xF2FF_FFFF;
 const LIGHT_BORDER: u32 = 0x4600_0000;
 const LIGHT_TEXT: u32 = 0xFF20_2020;
 const LIGHT_ACCENT: u32 = 0xFF00_78D4;
-const LIGHT_TRACK: u32 = 0x2D00_0000;
+const LIGHT_TRACK: u32 = 0x1800_0000;
 const DARK_FILL: u32 = 0xF22B_2B2B;
 const DARK_BORDER: u32 = 0x46FF_FFFF;
 const DARK_TEXT: u32 = 0xFFF0_F0F0;
 const DARK_ACCENT: u32 = 0xFF00_99FF;
-const DARK_TRACK: u32 = 0x46FF_FFFF;
+const DARK_TRACK: u32 = 0x24FF_FFFF;
 
 const COMPOSER_CLASS_NAME: &str = "PetsonaComposerWindow";
-const STRIP_CLASS_NAME: &str = "PetsonaStripWindow";
-const STRIP_THICKNESS: i32 = 6;
-const STRIP_LENGTH: i32 = 36;
-const STRIP_EXPANDED_LENGTH: i32 = 72;
-const STRIP_ANIMATION_MS: u64 = 120;
-const STRIP_HOVER_OPEN_MS: u64 = 220;
+/// The pet window never owns focus, so a WH_MOUSE_LL hook forwards wheel
+/// input that happens while the cursor is over the pet: scrolling down opens
+/// the composer, scrolling up closes it.
+const WM_WHEEL_GESTURE: u32 = WM_APP + 2;
 /// OverlayLayout.Gap: spacing between the pet and panels.
 const GAP: i32 = 12;
 /// OverlayLayout.ComposerMinWidth: side hysteresis threshold.
 const COMPOSER_MIN_WIDTH: i32 = 280;
-const COMPOSER_WIDTH: i32 = 360;
-const COMPOSER_HEIGHT: i32 = 56;
-const COMPOSER_RADIUS: i32 = 12;
-const COMPOSER_SEND_SIZE: i32 = 40;
+const COMPOSER_WIDTH: i32 = 296;
+const COMPOSER_HEIGHT: i32 = 44;
+const COMPOSER_SEND_SIZE: i32 = 30;
+const COMPOSER_SEND_INSET: i32 = 8;
 const COMPOSER_EDIT_ID: i32 = 1001;
 /// Posted to the pet window to open the composer (also used by test hooks).
 pub const WM_OPEN_COMPOSER: u32 = WM_APP + 1;
 
 // GDI COLORREF is 0x00BBGGRR.
-const COLOR_LIGHT_BG: u32 = 0x00FF_FFFF;
+const COLOR_LIGHT_BG: u32 = 0x00FB_F8F6;
+const COLOR_LIGHT_BORDER: u32 = 0x00EC_E7E3;
 const COLOR_LIGHT_TEXT: u32 = 0x0020_2020;
-const COLOR_LIGHT_ACCENT: u32 = 0x00D4_7800;
-const COLOR_DARK_BG: u32 = 0x002B_2B2B;
+const COLOR_DARK_BG: u32 = 0x0036_2B25;
+const COLOR_DARK_BORDER: u32 = 0x004C_413B;
 const COLOR_DARK_TEXT: u32 = 0x00F0_F0F0;
-const COLOR_DARK_ACCENT: u32 = 0x00FF_9900;
-const COLOR_ARROW: u32 = 0x00FF_FFFF;
 
 static DARK_THEME: AtomicBool = AtomicBool::new(false);
 
@@ -186,24 +191,11 @@ enum OverlaySide {
     Right,
 }
 
-struct StripState {
-    hwnd: HWND,
-    hovered: bool,
-    hover_started: Option<Instant>,
-    expanded: f32,
-    animation_from: f32,
-    animation_target: f32,
-    animation_started: Instant,
-    render_key: String,
-    pixels: Vec<u8>,
-    width: i32,
-    height: i32,
-    visible: bool,
-}
-
 struct ComposerState {
     hwnd: HWND,
     edit: HWND,
+    font: isize,
+    dwm_dark: Option<bool>,
     open: bool,
     draft: String,
     button_hovered: bool,
@@ -218,7 +210,6 @@ struct State {
     pet_hwnd: HWND,
     bubble_hwnd: HWND,
     composer: ComposerState,
-    strip: StripState,
     last_side: Option<OverlaySide>,
     composer_side: Option<OverlaySide>,
     bubble: BubbleState,
@@ -254,8 +245,8 @@ thread_local! {
 static PET_CLASS: OnceLock<bool> = OnceLock::new();
 static BUBBLE_CLASS: OnceLock<bool> = OnceLock::new();
 static COMPOSER_CLASS: OnceLock<bool> = OnceLock::new();
-static STRIP_CLASS: OnceLock<bool> = OnceLock::new();
 static PET_HWND: std::sync::atomic::AtomicIsize = std::sync::atomic::AtomicIsize::new(0);
+static MOUSE_HOOK: AtomicIsize = AtomicIsize::new(0);
 
 /// Spawns the overlay thread that owns the pet window and its message pump.
 pub fn spawn(engine: Arc<Mutex<RuntimeEngine>>) {
@@ -271,7 +262,6 @@ unsafe fn thread_main(engine: Arc<Mutex<RuntimeEngine>>) {
     if !register_class(CLASS_NAME, &PET_CLASS)
         || !register_class(BUBBLE_CLASS_NAME, &BUBBLE_CLASS)
         || !register_class(COMPOSER_CLASS_NAME, &COMPOSER_CLASS)
-        || !register_class(STRIP_CLASS_NAME, &STRIP_CLASS)
     {
         log("overlay: RegisterClassExW failed");
         return;
@@ -285,9 +275,8 @@ unsafe fn thread_main(engine: Arc<Mutex<RuntimeEngine>>) {
     apply_dwm_attributes(hwnd);
     let bubble_hwnd = create_window(BUBBLE_CLASS_NAME, "Petsona");
     apply_dwm_attributes(bubble_hwnd);
-    let strip_hwnd = create_window(STRIP_CLASS_NAME, "Petsona");
-    apply_dwm_attributes(strip_hwnd);
     let composer_hwnd = create_composer_window();
+    apply_composer_dwm(composer_hwnd, DARK_THEME.load(Ordering::Relaxed));
     let composer_edit = if composer_hwnd.is_null() {
         ptr::null_mut()
     } else {
@@ -309,25 +298,13 @@ unsafe fn thread_main(engine: Arc<Mutex<RuntimeEngine>>) {
         engine,
         pet_hwnd: hwnd,
         bubble_hwnd,
-        strip: StripState {
-            hwnd: strip_hwnd,
-            hovered: false,
-            hover_started: None,
-            expanded: 0.0,
-            animation_from: 0.0,
-            animation_target: 0.0,
-            animation_started: Instant::now(),
-            render_key: String::new(),
-            pixels: Vec::new(),
-            width: 0,
-            height: 0,
-            visible: false,
-        },
         last_side: None,
         composer_side: None,
         composer: ComposerState {
             hwnd: composer_hwnd,
             edit: composer_edit,
+            font: 0,
+            dwm_dark: None,
             open: false,
             draft: String::new(),
             button_hovered: false,
@@ -374,12 +351,28 @@ unsafe fn thread_main(engine: Arc<Mutex<RuntimeEngine>>) {
 
     SetTimer(hwnd, VISUAL_TIMER, VISUAL_INTERVAL_MS, None);
     SetTimer(hwnd, HIT_TIMER, HIT_INTERVAL_MS, None);
+    let hook = SetWindowsHookExW(
+        WH_MOUSE_LL,
+        Some(mouse_hook_proc),
+        GetModuleHandleW(ptr::null()),
+        0,
+    );
+    if hook.is_null() {
+        log("overlay: mouse wheel hook not installed");
+    } else {
+        MOUSE_HOOK.store(hook as isize, Ordering::Relaxed);
+        log("overlay: mouse wheel hook installed");
+    }
     log("overlay: pet window created (hidden until the runtime is ready)");
 
     let mut msg: MSG = std::mem::zeroed();
     while GetMessageW(&mut msg, ptr::null_mut(), 0, 0) > 0 {
         TranslateMessage(&msg);
         DispatchMessageW(&msg);
+    }
+    let hook = MOUSE_HOOK.swap(0, Ordering::Relaxed);
+    if hook != 0 {
+        UnhookWindowsHookEx(hook as *mut c_void);
     }
     log("overlay: message loop ended");
 }
@@ -476,20 +469,6 @@ unsafe extern "system" fn wnd_proc(
                 _ => None,
             };
         }
-        if !state.strip.hwnd.is_null() && hwnd == state.strip.hwnd {
-            return match msg {
-                WM_SETCURSOR => {
-                    SetCursor(LoadCursorW(ptr::null_mut(), IDC_ARROW));
-                    Some(1)
-                }
-                WM_LBUTTONUP => {
-                    open_composer(state);
-                    Some(0)
-                }
-                WM_DESTROY => Some(0),
-                _ => None,
-            };
-        }
         if !state.composer.hwnd.is_null() && hwnd == state.composer.hwnd {
             return composer_wnd_proc_msg(hwnd, msg, wparam, lparam, state);
         }
@@ -520,6 +499,23 @@ unsafe extern "system" fn wnd_proc(
             WM_NCHITTEST => Some(on_nchittest(hwnd, state, lparam)),
             WM_OPEN_COMPOSER => {
                 open_composer(state);
+                Some(0)
+            }
+            WM_WHEEL_GESTURE => {
+                if !state.dragging {
+                    let delta = wparam as u16 as i16 as i32;
+                    match wheel_action(delta, state.composer.open) {
+                        WheelAction::Open => {
+                            open_composer(state);
+                            log("composer: opened by wheel down");
+                        }
+                        WheelAction::Close => {
+                            close_composer(state);
+                            log("composer: closed by wheel up");
+                        }
+                        WheelAction::None => {}
+                    }
+                }
                 Some(0)
             }
             WM_SETCURSOR => {
@@ -605,7 +601,6 @@ unsafe fn refresh(hwnd: HWND, state: &mut State) {
     }
     update_bubble(state);
     update_composer(state);
-    update_strip(state);
 }
 
 /// Renders the current runtime frame; returns false when the atlas could not
@@ -1221,6 +1216,31 @@ unsafe fn on_nchittest(hwnd: HWND, state: &State, lparam: LPARAM) -> LRESULT {
 
 /// Samples the global cursor at 16 ms and drives the runtime gaze target with
 /// the stabilized official direction. Mirrors `AppController.SampleGaze`.
+/// Screen position of the edit caret, falling back to the field centre while
+/// the caret is not materialised yet.
+unsafe fn composer_caret_position(edit: HWND) -> Option<(f32, f32)> {
+    if edit.is_null() {
+        return None;
+    }
+    let mut rect: RECT = std::mem::zeroed();
+    if GetWindowRect(edit, &mut rect) == 0 {
+        return None;
+    }
+    let mut caret: POINT = std::mem::zeroed();
+    if GetCaretPos(&mut caret) == 0 {
+        return Some((
+            (rect.left + rect.right) as f32 / 2.0,
+            (rect.top + rect.bottom) as f32 / 2.0,
+        ));
+    }
+    // GetCaretPos is in edit client coordinates; the edit has no border, so
+    // the window origin maps directly. +8 aims at the middle of the text line.
+    Some((
+        rect.left as f32 + caret.x as f32 + 2.0,
+        rect.top as f32 + caret.y as f32 + 8.0,
+    ))
+}
+
 unsafe fn update_gaze(hwnd: HWND, state: &mut State) {
     if !state.visible || state.dragging || state.fault_reported {
         clear_gaze(state);
@@ -1230,6 +1250,29 @@ unsafe fn update_gaze(hwnd: HWND, state: &mut State) {
         clear_gaze(state);
         return;
     };
+
+    // While the composer is focused the pet watches the text caret so typing
+    // feels attended. The caret sits outside the gaze ellipse, so this branch
+    // bypasses the enter/exit margins and always drives the pose.
+    if state.composer.open && GetForegroundWindow() == state.composer.hwnd {
+        if let Some((caret_x, caret_y)) = composer_caret_position(state.composer.edit) {
+            let mut rect: RECT = std::mem::zeroed();
+            if GetWindowRect(hwnd, &mut rect) != 0 {
+                let dx = caret_x - (rect.left as f32 + width as f32 / 2.0);
+                let dy = caret_y - (rect.top as f32 + height as f32 / 2.0);
+                let direction = gaze_stabilize(state, dx, dy);
+                let (unit_x, unit_y) = gaze_unit_vector(direction);
+                if let Ok(engine) = state.engine.lock() {
+                    let _ = engine.send(RuntimeCommand::SetGazeTarget {
+                        dx: unit_x,
+                        dy: unit_y,
+                    });
+                }
+                state.gaze_active = true;
+                return;
+            }
+        }
+    }
 
     let mut cursor: POINT = std::mem::zeroed();
     if GetCursorPos(&mut cursor) == 0 {
@@ -1396,6 +1439,52 @@ fn hit(state: &State, x: i32, y: i32) -> bool {
     frame_hit || idle_hit
 }
 
+/// Closes the composer while keeping the draft (also used by the Esc path).
+fn close_composer(state: &mut State) {
+    if !state.composer.open {
+        return;
+    }
+    state.composer.open = false;
+    state.composer_side = None;
+    unsafe {
+        ShowWindow(state.composer.hwnd, SW_HIDE);
+    }
+    log("composer: closed (draft kept)");
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum WheelAction {
+    None,
+    Open,
+    Close,
+}
+
+/// Scroll down over the pet opens the composer, scroll up closes it.
+fn wheel_action(delta: i32, composer_open: bool) -> WheelAction {
+    if delta < 0 && !composer_open {
+        WheelAction::Open
+    } else if delta > 0 && composer_open {
+        WheelAction::Close
+    } else {
+        WheelAction::None
+    }
+}
+
+/// Global low-level wheel hook. Only wheel input that lands on the pet is
+/// forwarded; everything else is passed through untouched, so normal
+/// scrolling keeps working.
+unsafe extern "system" fn mouse_hook_proc(code: i32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
+    if code >= 0 && wparam == WM_MOUSEWHEEL as usize {
+        let info = &*(lparam as *const MSLLHOOKSTRUCT);
+        let pet = PET_HWND.load(Ordering::Relaxed);
+        if pet != 0 && WindowFromPoint(info.pt) == pet as HWND {
+            let delta = ((info.mouseData >> 16) & 0xFFFF) as u16 as i16;
+            PostMessageW(pet as HWND, WM_WHEEL_GESTURE, delta as isize as usize, 0);
+        }
+    }
+    CallNextHookEx(ptr::null_mut(), code, wparam, lparam)
+}
+
 /// Drives the speech bubble from the runtime projection: fade-in, progress
 /// bar, hover pause (polled, no injected input) and pet-relative placement.
 fn update_bubble(state: &mut State) {
@@ -1490,7 +1579,16 @@ fn update_bubble(state: &mut State) {
         state.bubble.fade_started = Instant::now();
     }
     let elapsed = state.bubble.fade_started.elapsed().as_millis() as u64;
-    let opacity = ((elapsed * 255) / BUBBLE_FADE_MS).min(255) as u8;
+    let fade_in = ((elapsed * 255) / BUBBLE_FADE_MS).min(255) as f32 / 255.0;
+    // Fade the final stretch instead of cutting the card off abruptly; hover
+    // pauses the runtime countdown, which holds this value because
+    // `remaining_ms` stops decreasing while paused.
+    let fade_out = if remaining_ms <= 0 || remaining_ms as u64 >= BUBBLE_FADE_OUT_MS {
+        1.0
+    } else {
+        remaining_ms as f32 / BUBBLE_FADE_OUT_MS as f32
+    };
+    let opacity = ((fade_in * fade_out) * 255.0).round().clamp(0.0, 255.0) as u8;
 
     unsafe {
         let mut pet_rect: RECT = std::mem::zeroed();
@@ -1564,7 +1662,7 @@ fn render_bubble(text: &str, progress: f32) -> Option<(Vec<u8>, i32, i32)> {
     let width = ((text_width.ceil() as i32) + (BUBBLE_PADDING_X as i32 * 2))
         .clamp(120, BUBBLE_MAX_TEXT_WIDTH as i32 + 32);
     let height =
-        text_height.ceil() as i32 + (BUBBLE_PADDING_Y as i32 * 2) + BUBBLE_PROGRESS_HEIGHT + 2;
+        text_height.ceil() as i32 + (BUBBLE_PADDING_Y as i32 * 2) + BUBBLE_PROGRESS_HEIGHT + 6;
     let mut pixels = vec![0u8; (width * height * 4) as usize];
 
     let dark = DARK_THEME.load(Ordering::Relaxed);
@@ -1599,31 +1697,40 @@ fn render_bubble(text: &str, progress: f32) -> Option<(Vec<u8>, i32, i32)> {
         }
     }
 
-    let bar_left = BUBBLE_PADDING_X as i32;
-    let bar_top = height - BUBBLE_PROGRESS_HEIGHT - 3;
-    let bar_width = (width - (BUBBLE_PADDING_X as i32 * 2)).max(0);
-    fill_rect_argb(
+    // Hairline countdown: inset from the rounded corners, round caps, and a
+    // barely-there track so the bubble reads as a card instead of a widget.
+    let bar_left = BUBBLE_PROGRESS_INSET;
+    let bar_right = width - BUBBLE_PROGRESS_INSET;
+    let bar_top = height - BUBBLE_PROGRESS_HEIGHT - 4;
+    let bar_bottom = bar_top + BUBBLE_PROGRESS_HEIGHT;
+    let bar_radius = BUBBLE_PROGRESS_HEIGHT as f32 / 2.0;
+    fill_rounded_rect_argb(
         &mut pixels,
         width,
+        height,
         bar_left,
         bar_top,
-        bar_width,
-        BUBBLE_PROGRESS_HEIGHT,
+        bar_right,
+        bar_bottom,
+        bar_radius,
         track,
     );
-    fill_rect_argb(
+    let fill_right = bar_left + (((bar_right - bar_left) as f32) * progress).round() as i32;
+    fill_rounded_rect_argb(
         &mut pixels,
         width,
+        height,
         bar_left,
         bar_top,
-        ((bar_width as f32) * progress).round() as i32,
-        BUBBLE_PROGRESS_HEIGHT,
+        fill_right,
+        bar_bottom,
+        bar_radius,
         accent,
     );
 
     let layout_width = width as f32 - BUBBLE_PADDING_X * 2.0;
     let layout_height =
-        height as f32 - BUBBLE_PADDING_Y * 2.0 - BUBBLE_PROGRESS_HEIGHT as f32 - 2.0;
+        height as f32 - BUBBLE_PADDING_Y * 2.0 - BUBBLE_PROGRESS_HEIGHT as f32 - 6.0;
     let _ = gdi_text::draw(
         &mut pixels,
         width,
@@ -1680,23 +1787,29 @@ fn blend_argb(pixels: &mut [u8], index: usize, argb: u32, coverage: f32) {
 }
 
 #[allow(clippy::too_many_arguments)]
-fn fill_rect_argb(
+fn fill_rounded_rect_argb(
     pixels: &mut [u8],
     buffer_width: i32,
-    x: i32,
-    y: i32,
-    width: i32,
-    height: i32,
+    buffer_height: i32,
+    left: i32,
+    top: i32,
+    right: i32,
+    bottom: i32,
+    radius: f32,
     argb: u32,
 ) {
-    let buffer_height = (pixels.len() / (buffer_width as usize * 4)) as i32;
-    for row in y..(y + height) {
-        for column in x..(x + width) {
-            if column < 0 || row < 0 || column >= buffer_width || row >= buffer_height {
-                continue;
+    if right <= left || bottom <= top {
+        return;
+    }
+    let rect = (left as f32, top as f32, right as f32, bottom as f32);
+    for row in top.max(0)..bottom.min(buffer_height) {
+        for column in left.max(0)..right.min(buffer_width) {
+            let coverage =
+                rounded_rect_coverage(column as f32 + 0.5, row as f32 + 0.5, rect, radius);
+            if coverage > 0.0 {
+                let index = ((row * buffer_width + column) * 4) as usize;
+                blend_argb(pixels, index, argb, coverage);
             }
-            let index = ((row * buffer_width + column) * 4) as usize;
-            blend_argb(pixels, index, argb, 1.0);
         }
     }
 }
@@ -1752,8 +1865,11 @@ fn with_state<R>(f: impl FnOnce(&mut State) -> R, fallback: R) -> R {
 unsafe fn create_composer_window() -> HWND {
     let class_w = wide(COMPOSER_CLASS_NAME);
     let title_w = wide("Petsona");
-    let hwnd = CreateWindowExW(
-        WS_EX_TOOLWINDOW,
+    // Layered per-pixel surface: the rounded pill, hairline border, circular
+    // send button and glyph are anti-aliased in software (the old GDI
+    // RoundRect/Ellipse/Polygon path produced hard, jagged edges).
+    CreateWindowExW(
+        WS_EX_TOOLWINDOW | WS_EX_TOPMOST,
         class_w.as_ptr(),
         title_w.as_ptr(),
         WS_POPUP,
@@ -1765,21 +1881,7 @@ unsafe fn create_composer_window() -> HWND {
         ptr::null_mut(),
         GetModuleHandleW(ptr::null()),
         ptr::null(),
-    );
-    if !hwnd.is_null() {
-        let region = CreateRoundRectRgn(
-            0,
-            0,
-            COMPOSER_WIDTH + 1,
-            COMPOSER_HEIGHT + 1,
-            COMPOSER_RADIUS * 2,
-            COMPOSER_RADIUS * 2,
-        );
-        if !region.is_null() {
-            SetWindowRgn(hwnd, region, 1);
-        }
-    }
-    hwnd
+    )
 }
 
 unsafe fn create_composer_edit(parent: HWND) -> HWND {
@@ -1796,9 +1898,9 @@ unsafe fn create_composer_edit(parent: HWND) -> HWND {
         ptr::null(),
         style,
         16,
-        10,
-        COMPOSER_WIDTH - 16 - COMPOSER_SEND_SIZE - 24,
-        COMPOSER_HEIGHT - 20,
+        12,
+        COMPOSER_WIDTH - 16 - COMPOSER_SEND_SIZE - COMPOSER_SEND_INSET - 10,
+        COMPOSER_HEIGHT - 24,
         parent,
         COMPOSER_EDIT_ID as isize as *mut c_void,
         GetModuleHandleW(ptr::null()),
@@ -1897,60 +1999,107 @@ unsafe fn paint_composer(state: &mut State) {
     let mut rect: RECT = std::mem::zeroed();
     GetClientRect(hwnd, &mut rect);
     let dark = DARK_THEME.load(Ordering::Relaxed);
-    let bg = if dark { COLOR_DARK_BG } else { COLOR_LIGHT_BG };
-    let background = CreateSolidBrush(bg);
+    let field = if dark { COLOR_DARK_BG } else { COLOR_LIGHT_BG };
+    let background = CreateSolidBrush(field);
     if !background.is_null() {
         FillRect(dc, &rect, background);
         DeleteObject(background as HGDIOBJ);
     }
 
-    let accent = if dark {
-        COLOR_DARK_ACCENT
-    } else {
-        COLOR_LIGHT_ACCENT
-    };
-    let button_x = COMPOSER_WIDTH - 8 - COMPOSER_SEND_SIZE;
-    let button_y = (COMPOSER_HEIGHT - COMPOSER_SEND_SIZE) / 2;
-    let brush = CreateSolidBrush(accent);
-    if !brush.is_null() {
-        let old_brush = SelectObject(dc, brush);
-        let old_pen = SelectObject(dc, GetStockObject(NULL_PEN));
-        let _ = Ellipse(
-            dc,
-            button_x,
-            button_y,
-            button_x + COMPOSER_SEND_SIZE,
-            button_y + COMPOSER_SEND_SIZE,
-        );
-        SelectObject(dc, old_pen);
-        SelectObject(dc, old_brush);
-        DeleteObject(brush as HGDIOBJ);
+    // GDI+ gives the send button and the paper-plane glyph real
+    // anti-aliasing; the rounded corners and 1 px border come from DWM (see
+    // `apply_composer_dwm`), which keeps the child EDIT control working — a
+    // layered `UpdateLayeredWindow` surface would hide the text input.
+    if gdi_text::ensure_started() {
+        let mut graphics: *mut GpGraphics = ptr::null_mut();
+        if GdipCreateFromHDC(dc, &mut graphics) == 0 && !graphics.is_null() {
+            GdipSetSmoothingMode(graphics, SmoothingModeAntiAlias);
+            let mut accent = if dark { DARK_ACCENT } else { LIGHT_ACCENT };
+            if state.composer.button_hovered {
+                accent = lighten_argb(accent, 20);
+            }
+            let mut brush: *mut GpSolidFill = ptr::null_mut();
+            if GdipCreateSolidFill(accent, &mut brush) == 0 && !brush.is_null() {
+                let size = COMPOSER_SEND_SIZE as f32;
+                let button_x = (COMPOSER_WIDTH - COMPOSER_SEND_SIZE - COMPOSER_SEND_INSET) as f32;
+                let button_y = ((COMPOSER_HEIGHT - COMPOSER_SEND_SIZE) / 2) as f32;
+                GdipFillEllipse(
+                    graphics,
+                    brush as *mut GpBrush,
+                    button_x,
+                    button_y,
+                    size,
+                    size,
+                );
+                let points = [
+                    PointF {
+                        X: button_x + size * 0.26,
+                        Y: button_y + size * 0.52,
+                    },
+                    PointF {
+                        X: button_x + size * 0.78,
+                        Y: button_y + size * 0.26,
+                    },
+                    PointF {
+                        X: button_x + size * 0.56,
+                        Y: button_y + size * 0.78,
+                    },
+                    PointF {
+                        X: button_x + size * 0.47,
+                        Y: button_y + size * 0.56,
+                    },
+                ];
+                GdipFillPolygon(
+                    graphics,
+                    brush as *mut GpBrush,
+                    points.as_ptr(),
+                    points.len() as i32,
+                    FillModeWinding,
+                );
+                GdipDeleteBrush(brush as *mut GpBrush);
+            }
+            GdipDeleteGraphics(graphics);
+        }
     }
-
-    let font = GetStockObject(DEFAULT_GUI_FONT);
-    let old_font = SelectObject(dc, font);
-    SetBkMode(dc, TRANSPARENT as i32);
-    SetTextColor(dc, COLOR_ARROW);
-    let arrow = wide("↑");
-    let mut text_rect = RECT {
-        left: button_x,
-        top: button_y,
-        right: button_x + COMPOSER_SEND_SIZE,
-        bottom: button_y + COMPOSER_SEND_SIZE,
-    };
-    DrawTextW(
-        dc,
-        arrow.as_ptr(),
-        -1,
-        &mut text_rect,
-        DT_CENTER | DT_VCENTER | DT_SINGLELINE,
-    );
-    SelectObject(dc, old_font);
     EndPaint(hwnd, &ps);
 }
 
+fn lighten_argb(color: u32, amount: u32) -> u32 {
+    let a = color & 0xFF00_0000;
+    let r = ((color >> 16) & 0xFF).saturating_add(amount).min(255);
+    let g = ((color >> 8) & 0xFF).saturating_add(amount).min(255);
+    let b = (color & 0xFF).saturating_add(amount).min(255);
+    a | (r << 16) | (g << 8) | b
+}
+
+/// Rounds the composer like a modern system field and lets DWM draw the
+/// anti-aliased 1 px frame; the colour follows the app theme.
+unsafe fn apply_composer_dwm(hwnd: HWND, dark: bool) {
+    if hwnd.is_null() {
+        return;
+    }
+    let round: u32 = 2; // DWMWCP_ROUND
+    let border: u32 = if dark {
+        COLOR_DARK_BORDER
+    } else {
+        COLOR_LIGHT_BORDER
+    };
+    let _ = DwmSetWindowAttribute(
+        hwnd,
+        DWMWA_WINDOW_CORNER_PREFERENCE as u32,
+        &round as *const _ as *const c_void,
+        std::mem::size_of::<u32>() as u32,
+    );
+    let _ = DwmSetWindowAttribute(
+        hwnd,
+        DWMWA_BORDER_COLOR as u32,
+        &border as *const _ as *const c_void,
+        std::mem::size_of::<u32>() as u32,
+    );
+}
+
 fn in_send_button(x: i32, y: i32) -> bool {
-    let button_x = COMPOSER_WIDTH - 8 - COMPOSER_SEND_SIZE;
+    let button_x = COMPOSER_WIDTH - COMPOSER_SEND_INSET - COMPOSER_SEND_SIZE;
     let button_y = (COMPOSER_HEIGHT - COMPOSER_SEND_SIZE) / 2;
     x >= button_x
         && x < button_x + COMPOSER_SEND_SIZE
@@ -1985,10 +2134,42 @@ fn composer_send(state: &mut State, text: &str) -> bool {
     true
 }
 
+/// Lazily installs the modern UI font (the stock `DEFAULT_GUI_FONT` bitmap
+/// face was the main reason the old field looked out of place).
+fn ensure_composer_font(state: &mut State) {
+    if state.composer.font != 0 || state.composer.edit.is_null() {
+        return;
+    }
+    unsafe {
+        let face = wide("Microsoft YaHei UI");
+        let font = CreateFontW(
+            -14,
+            0,
+            0,
+            0,
+            FW_NORMAL as i32,
+            0,
+            0,
+            0,
+            DEFAULT_CHARSET as u32,
+            OUT_DEFAULT_PRECIS as u32,
+            CLIP_DEFAULT_PRECIS as u32,
+            CLEARTYPE_QUALITY as u32,
+            (DEFAULT_PITCH as u32) | (FF_DONTCARE as u32),
+            face.as_ptr(),
+        );
+        if !font.is_null() {
+            state.composer.font = font as isize;
+            SendMessageW(state.composer.edit, 0x0030, font as usize, 1);
+        }
+    }
+}
+
 fn open_composer(state: &mut State) {
     if state.composer.hwnd.is_null() || state.composer.edit.is_null() {
         return;
     }
+    ensure_composer_font(state);
     state.composer.open = true;
     state.composer.focus_deadline = Some(Instant::now() + std::time::Duration::from_millis(1500));
     unsafe {
@@ -2019,6 +2200,13 @@ fn open_composer(state: &mut State) {
 fn update_composer(state: &mut State) {
     if state.composer.hwnd.is_null() || !state.composer.open {
         return;
+    }
+    let dark = DARK_THEME.load(Ordering::Relaxed);
+    if state.composer.dwm_dark != Some(dark) {
+        unsafe {
+            apply_composer_dwm(state.composer.hwnd, dark);
+        }
+        state.composer.dwm_dark = Some(dark);
     }
     unsafe {
         let mut pet_rect: RECT = std::mem::zeroed();
@@ -2150,167 +2338,6 @@ unsafe fn position_panel(pet: RECT, side: OverlaySide, width: i32, height: i32) 
     (clamped.left, clamped.top)
 }
 
-/// Port of `OverlayLayout.PositionStrip`.
-unsafe fn position_strip(pet: RECT, side: OverlaySide, width: i32, height: i32) -> (i32, i32) {
-    let centre_y = pet.bottom - 22;
-    let x = match side {
-        OverlaySide::Left => pet.left - width - EDGE_MARGIN,
-        OverlaySide::Right => pet.right + EDGE_MARGIN,
-        OverlaySide::Bottom => pet.left + ((pet.right - pet.left) - width) / 2,
-    };
-    let y = match side {
-        OverlaySide::Bottom => pet.bottom + EDGE_MARGIN,
-        _ => centre_y - height / 2,
-    };
-    let desired = RECT {
-        left: x,
-        top: y,
-        right: x + width,
-        bottom: y + height,
-    };
-    let clamped = clamp_to_work_area(desired);
-    (clamped.left, clamped.top)
-}
-
-/// Drives the compact edit strip: shown while the pet is on screen and the
-/// composer is closed; hovering expands it 36 -> 72 (120 ms) and, after 220 ms,
-/// opens the composer. Clicking opens immediately. The strip rotates to a
-/// vertical pill when it side-mounts near the taskbar.
-fn update_strip(state: &mut State) {
-    if state.strip.hwnd.is_null() {
-        return;
-    }
-    if !state.visible || state.composer.open || state.fault_reported {
-        hide_strip(state);
-        return;
-    }
-
-    unsafe {
-        let mut pet_rect: RECT = std::mem::zeroed();
-        if GetWindowRect(state.pet_hwnd, &mut pet_rect) == 0 {
-            return;
-        }
-        let work = work_area_for_rect(pet_rect);
-        let side = choose_side(pet_rect, work, COMPOSER_HEIGHT, state.last_side);
-        state.last_side = Some(side);
-        let vertical = !matches!(side, OverlaySide::Bottom);
-
-        // Hover test against the live window rect, with 2 px of tolerance so
-        // the 6 px band is not impossible to enter.
-        let mut cursor: POINT = std::mem::zeroed();
-        let mut rect: RECT = std::mem::zeroed();
-        let hovered = state.strip.visible
-            && GetCursorPos(&mut cursor) != 0
-            && GetWindowRect(state.strip.hwnd, &mut rect) != 0
-            && cursor.x >= rect.left - 2
-            && cursor.x < rect.right + 2
-            && cursor.y >= rect.top - 2
-            && cursor.y < rect.bottom + 2;
-        state.strip.hovered = hovered;
-
-        if hovered {
-            let started = *state.strip.hover_started.get_or_insert_with(Instant::now);
-            if started.elapsed().as_millis() as u64 >= STRIP_HOVER_OPEN_MS {
-                open_composer(state);
-                hide_strip(state);
-                return;
-            }
-        } else {
-            state.strip.hover_started = None;
-        }
-
-        let target = if hovered { 1.0 } else { 0.0 };
-        if (target - state.strip.animation_target).abs() > f32::EPSILON {
-            state.strip.animation_target = target;
-            state.strip.animation_from = state.strip.expanded;
-            state.strip.animation_started = Instant::now();
-        }
-        let elapsed = state.strip.animation_started.elapsed().as_millis() as u64;
-        let progress = (elapsed as f32 / STRIP_ANIMATION_MS as f32).min(1.0);
-        state.strip.expanded = state.strip.animation_from
-            + (state.strip.animation_target - state.strip.animation_from) * progress;
-        if progress >= 1.0 {
-            state.strip.expanded = state.strip.animation_target;
-        }
-
-        let length = (STRIP_LENGTH as f32
-            + (STRIP_EXPANDED_LENGTH - STRIP_LENGTH) as f32 * state.strip.expanded)
-            .round() as i32;
-        let width = if vertical { STRIP_THICKNESS } else { length };
-        let height = if vertical { length } else { STRIP_THICKNESS };
-        let render_key = format!("{vertical}:{length}");
-        if render_key != state.strip.render_key || state.strip.pixels.is_empty() {
-            let (pixels, pixel_width, pixel_height) =
-                render_strip(vertical, length, state.strip.expanded);
-            state.strip.pixels = pixels;
-            state.strip.width = pixel_width;
-            state.strip.height = pixel_height;
-            state.strip.render_key = render_key;
-        }
-
-        let (x, y) = position_strip(pet_rect, side, width, height);
-        SetWindowPos(
-            state.strip.hwnd,
-            ptr::null_mut(),
-            x,
-            y,
-            0,
-            0,
-            SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE,
-        );
-        present_pixels(
-            state.strip.hwnd,
-            &state.strip.pixels,
-            state.strip.width,
-            state.strip.height,
-            255,
-        );
-        if !state.strip.visible {
-            state.strip.visible = true;
-            ShowWindow(state.strip.hwnd, SW_SHOWNOACTIVATE);
-            log("strip: shown");
-        }
-    }
-}
-
-fn hide_strip(state: &mut State) {
-    if state.strip.hwnd.is_null() {
-        return;
-    }
-    state.strip.hovered = false;
-    state.strip.hover_started = None;
-    if state.strip.visible {
-        state.strip.visible = false;
-        unsafe {
-            ShowWindow(state.strip.hwnd, SW_HIDE);
-        }
-    }
-}
-
-/// Port of `OverlayWindow.RenderStrip`: a rounded pill whose opacity rises
-/// from 90 to 200 as it expands.
-fn render_strip(vertical: bool, length: i32, expansion: f32) -> (Vec<u8>, i32, i32) {
-    let width = if vertical { STRIP_THICKNESS } else { length };
-    let height = if vertical { length } else { STRIP_THICKNESS };
-    let mut pixels = vec![0u8; (width * height * 4) as usize];
-    let dark = DARK_THEME.load(Ordering::Relaxed);
-    let base = if dark { DARK_TEXT } else { LIGHT_TEXT };
-    let alpha = (90.0 + 110.0 * expansion.clamp(0.0, 1.0)).round() as u32;
-    let argb = (alpha << 24) | (base & 0x00FF_FFFF);
-    let radius = STRIP_THICKNESS as f32 / 2.0;
-    let rect = (0.5f32, 0.5f32, width as f32 - 0.5, height as f32 - 0.5);
-    for y in 0..height {
-        for x in 0..width {
-            let coverage = rounded_rect_coverage(x as f32 + 0.5, y as f32 + 0.5, rect, radius);
-            if coverage > 0.0 {
-                let index = ((y * width + x) * 4) as usize;
-                blend_argb(&mut pixels, index, argb, coverage);
-            }
-        }
-    }
-    (pixels, width, height)
-}
-
 unsafe extern "system" fn edit_proc(
     hwnd: HWND,
     msg: u32,
@@ -2320,19 +2347,13 @@ unsafe extern "system" fn edit_proc(
     if msg == WM_KEYDOWN {
         if wparam == VK_ESCAPE as usize {
             let text = read_window_text(hwnd);
-            let composer = with_state(
+            let _ = with_state(
                 |state| {
                     state.composer.draft = text;
-                    state.composer.open = false;
-                    state.composer_side = None;
-                    state.composer.hwnd
+                    close_composer(state);
                 },
-                ptr::null_mut(),
+                (),
             );
-            if !composer.is_null() {
-                ShowWindow(composer, SW_HIDE);
-                log("composer: closed (draft kept)");
-            }
             return 0;
         }
         if wparam == VK_RETURN as usize {
@@ -2379,7 +2400,7 @@ fn wide(text: &str) -> Vec<u16> {
 
 #[cfg(test)]
 mod tests {
-    use super::{next_drag_direction, PetState};
+    use super::{next_drag_direction, wheel_action, PetState, WheelAction};
 
     #[test]
     fn drag_direction_uses_the_latest_step_with_a_flip_filter() {
@@ -2407,5 +2428,13 @@ mod tests {
             next_drag_direction(Some(PetState::RunningLeft), 0, &mut accumulator),
             None
         );
+    }
+
+    #[test]
+    fn wheel_down_opens_and_wheel_up_closes_the_composer() {
+        assert_eq!(wheel_action(-120, false), WheelAction::Open);
+        assert_eq!(wheel_action(-120, true), WheelAction::None);
+        assert_eq!(wheel_action(120, true), WheelAction::Close);
+        assert_eq!(wheel_action(120, false), WheelAction::None);
     }
 }

@@ -27,7 +27,7 @@ const FONT_FAMILY_FALLBACK: &str = "Segoe UI";
 
 static GDIPLUS_TOKEN: OnceLock<Option<usize>> = OnceLock::new();
 
-fn ensure_gdiplus() -> bool {
+pub fn ensure_started() -> bool {
     match GDIPLUS_TOKEN.get_or_init(|| unsafe {
         let mut token = 0usize;
         let input = GdiplusStartupInput {
@@ -97,7 +97,7 @@ unsafe fn create_measure_graphics() -> Option<(*mut GpBitmap, *mut GpGraphics)> 
 
 /// Measures wrapped text within `max_width` × `max_height` (pixels).
 pub fn measure(text: &str, size_px: f32, max_width: f32, max_height: f32) -> Option<(f32, f32)> {
-    if text.is_empty() || !ensure_gdiplus() {
+    if text.is_empty() || !ensure_started() {
         return None;
     }
     unsafe {
@@ -168,7 +168,7 @@ pub fn draw(
     size_px: f32,
     argb: u32,
 ) -> bool {
-    if text.is_empty() || !ensure_gdiplus() {
+    if text.is_empty() || !ensure_started() {
         return false;
     }
     unsafe {
