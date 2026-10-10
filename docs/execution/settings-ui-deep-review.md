@@ -134,3 +134,9 @@ Chrome处理：每组合使用独立临时profile与本地file页面、模拟快
   `$env:PETSONA_HOME="$env:TEMP\petsona-settings-accept"; $env:PETSONA_ACCEPT_KEY='sk-accept-test'; & "$env:USERPROFILE\petsona-build\desktop-target\debug\petsona-desktop.exe" --show-settings`
 - 清单：`docs/DESKTOP_VERIFICATION.md` 第 5 节 1～7 项；全部为鼠标/键盘操作，由用户手动执行。
 - 状态：T-03 自动部分关闭；**H-01～H-03 待人工验收**，未通过前不进入 M5-A 的产品实施。
+
+## FX-1 追加（2026-10-10）
+
+- 用户人工验收后追加「人格页两个大设置项顺序对调」：资料学习在前、高级系统提示词在后；
+  与浮层 3 项（悬停跳跃 / 输入框聚焦 / 滚轮行程）同批实现，完整证据见
+  `pre-release-full-acceptance.md` 的「FX-1 复测反馈修复」。

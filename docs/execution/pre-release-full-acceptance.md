@@ -446,3 +446,23 @@ $env:PETSONA_AUTOSTART_VALUE = "PetsonaLcAccept"
 - 自动测试不得移动鼠标或注入输入。
 - AI 只准备隔离环境、启动应用、提供验收步骤；鼠标/键盘相关最终结果由用户回复。
 - 失败证据应包含：轮次 ID、实际现象、预期、截图/日志路径、是否可稳定复现。
+
+## FX-1 复测反馈修复（2026-10-10）
+
+来源：用户在设置页深度修复人工验收后反馈 4 项（人格页顺序 / 悬停互动 / 输入框聚焦 / 滚轮行程）。
+
+| 项 | 实现 | 自动证据 | 人工验收 |
+|---|---|---|---|
+| FX-1-1 人格页顺序 | 「从资料学习说话方式」移到「高级：系统提示词」之前 | `pnpm build` 通过 | 打开人格页目视：资料学习在前 |
+| FX-1-2 悬停互动 | 光标进入宠物不透明像素 → 播放一次 `jumping`（Codex V2 契约 hover jump）；1.2s 冷却；拖动 / 单击判定 / 输入框打开时不触发；jumping 优先级 40 > look 20，跳跃结束自动回注视或 idle | 新增单测 `hover_jump_fires_once_on_enter_and_respects_busy_states` | 移入宠物→跳一次；移出再移入→再跳；拖动与输入框打开时不跳 |
+| FX-1-3 输入框聚焦 | 新增 `focus_composer`：必要时 `AttachThreadInput` 到前台线程后 `SetForegroundWindow` + `SetFocus`（不注入输入）；打开与 1.5s 重试都走它 | Windows 构建通过；键盘焦点由实机确认 | 滚轮打开后直接打字（含中文 IME） |
+| FX-1-4 滚轮行程 | 同方向累计 360（3 格）才触发；间隔 >700ms 或反向清零；新增 `WheelTravel` 纯函数 | 新增 3 条单测（三格触发 / 停顿与反向清零 / 高分辨率滚轮） | 单格滚动不误开；连续 3 格向下打开、向上关闭 |
+
+自动证据（2026-10-10，Windows 11 / MSVC 1.98.0 / WSL Node 24.19.0）：
+
+- `PATH=…/node24 pnpm --dir apps/desktop build`：exit 0（CSS 20.81 kB / JS 197.47 kB）。
+- `cargo test`（`apps/desktop/src-tauri`）：**16 passed**（原 13 → 净增 3；`WheelAction::None` 死变体一并移除，构建无告警）。
+- `cargo build`（debug）：exit 0，`Finished dev profile`。
+- `scripts/desktop-settings-smoke.ps1`：**PASS**（设置窗前台 True；关闭只隐藏；重显颜色 53）。
+
+人工验收：见 `docs/DESKTOP_VERIFICATION.md` **A2b / A8**（鼠标与键盘项目由用户手动执行）。

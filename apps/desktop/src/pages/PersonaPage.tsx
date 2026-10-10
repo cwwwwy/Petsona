@@ -142,6 +142,14 @@ export function PersonaPage({ snapshot, run }: PageProps) {
         }
       />
 
+      <PersonaSourcePanel
+        snapshot={snapshot}
+        run={run}
+        onApplied={() => {
+          dirty.current = false;
+        }}
+      />
+
       <Card title="高级：系统提示词" description="会作为模型对话的基础指令。普通使用无需修改。">
         <details className="advanced-disclosure">
           <summary>展开编辑 <Badge>{systemPrompt.trim() === DEFAULT_SYSTEM_PROMPT ? "默认" : "已自定义"}</Badge></summary>
@@ -157,14 +165,6 @@ export function PersonaPage({ snapshot, run }: PageProps) {
           />
         </details>
       </Card>
-
-      <PersonaSourcePanel
-        snapshot={snapshot}
-        run={run}
-        onApplied={() => {
-          dirty.current = false;
-        }}
-      />
 
       {snapshot.status && (
         <p className="status-line">

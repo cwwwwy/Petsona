@@ -43,6 +43,7 @@ use windows_sys::Win32::Graphics::GdiPlus::{
     PointF, SmoothingModeAntiAlias,
 };
 use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
+use windows_sys::Win32::System::Threading::{AttachThreadInput, GetCurrentThreadId};
 use windows_sys::Win32::UI::HiDpi::GetDpiForWindow;
 use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
     GetKeyState, ReleaseCapture, SetCapture, SetFocus, VK_ESCAPE, VK_RETURN, VK_SHIFT,
@@ -50,16 +51,17 @@ use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
 use windows_sys::Win32::UI::WindowsAndMessaging::{
     CallNextHookEx, CallWindowProcW, CreateWindowExW, DefWindowProcW, DispatchMessageW,
     GetCaretPos, GetClientRect, GetCursorPos, GetForegroundWindow, GetMessageW, GetWindowLongPtrW,
-    GetWindowRect, GetWindowTextLengthW, GetWindowTextW, KillTimer, LoadCursorW, PostMessageW,
-    PostQuitMessage, RegisterClassExW, SendMessageW, SetCursor, SetForegroundWindow, SetTimer,
-    SetWindowLongPtrW, SetWindowPos, SetWindowTextW, SetWindowsHookExW, ShowWindow,
-    TranslateMessage, UnhookWindowsHookEx, UpdateLayeredWindow, WindowFromPoint, ES_AUTOVSCROLL,
-    ES_LEFT, ES_MULTILINE, ES_WANTRETURN, GWLP_USERDATA, GWL_EXSTYLE, GWL_WNDPROC, IDC_ARROW,
-    IDC_HAND, MSG, MSLLHOOKSTRUCT, SWP_NOACTIVATE, SWP_NOSIZE, SWP_NOZORDER, SW_HIDE, SW_SHOW,
-    SW_SHOWNOACTIVATE, ULW_ALPHA, WH_MOUSE_LL, WM_APP, WM_CTLCOLOREDIT, WM_DESTROY, WM_ERASEBKGND,
-    WM_KEYDOWN, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEMOVE, WM_MOUSEWHEEL, WM_NCHITTEST, WM_PAINT,
-    WM_SETCURSOR, WM_TIMER, WNDCLASSEXW, WS_CHILD, WS_EX_LAYERED, WS_EX_NOACTIVATE,
-    WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_EX_TRANSPARENT, WS_POPUP, WS_VISIBLE,
+    GetWindowRect, GetWindowTextLengthW, GetWindowTextW, GetWindowThreadProcessId, KillTimer,
+    LoadCursorW, PostMessageW, PostQuitMessage, RegisterClassExW, SendMessageW, SetCursor,
+    SetForegroundWindow, SetTimer, SetWindowLongPtrW, SetWindowPos, SetWindowTextW,
+    SetWindowsHookExW, ShowWindow, TranslateMessage, UnhookWindowsHookEx, UpdateLayeredWindow,
+    WindowFromPoint, ES_AUTOVSCROLL, ES_LEFT, ES_MULTILINE, ES_WANTRETURN, GWLP_USERDATA,
+    GWL_EXSTYLE, GWL_WNDPROC, IDC_ARROW, IDC_HAND, MSG, MSLLHOOKSTRUCT, SWP_NOACTIVATE, SWP_NOSIZE,
+    SWP_NOZORDER, SW_HIDE, SW_SHOW, SW_SHOWNOACTIVATE, ULW_ALPHA, WH_MOUSE_LL, WM_APP,
+    WM_CTLCOLOREDIT, WM_DESTROY, WM_ERASEBKGND, WM_KEYDOWN, WM_LBUTTONDOWN, WM_LBUTTONUP,
+    WM_MOUSEMOVE, WM_MOUSEWHEEL, WM_NCHITTEST, WM_PAINT, WM_SETCURSOR, WM_TIMER, WNDCLASSEXW,
+    WS_CHILD, WS_EX_LAYERED, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_EX_TRANSPARENT,
+    WS_POPUP, WS_VISIBLE,
 };
 
 const CLASS_NAME: &str = "PetsonaPetWindow";
@@ -135,6 +137,16 @@ const COMPOSER_HEIGHT: i32 = 44;
 const COMPOSER_SEND_SIZE: i32 = 30;
 const COMPOSER_SEND_INSET: i32 = 8;
 const COMPOSER_EDIT_ID: i32 = 1001;
+/// Codex V2 maps the `jumping` row to the hover/playful jump. Play one jump
+/// when the cursor enters the pet, with a cooldown so crossing the sprite does
+/// not loop the animation.
+const HOVER_JUMP_COOLDOWN_MS: u64 = 1200;
+/// Accumulated same-direction wheel travel needed before the composer toggles.
+/// One classic notch is 120, so this needs three notches; shorter or reversed
+/// bursts are discarded so page scrolling over the pet cannot open the input.
+const WHEEL_TRAVEL_REQUIRED: i32 = 360;
+/// A pause longer than this between wheel events resets the accumulated travel.
+const WHEEL_TRAVEL_RESET_MS: u64 = 700;
 /// Posted to the pet window to open the composer (also used by test hooks).
 pub const WM_OPEN_COMPOSER: u32 = WM_APP + 1;
 
@@ -205,6 +217,13 @@ struct ComposerState {
     brush_dark: bool,
 }
 
+/// Same-direction wheel travel accumulated between composer gestures.
+#[derive(Default)]
+struct WheelTravel {
+    accumulated: i32,
+    last_at: Option<Instant>,
+}
+
 struct State {
     engine: Arc<Mutex<RuntimeEngine>>,
     pet_hwnd: HWND,
@@ -233,6 +252,9 @@ struct State {
     gaze_active: bool,
     gaze_direction: i32,
     gaze_last: (f32, f32),
+    hover_active: bool,
+    hover_last_jump: Option<Instant>,
+    wheel: WheelTravel,
     fault_reported: bool,
     fault_message: Option<String>,
     fault_until: Option<Instant>,
@@ -343,6 +365,9 @@ unsafe fn thread_main(engine: Arc<Mutex<RuntimeEngine>>) {
         gaze_active: false,
         gaze_direction: -1,
         gaze_last: (0.0, 0.0),
+        hover_active: false,
+        hover_last_jump: None,
+        wheel: WheelTravel::default(),
         fault_reported: false,
         fault_message: None,
         fault_until: None,
@@ -479,6 +504,7 @@ unsafe extern "system" fn wnd_proc(
                 } else if wparam == HIT_TIMER {
                     update_pass_through(hwnd, state);
                     update_gaze(hwnd, state);
+                    update_hover(hwnd, state);
                 } else if wparam == CLICK_TIMER {
                     on_click_timer(hwnd, state);
                 }
@@ -504,16 +530,16 @@ unsafe extern "system" fn wnd_proc(
             WM_WHEEL_GESTURE => {
                 if !state.dragging {
                     let delta = wparam as u16 as i16 as i32;
-                    match wheel_action(delta, state.composer.open) {
-                        WheelAction::Open => {
+                    match wheel_travel_action(&mut state.wheel, delta, Instant::now()) {
+                        Some(WheelAction::Open) if !state.composer.open => {
                             open_composer(state);
-                            log("composer: opened by wheel down");
+                            log("composer: opened by wheel travel");
                         }
-                        WheelAction::Close => {
+                        Some(WheelAction::Close) if state.composer.open => {
                             close_composer(state);
-                            log("composer: closed by wheel up");
+                            log("composer: closed by wheel travel");
                         }
-                        WheelAction::None => {}
+                        _ => {}
                     }
                 }
                 Some(0)
@@ -1416,6 +1442,49 @@ unsafe fn update_pass_through(hwnd: HWND, state: &mut State) {
     state.transparent = Some(want_transparent);
 }
 
+/// 16 ms hover reaction: entering the pet's opaque pixels plays one jump.
+/// Dragging, the pending single-click window and an open composer suppress it,
+/// and a cooldown keeps re-entry from looping the animation.
+unsafe fn update_hover(hwnd: HWND, state: &mut State) {
+    if !state.visible || state.fault_reported {
+        state.hover_active = false;
+        return;
+    }
+    let mut cursor: POINT = std::mem::zeroed();
+    if GetCursorPos(&mut cursor) == 0 {
+        return;
+    }
+    let mut rect: RECT = std::mem::zeroed();
+    if GetWindowRect(hwnd, &mut rect) == 0 {
+        return;
+    }
+    let inside = hit(state, cursor.x - rect.left, cursor.y - rect.top);
+    let now = Instant::now();
+    let cooldown_ready = state.hover_last_jump.map_or(true, |at| {
+        now.duration_since(at) >= Duration::from_millis(HOVER_JUMP_COOLDOWN_MS)
+    });
+    let should_jump = hover_should_jump(
+        state.hover_active,
+        inside,
+        state.dragging,
+        state.composer.open,
+        state.last_click_at.is_some(),
+        cooldown_ready,
+    );
+    state.hover_active = inside;
+    if !should_jump {
+        return;
+    }
+    state.hover_last_jump = Some(now);
+    if let Ok(engine) = state.engine.lock() {
+        let _ = engine.send(RuntimeCommand::SetState {
+            state: PetState::Jumping,
+            ttl: None,
+        });
+    }
+    log("pet: hover -> jumping");
+}
+
 fn hit(state: &State, x: i32, y: i32) -> bool {
     let Some((index, width, height)) = state.rendered else {
         return false;
@@ -1454,20 +1523,51 @@ fn close_composer(state: &mut State) {
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum WheelAction {
-    None,
     Open,
     Close,
 }
 
-/// Scroll down over the pet opens the composer, scroll up closes it.
-fn wheel_action(delta: i32, composer_open: bool) -> WheelAction {
-    if delta < 0 && !composer_open {
-        WheelAction::Open
-    } else if delta > 0 && composer_open {
-        WheelAction::Close
-    } else {
-        WheelAction::None
+/// Scroll down over the pet opens the composer, scroll up closes it. A single
+/// event never triggers: same-direction travel must accumulate to
+/// `WHEEL_TRAVEL_REQUIRED` before the pause window expires, so a one-notch
+/// scroll while crossing the pet is ignored.
+fn wheel_travel_action(travel: &mut WheelTravel, delta: i32, now: Instant) -> Option<WheelAction> {
+    if delta == 0 {
+        return None;
     }
+    let stale = travel
+        .last_at
+        .is_some_and(|last| now.duration_since(last).as_millis() as u64 > WHEEL_TRAVEL_RESET_MS);
+    if stale || travel.accumulated.signum() * delta.signum() < 0 {
+        travel.accumulated = 0;
+    }
+    travel.accumulated += delta;
+    travel.last_at = Some(now);
+    if travel.accumulated <= -WHEEL_TRAVEL_REQUIRED {
+        travel.accumulated = 0;
+        travel.last_at = None;
+        return Some(WheelAction::Open);
+    }
+    if travel.accumulated >= WHEEL_TRAVEL_REQUIRED {
+        travel.accumulated = 0;
+        travel.last_at = None;
+        return Some(WheelAction::Close);
+    }
+    None
+}
+
+/// True when the cursor just entered the pet and the pet is free to react.
+/// The Codex V2 contract maps `jumping` to the hover jump, so the overlay
+/// plays it once per entry and later resumes the gaze/idle state.
+fn hover_should_jump(
+    was_hovering: bool,
+    inside: bool,
+    dragging: bool,
+    composer_open: bool,
+    click_pending: bool,
+    cooldown_ready: bool,
+) -> bool {
+    inside && !was_hovering && !dragging && !composer_open && !click_pending && cooldown_ready
 }
 
 /// Global low-level wheel hook. Only wheel input that lands on the pet is
@@ -2165,6 +2265,28 @@ fn ensure_composer_font(state: &mut State) {
     }
 }
 
+/// Brings the composer forward and focuses its edit control. The pet window
+/// never activates, so a plain `SetForegroundWindow` can be rejected while
+/// another app owns the foreground; attaching to that thread's input queue is
+/// the documented workaround and injects no synthetic input.
+unsafe fn focus_composer(hwnd: HWND, edit: HWND) {
+    let foreground = GetForegroundWindow();
+    let target_thread = if foreground.is_null() || foreground == hwnd {
+        0
+    } else {
+        GetWindowThreadProcessId(foreground, ptr::null_mut())
+    };
+    let current = GetCurrentThreadId();
+    let attached = target_thread != 0
+        && target_thread != current
+        && AttachThreadInput(current, target_thread, 1) != 0;
+    SetForegroundWindow(hwnd);
+    SetFocus(edit);
+    if attached {
+        AttachThreadInput(current, target_thread, 0);
+    }
+}
+
 fn open_composer(state: &mut State) {
     if state.composer.hwnd.is_null() || state.composer.edit.is_null() {
         return;
@@ -2190,8 +2312,7 @@ fn open_composer(state: &mut State) {
         SetWindowTextW(state.composer.edit, draft.as_ptr());
         update_composer(state);
         ShowWindow(state.composer.hwnd, SW_SHOW);
-        SetForegroundWindow(state.composer.hwnd);
-        SetFocus(state.composer.edit);
+        focus_composer(state.composer.hwnd, state.composer.edit);
     }
     log("composer: opened");
 }
@@ -2240,8 +2361,7 @@ fn update_composer(state: &mut State) {
             if Instant::now() >= deadline {
                 state.composer.focus_deadline = None;
             } else if GetForegroundWindow() != state.composer.hwnd {
-                SetForegroundWindow(state.composer.hwnd);
-                SetFocus(state.composer.edit);
+                focus_composer(state.composer.hwnd, state.composer.edit);
             } else {
                 state.composer.focus_deadline = None;
                 SetFocus(state.composer.edit);
@@ -2400,7 +2520,11 @@ fn wide(text: &str) -> Vec<u16> {
 
 #[cfg(test)]
 mod tests {
-    use super::{next_drag_direction, wheel_action, PetState, WheelAction};
+    use super::{
+        hover_should_jump, next_drag_direction, wheel_travel_action, PetState, WheelAction,
+        WheelTravel,
+    };
+    use std::time::{Duration, Instant};
 
     #[test]
     fn drag_direction_uses_the_latest_step_with_a_flip_filter() {
@@ -2431,10 +2555,69 @@ mod tests {
     }
 
     #[test]
-    fn wheel_down_opens_and_wheel_up_closes_the_composer() {
-        assert_eq!(wheel_action(-120, false), WheelAction::Open);
-        assert_eq!(wheel_action(-120, true), WheelAction::None);
-        assert_eq!(wheel_action(120, true), WheelAction::Close);
-        assert_eq!(wheel_action(120, false), WheelAction::None);
+    fn wheel_travel_needs_three_notches_before_toggling() {
+        let mut travel = WheelTravel::default();
+        let t0 = Instant::now();
+        let ms = Duration::from_millis;
+        assert_eq!(wheel_travel_action(&mut travel, -120, t0), None);
+        assert_eq!(wheel_travel_action(&mut travel, -120, t0 + ms(40)), None);
+        assert_eq!(
+            wheel_travel_action(&mut travel, -120, t0 + ms(80)),
+            Some(WheelAction::Open)
+        );
+        // the accumulator resets after a trigger, so the opposite direction
+        // still needs its own full travel
+        assert_eq!(wheel_travel_action(&mut travel, 120, t0 + ms(120)), None);
+        assert_eq!(wheel_travel_action(&mut travel, 120, t0 + ms(160)), None);
+        assert_eq!(
+            wheel_travel_action(&mut travel, 120, t0 + ms(200)),
+            Some(WheelAction::Close)
+        );
+    }
+
+    #[test]
+    fn wheel_travel_resets_on_pause_and_direction_flip() {
+        let mut travel = WheelTravel::default();
+        let t0 = Instant::now();
+        let ms = Duration::from_millis;
+        assert_eq!(wheel_travel_action(&mut travel, -120, t0), None);
+        assert_eq!(wheel_travel_action(&mut travel, -120, t0 + ms(50)), None);
+        // a pause longer than the window drops the two notches above
+        assert_eq!(wheel_travel_action(&mut travel, -120, t0 + ms(900)), None);
+        // a flip discards the down travel and starts counting up
+        assert_eq!(wheel_travel_action(&mut travel, 120, t0 + ms(950)), None);
+        assert_eq!(wheel_travel_action(&mut travel, 120, t0 + ms(1000)), None);
+        assert_eq!(
+            wheel_travel_action(&mut travel, 120, t0 + ms(1050)),
+            Some(WheelAction::Close)
+        );
+    }
+
+    #[test]
+    fn wheel_travel_accepts_high_resolution_deltas() {
+        let mut travel = WheelTravel::default();
+        let t0 = Instant::now();
+        let ms = Duration::from_millis;
+        for step in 0..11 {
+            assert_eq!(
+                wheel_travel_action(&mut travel, -30, t0 + ms(step * 10)),
+                None
+            );
+        }
+        assert_eq!(
+            wheel_travel_action(&mut travel, -30, t0 + ms(110)),
+            Some(WheelAction::Open)
+        );
+    }
+
+    #[test]
+    fn hover_jump_fires_once_on_enter_and_respects_busy_states() {
+        assert!(hover_should_jump(false, true, false, false, false, true));
+        assert!(!hover_should_jump(true, true, false, false, false, true));
+        assert!(!hover_should_jump(false, false, false, false, false, true));
+        assert!(!hover_should_jump(false, true, true, false, false, true));
+        assert!(!hover_should_jump(false, true, false, true, false, true));
+        assert!(!hover_should_jump(false, true, false, false, true, true));
+        assert!(!hover_should_jump(false, true, false, false, false, false));
     }
 }
