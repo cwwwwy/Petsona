@@ -108,3 +108,29 @@ Chrome处理：每组合使用独立临时profile与本地file页面、模拟快
 - 全部人工步骤见 `docs/DESKTOP_VERIFICATION.md` 第5节；确认框、键盘与文件操作不通过自动输入验证。
 - M5已完成调查与契约细化，基线编译失败记录在 `desktop-m5-macos.md`；产品实施待设置收口后开始。
 - 没有运行用户Petsona实例、读写真实Keychain/LaunchAgent、执行Git写操作。
+
+## 2026-10-10 Windows 侧自动验收（T-03）
+
+环境：Windows 11 / x86_64-pc-windows-msvc 1.98.0；WSL 侧 Node 24.19.0 构建前端；
+所有运行使用隔离 `PETSONA_HOME` 与独立端口，未启动用户默认实例，未注入鼠标/键盘。
+
+| ID | 命令/方法 | 退出码与结果 | 结果位置/限制 |
+|---|---|---|---|
+| E-SR-14 | `PATH="$HOME/.nvm/versions/node/v24.19.0/bin:$PATH" pnpm --dir apps/desktop build` | 0；43 模块；CSS 20.81 kB / JS 197.47 kB（与 Mac E-SR-09 一致） | `apps/desktop/dist`（忽略） |
+| E-SR-15 | `scripts/desktop-build-windows.ps1`（debug，MSVC） | 0；`Finished dev profile in 6.42s` | `%USERPROFILE%\petsona-build\desktop-target\debug\petsona-desktop.exe` |
+| E-SR-16 | `scripts/desktop-settings-smoke.ps1`（隔离 home `%TEMP%\petsona-settings-smoke`，端口 17899，无鼠标/无输入） | **PASS**：设置窗可见且前台 True；默认 936×639 physical；700px 窄窗缩放成功；WM_CLOSE 后仅隐藏（进程/宠物/`/health` 存活）；重显颜色采样 56（≥20，无白屏） | `%TEMP%\petsona-fa1-{wide,narrow,reopen}.png`；结尾中文提示在控制台代码页下乱码，不影响断言 |
+
+备注：诊断期间发现运行环境自带 `RUST_LOG=warn` 会把 runtime 的 info 级文件日志过滤掉（日志文件 0 字节）；
+这是调用环境变量所致，不是产品缺陷——用户自行启动（无该变量）时日志正常，如需调试可显式 `$env:RUST_LOG='info'`。
+
+### 人工验收环境（H-01～H-03，待用户执行）
+
+- 目录：`%TEMP%\petsona-settings-accept`（从既有验收目录复制，端口 **17921**，`clickThrough=false`，`scale=1.0`，位置回到默认）。
+- 数据：2 只宠物（boba / song-xiaoxuan）；**10 条长期偏好 + 1 条归档 + 1 条 pending 候选**；4 条聊天记录（用于清空历史确认框）；
+  人格 `default.json` 预置 `traits.emoji=false`（验证编辑系统提示词不会重置该字段）。
+- 凭据：`provider=custom` + `apiKeyEnv=PETSONA_ACCEPT_KEY`（启动时给出测试值），Key 的保存/清除只会落在 `custom` 槽位，
+  不触碰用户真实的 `deepseek` 凭据。
+- 启动命令：
+  `$env:PETSONA_HOME="$env:TEMP\petsona-settings-accept"; $env:PETSONA_ACCEPT_KEY='sk-accept-test'; & "$env:USERPROFILE\petsona-build\desktop-target\debug\petsona-desktop.exe" --show-settings`
+- 清单：`docs/DESKTOP_VERIFICATION.md` 第 5 节 1～7 项；全部为鼠标/键盘操作，由用户手动执行。
+- 状态：T-03 自动部分关闭；**H-01～H-03 待人工验收**，未通过前不进入 M5-A 的产品实施。
