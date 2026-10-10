@@ -614,3 +614,11 @@
 
 - 2026-10-09 用户回复“上一轮验收通过”；M4-C-01..06 全部关闭。
 - 用户明确决定：M5 macOS 暂缓，不进入本轮执行；下一步直接做 M6 的 Windows 发布准备。
+
+## CI 触发调整（2026-10-10）
+
+- 用户要求「不要每次 push 都跑 CI」。`.github/workflows/ci.yml` 移除 `push.branches: [main]`，
+  保留 `pull_request(main)`、`push.tags: ['windows-v*','macos-v*']` 与 `workflow_dispatch`。
+- 影响：日常 push main 不再触发 Actions；PR、发布 tag、手动仍运行 Rust workspace 门禁
+  （fmt / clippy / test，macOS + Windows 矩阵）。M6 重建发布 workflow 时沿用该策略并按需补桌面壳门禁。
+- 验证：结构人工复核（无 YAML 校验器可用）；触发键为 `pull_request` / `push.tags` / `workflow_dispatch`。

@@ -68,10 +68,12 @@ cargo test --workspace          # core + runtime；状态协议测试需要绑�
 
 ## 本会话接续（2026-10-10）
 
-- 当前基线 HEAD `63dfc9b`；此前设置/发布回归状态以执行记录为准，下文2026-10-09速记已落后。
-- 用户新顺序：设置页深度修复 → M5 macOS；M5暂缓决定已更新。
-- 设置计划 `docs/plans/settings-ui-deep-review.md` v1.0：D1–D5推荐方案全部批准，S4也纳入；实现中、自动/人工验收分开，Windows实机证据不能由Mac替代。
-- M5契约 `docs/plans/desktop-m5-macos.md`，执行记录同名：当前调查/基线编译，产品代码未开始。
+- 当前基线 HEAD `dcc55e4`；**设置页深度修复已验收关闭**（S1–S4 + FX-1 追加项，2026-10-10 用户「验收通过」），下文2026-10-09速记已落后。
+- 用户顺序：设置页深度修复（已完成）→ M5 macOS；M5 的实施与验证必须在 Mac 上进行，Windows/WSL 会话只能做平台无关准备。
+- CI：`.github/workflows/ci.yml` 只在 **PR / 发布 tag / 手动** 触发；日常 push main 不跑（2026-10-10 用户要求调整）。
+- 设置契约 `docs/plans/settings-ui-deep-review.md` v1.0 与执行记录：已实现、自动证据通过、人工验收通过。
+- M5契约 `docs/plans/desktop-m5-macos.md`（v1.1），执行记录同名：调查/基线编译完成；**Windows 侧资产准备已完成**（`icons/icon.png` 1024×1024、`icons/icon.icns`、`bundle.macOS.minimumSystemVersion=26.0`，Windows 构建回归通过），Mac 侧先跑 `pnpm --dir apps/desktop build` + `cargo check --locked` 复核，再进 M5-A。
+- RG Windows 发布环境人工验收仍保留，M5/RG 闭合后再进 M6。
 - Mac AppKit窗口必须由Tauri主线程管理，不照搬Windows浮层线程。
 
 ## 当前状态（2026-10-09，历史速记）

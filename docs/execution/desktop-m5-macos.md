@@ -11,7 +11,7 @@
 
 | REQ | 实现 | 自动证据 | 人工验收 | 下一步 |
 |---|---|---|---|---|
-| M5-01 | 未实现；发现缺icon.png | E-M5-02失败 | 未做 | 基线图标/最低版本修复 |
+| M5-01 | 图标资产已就绪（Windows 侧，2026-10-10）；最低版本已配 26.0；Mac 侧编译待复核 | E-M5-03…06 | 未做 | Mac 上 `cargo check --locked` 复核 |
 | M5-02 | 现有Tauri托盘/内容窗；Dock策略缺失 | 未运行 | 未做 | 主线程策略 |
 | M5-03 | 非Windows对话框占位 | 未跑 | 未做 | NSOpenPanel/NSSavePanel |
 | M5-04 | 非Windows自启占位 | 未跑 | 未做 | 隔离LaunchAgent |
@@ -35,3 +35,24 @@
 - REV-M5-03：现有Windows冒烟有WM_CHAR/WM_KEYDOWN等输入注入，不能直接作为本次“无输入”验证；保留历史证据，后续核对并隔离禁用。
 - 当前Mac未启动用户实例，未访问真实Keychain、LaunchAgent或用户宠物库。
 - 下一步：设置页自动/Windows人工验收 → M5-A；M5不得宣称完成。
+
+## Windows 侧资产准备（2026-10-10）
+
+用户指示「先准备资产，准备好后切 Mac」。本轮只做平台无关准备，**macOS 产品代码仍未开始**。
+
+| ID | 内容 | 命令/方法 | 结果 |
+|---|---|---|---|
+| E-M5-03 | 导出 macOS 上下文 PNG | 从 `packaging/macos/Petsona.icns` 提取内嵌 PNG（1024×1024）写入 `apps/desktop/src-tauri/icons/icon.png` | 1024×1024 / 106 438 bytes；PNG 头校验通过 |
+| E-M5-04 | 复制 macOS 打包图标 | `packaging/macos/Petsona.icns` → `apps/desktop/src-tauri/icons/icon.icns` | 12 个 chunk（1024/512/256/128/64/32 + ARGB mask），declared=actual=175 960 bytes |
+| E-M5-05 | 更新 `apps/desktop/src-tauri/tauri.conf.json` | `bundle.icon = [icons/icon.icns, icons/icon.ico, icons/icon.png]`；`bundle.macOS.minimumSystemVersion = "26.0"` | `python3 -m json.tool` 通过 |
+| E-M5-06 | Windows 侧回归（防止图标列表破坏现有构建） | `scripts/desktop-build-windows.ps1` + `scripts/desktop-settings-smoke.ps1`（隔离目录/端口 17899，无鼠标输入） | 构建 exit 0；冒烟 **PASS**（前台 True / 关闭只隐藏 / 重显 53 色） |
+
+基线阻塞 **REV-M5-01（缺 `icons/icon.png`）已解除**，待 Mac 复核。
+
+### 切 Mac 后的第一步
+
+1. `git pull --ff-only` 同步本批资产与文档；
+2. `pnpm --dir apps/desktop build` —— `generate_context!` 需要 `../dist` 已存在（Mac 首次需 `pnpm --dir apps/desktop install --frozen-lockfile`）；
+3. `cargo check --manifest-path apps/desktop/src-tauri/Cargo.toml --locked` —— 预期 `icons/icon.png` 报错消失，记录新的编译状态与新增报错；
+4. 通过后按计划进入 **M5-A**：Dock/菜单栏策略、NSOpenPanel/NSSavePanel（`dialog.rs`）、LaunchAgent（`autostart.rs`）、Keychain 验证；
+   记住约束：AppKit 窗口必须由 Tauri 主线程管理，不照搬 Windows 浮层线程；macOS 26 与 Intel 证据仍需真机（当前机器 27.0.1/arm64 不能替代）。

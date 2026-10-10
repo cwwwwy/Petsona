@@ -91,3 +91,4 @@
 | 版本 | 用户依据 | 变更 |
 |---|---|---|
 | v1.0 | 2026-10-10 两步顺序与推进授权 | 恢复M5，基于新壳调查细化范围；实施未开始 |
+| v1.1 | 2026-10-10 用户「先准备资产，随后切 Mac」 | 无 REQ/验收变更 | Windows 侧完成 `icon.png`（1024）/`icon.icns`/`bundle.macOS.minimumSystemVersion=26.0` 准备，Windows 构建回归通过；待 Mac 复核编译 |

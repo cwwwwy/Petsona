@@ -467,3 +467,5 @@ $env:PETSONA_AUTOSTART_VALUE = "PetsonaLcAccept"
 - `scripts/desktop-settings-smoke.ps1`：**PASS**（设置窗前台 True；关闭只隐藏；重显颜色 53）。
 
 人工验收：见 `docs/DESKTOP_VERIFICATION.md` **A2b / A8**（鼠标与键盘项目由用户手动执行）。
+
+人工验收结果：**2026-10-10 用户回复「验收通过」**——FX-1-1…FX-1-6 全部关闭（含悬停 3 连跳与随机提醒、脸部基准的插入符注视、I 型/手型指针、滚轮 3 格行程、输入框聚焦）。
