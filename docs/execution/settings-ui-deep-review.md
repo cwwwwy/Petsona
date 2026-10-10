@@ -56,3 +56,55 @@
 - 下一个执行者的安全接续点：读计划「决定点」表 → 用户拍板 → 从 S1（纯 CSS）开始。
 - Git操作是否发生：无（AI 未执行 commit/push）。
 - 完成判定及对应证据：未完成；证据见 E-SR-01…07。
+
+## 2026-10-10 接续（执行中）
+
+- 用户授权读取文档并推进设置修复、随后 M5；D1–D5 全部采用推荐方案，S4 一起收口。
+- HEAD `63dfc9b`，接手工作区干净；CR-SR-01 暂缓决定已更新，CR-SR-02 DI 基线冲突已解除。
+- 计划升级 v1.0；Mac arm64 / macOS 27.0.1 / Xcode 已安装 / Node 24.18.0。
+- 关键目标：消除堆叠空洞、稳定右缘与切页宽度，精简动作文案，统一确认及表单标签，处理长列表与弹层。
+- 约束：不改业务数据与 IPC；不注入输入；Windows 构建/冒烟及人工结果不得由 Mac 模拟证据替代。
+
+### 当前逐 REQ 状态（历史表不覆盖）
+
+| REQ | 实现文件与行为 | 自动验证 | 人工验收/剩余 |
+|---|---|---|---|
+| S1-1 | app.css堆叠flex复位；问候/补充说明初始文本域紧凑 | 最终最大138px，36组合通过 | H-01待验 |
+| S1-2 | range margin=0 | 右缘差0px | H-01待验 |
+| S1-3 | content scrollbar-gutter stable | 同视口六页卡片右缘差0px | Windows实际滚动条待验 |
+| S1-4 | 删NumberField与既有未用选择器；首行分隔线显式 | 构建、引用扫描通过 | 无业务变更 |
+| S1-5 | App useLayoutEffect切页回顶部 | 构建/代码检查；未自动注入切页输入 | 人工切页待验 |
+| S2-1 | PersonaPage移除表达卡；保存系统提示词不再提交emoji | 构建/代码检查 | 旧emoji=false保存/导入待验 |
+| S2-2 | SystemPage仓库入口唯一、去开发术语、平台中性文案 | 构建/引用扫描 | 文案实机待验 |
+| S2-3 | ConnectionPage去顺序评审与config字段枚举 | 构建/引用扫描 | 文案实机待验 |
+| S2-4 | 行内删除ghost且hover/focus显示；草稿强调色；提示词默认/自定义徽章 | 构建、模拟草稿截图 | 操作/默认徽章待验；展示比较默认文案，不修改Rust真相 |
+| S3-1 | ConfirmDialog/原生HTML dialog；7处confirm替换，复制/覆盖复用Dialog | 构建/引用扫描；未自动注入键盘 | Esc/圈闭/恢复焦点/取消与确认待验 |
+| S3-2 | ActionMenu；宠物导入、人格主操作+更多、记忆主操作+更多 | 构建/六页截图 | 外点/Esc/Tab/实际文件对话框待验 |
+| S3-3 | SettingRow context/useId与字段aria关联；刻度删除；浅深提示对比度调高 | 36组合无未标记字段/aria-hidden可聚焦后代；正文提示对比度达标 | 辅助技术/键盘实机待验 |
+| S4-1 | 卡片无blur；菜单外点/Esc；事实前8条折叠；空候选一行；删除宠物提示保留人格记忆 | 构建、12条模拟事实只显示8条、空态/代码扫描 | 展开收起、候选出现、删除语义待验 |
+
+### 命令与证据（2026-10-10）
+
+所有命令 cwd `/Users/book/Desktop/Petsona`；目标共用TS前端；执行环境macOS27.0.1/arm64，Node24.18.0、pnpm12.10.1。未改lockfile与依赖声明。
+
+| ID | 命令/方法 | 退出码与结果 | 结果位置/限制 |
+|---|---|---|---|
+| E-SR-08a | `pnpm --dir apps/desktop install --frozen-lockfile` 沙箱 | exit1；DNS无法解析registry、ERR_PNPM_META_FETCH_FAIL；失败保留 | 本机首次无node_modules |
+| E-SR-08b | 放行网络安装锁定依赖 | 0；73包安装完成 | 安装产生的临时store已清理，node_modules保留且忽略 |
+| E-SR-09 | `pnpm --dir apps/desktop build`（最终代码） | 0；tsc+vite，43模块，CSS20.81kB/JS197.47kB | `apps/desktop/dist`（忽略） |
+| E-SR-10a | 无头Chrome沙箱/首轮放行 | 沙箱退出-6；放行轮次超时25s，DOM已产出但Chrome退出卡在系统显示链接 | Chrome stderr CVDisplayLink错误；失败保留 `.scratch/settings-ui-review/chrome-failure.txt` |
+| E-SR-10b | 首轮18组合几何 | 0；右缘/标签/溢出通过；随后发现问候152px/补充144.2px超140目标 | 修复初始rows/min-height，不降低验收 |
+| E-SR-10c | 浅色对比度轮次 | 1；“当前”徽章嵌套选中背景对比度3.61 | 调整浅色positive/warning与正文提示颜色，失败保留于本记录 |
+| E-SR-10d | 最终light/dark无头几何与对比度 | 两轮exit0；各18组合；浅色最低对比度4.78、深色5.31；堆叠最大138px、滑块右缘差0、跨页右缘差0、无横向溢出、字段具名、无隐藏焦点控件 | `.scratch/settings-ui-review/check.py`、`metrics-{light,dark}.json`、六张×两主题截图；36组合 |
+| E-SR-11 | `git diff --check`；confirm/死组件/死选择器扫描 | 0；无空白错误、无window.confirm与列举死代码 | Git只读；未提交 |
+| E-SR-12 | T-03 Windows构建/设置冒烟 | 未执行（当前只有Mac） | **待验收**；既有 `desktop-settings-smoke.ps1`无鼠标/键盘注入，WM_CLOSE用于生命周期；完整desktop-smoke有输入注入，不在本轮运行 |
+| E-SR-13 | T-04 根Rust fmt/clippy/test | 未执行：本批只改TS/CSS，按计划仅跑受影响前端构建 | Mac新壳基线check失败另记M5，不能冒充Windows验证 |
+
+Chrome处理：每组合使用独立临时profile与本地file页面、模拟快照；读到完整metrics后结束仅本轮创建的进程组，避免CVDisplayLink退出挂起；**脚本exit0表示断言通过，不表示Chrome自然退出**。三档实际CSS视口为905×570、1180×820、640×520。主题媒体规则仅在临时副本中固定；未改产品主题跟随逻辑。测量采用计算背景色合成，不包括系统玻璃/渐变采样；WebView2/WKWebView与辅助技术最终结果仍人工确认。
+
+### 交付与阶段门
+
+- S1–S4 已实现；前端构建、模拟布局与对比度通过；**整体待验收**，T-03/H-01～03未关闭。
+- 全部人工步骤见 `docs/DESKTOP_VERIFICATION.md` 第5节；确认框、键盘与文件操作不通过自动输入验证。
+- M5已完成调查与契约细化，基线编译失败记录在 `desktop-m5-macos.md`；产品实施待设置收口后开始。
+- 没有运行用户Petsona实例、读写真实Keychain/LaunchAgent、执行Git写操作。

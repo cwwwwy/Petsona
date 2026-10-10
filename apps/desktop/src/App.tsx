@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Sidebar } from "./components/Sidebar";
 import { Button } from "./components/ui";
 import { useSettings } from "./lib/useSettings";
@@ -25,9 +25,14 @@ function storedPage(): PageId {
 }
 
 export default function App() {
+  const contentRef = useRef<HTMLElement>(null);
   const [page, setPage] = useState<PageId>(storedPage);
   const [toast, setToast] = useState("");
   const { snapshot, loading, error, apply, refresh } = useSettings();
+
+  useLayoutEffect(() => {
+    contentRef.current?.scrollTo({ top: 0, behavior: "instant" });
+  }, [page, snapshot?.ready]);
 
   useEffect(() => {
     window.localStorage.setItem("petsona.settings.page", page);
@@ -107,7 +112,7 @@ export default function App() {
   return (
     <div className="app-shell">
       <Sidebar active={page} version={snapshot.appVersion} onChange={setPage} />
-      <main className="content">
+      <main className="content" ref={contentRef}>
         {(snapshot.faulted || error) && (
           <div className="global-notice global-notice-danger">
             <strong>运行时需要处理</strong>

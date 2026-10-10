@@ -1,4 +1,6 @@
-import type { ChangeEvent, ReactNode } from "react";
+import { createContext, useContext, useId, type ReactNode } from "react";
+
+const FieldContext = createContext<{ labelId: string; hintId?: string } | null>(null);
 
 export function PageHeader({
   eyebrow,
@@ -32,10 +34,10 @@ export function Card({
   title?: string;
   description?: string;
   children: ReactNode;
-  tone?: "default" | "danger";
+  tone?: "default" | "danger" | "accent";
 }) {
   return (
-    <section className={`card${tone === "danger" ? " card-danger" : ""}`}>
+    <section className={`card${tone === "default" ? "" : ` card-${tone}`}`}>
       {(title || description) && (
         <div className="card-heading">
           {title && <h2>{title}</h2>}
@@ -58,13 +60,16 @@ export function SettingRow({
   children: ReactNode;
   stacked?: boolean;
 }) {
+  const id = useId();
   return (
-    <div className={`setting-row${stacked ? " setting-row-stacked" : ""}`}>
+    <div role="group" aria-labelledby={`${id}-label`} className={`setting-row${stacked ? " setting-row-stacked" : ""}`}>
       <div className="setting-copy">
-        <span className="setting-label">{label}</span>
-        {hint && <span className="setting-hint">{hint}</span>}
+        <span id={`${id}-label`} className="setting-label">{label}</span>
+        {hint && <span id={`${id}-hint`} className="setting-hint">{hint}</span>}
       </div>
-      <div className="setting-control">{children}</div>
+      <FieldContext.Provider value={{ labelId: `${id}-label`, hintId: hint ? `${id}-hint` : undefined }}>
+        <div className="setting-control">{children}</div>
+      </FieldContext.Provider>
     </div>
   );
 }
@@ -96,6 +101,7 @@ export function Switch({
 }
 
 export function TextField({
+  label,
   value,
   onChange,
   placeholder,
@@ -103,6 +109,7 @@ export function TextField({
   disabled = false,
   spellCheck = false,
 }: {
+  label?: string;
   value: string;
   onChange: (value: string) => void;
   placeholder?: string;
@@ -110,8 +117,12 @@ export function TextField({
   disabled?: boolean;
   spellCheck?: boolean;
 }) {
+  const field = useContext(FieldContext);
   return (
     <input
+      aria-label={label}
+      aria-labelledby={label ? undefined : field?.labelId}
+      aria-describedby={field?.hintId}
       className="control-input"
       type={type}
       value={value}
@@ -123,57 +134,25 @@ export function TextField({
   );
 }
 
-export function NumberField({
-  value,
-  onChange,
-  min,
-  max,
-  step = 1,
-  suffix,
-  disabled = false,
-}: {
-  value: number;
-  onChange: (value: number) => void;
-  min?: number;
-  max?: number;
-  step?: number;
-  suffix?: string;
-  disabled?: boolean;
-}) {
-  const handle = (event: ChangeEvent<HTMLInputElement>) => {
-    const next = Number(event.target.value);
-    if (Number.isFinite(next)) onChange(next);
-  };
-  return (
-    <div className="number-field">
-      <input
-        className="control-input"
-        type="number"
-        value={Number.isFinite(value) ? value : ""}
-        min={min}
-        max={max}
-        step={step}
-        disabled={disabled}
-        onChange={handle}
-      />
-      {suffix && <span>{suffix}</span>}
-    </div>
-  );
-}
-
 export function SelectField<T extends string>({
+  label,
   value,
   onChange,
   options,
   disabled = false,
 }: {
+  label?: string;
   value: T;
   onChange: (value: T) => void;
   options: Array<{ value: T; label: string }>;
   disabled?: boolean;
 }) {
+  const field = useContext(FieldContext);
   return (
     <select
+      aria-label={label}
+      aria-labelledby={label ? undefined : field?.labelId}
+      aria-describedby={field?.hintId}
       className="control-input"
       value={value}
       disabled={disabled}
@@ -189,20 +168,26 @@ export function SelectField<T extends string>({
 }
 
 export function TextArea({
+  label,
   value,
   onChange,
   rows = 5,
   placeholder,
   disabled = false,
 }: {
+  label?: string;
   value: string;
   onChange: (value: string) => void;
   rows?: number;
   placeholder?: string;
   disabled?: boolean;
 }) {
+  const field = useContext(FieldContext);
   return (
     <textarea
+      aria-label={label}
+      aria-labelledby={label ? undefined : field?.labelId}
+      aria-describedby={field?.hintId}
       className="control-input control-textarea"
       value={value}
       rows={rows}

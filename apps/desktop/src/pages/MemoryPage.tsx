@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   Badge,
   Button,
@@ -10,6 +10,8 @@ import {
   Switch,
   TextField,
 } from "../components/ui";
+import { ActionMenu } from "../components/ActionMenu";
+import { useConfirm } from "../components/ConfirmDialog";
 import { openChatWindow, pickMemoryExport, pickMemoryImport } from "../lib/api";
 import type { PageProps } from "../types";
 
@@ -21,6 +23,8 @@ const SOURCE_LABELS: Record<string, string> = {
 };
 
 export function MemoryPage({ snapshot, run }: PageProps) {
+  const { confirm, confirmation } = useConfirm();
+  const [expanded, setExpanded] = useState(false);
   const memory = snapshot.memory;
   const conversation = snapshot.settings.conversation;
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -33,6 +37,14 @@ export function MemoryPage({ snapshot, run }: PageProps) {
     ...(memory.facts ?? []).map((fact) => ({ ...fact, archived: false })),
     ...(memory.archivedFacts ?? []).map((fact) => ({ ...fact, archived: true })),
   ];
+  const pending = (memory.candidates ?? []).filter((candidate) => candidate.status === "pending");
+  const visibleFacts = expanded ? displayFacts : displayFacts.slice(0, 8);
+  useEffect(() => {
+    setExpanded(false);
+    setEditingId(null);
+    setNewKey("");
+    setNewValue("");
+  }, [snapshot.petId]);
   const [reviewBusy, setReviewBusy] = useState<string | null>(null);
 
   const startEdit = (id: string, key: string, value: string) => {
@@ -86,8 +98,8 @@ export function MemoryPage({ snapshot, run }: PageProps) {
     }
   };
 
-  const confirmClear = (scope: 0 | 1 | 2, label: string) => {
-    if (!window.confirm(`确定${label}吗？此操作不可撤销。`)) return;
+  const confirmClear = async (scope: 0 | 1 | 2, label: string) => {
+    if (!await confirm({ title: label, message: `确定${label}吗？此操作不可撤销。`, confirmLabel: "清空" })) return;
     void run({ type: "clearMemory", scope });
   };
 
@@ -104,7 +116,7 @@ export function MemoryPage({ snapshot, run }: PageProps) {
   };
 
   const importMemory = async () => {
-    if (!window.confirm("导入会覆盖当前宠物的记忆文件，确定继续吗？")) return;
+    if (!await confirm({ title: "导入记忆", message: "导入会覆盖当前宠物的记忆文件，确定继续吗？", confirmLabel: "继续导入" })) return;
     setBusy("import");
     try {
       const path = await pickMemoryImport();
@@ -125,20 +137,10 @@ export function MemoryPage({ snapshot, run }: PageProps) {
             <Button variant="ghost" onClick={() => void openChatWindow()}>
               查看聊天记录
             </Button>
-            <Button
-              variant="secondary"
-              disabled={busy !== null}
-              onClick={() => void importMemory()}
-            >
-              {busy === "import" ? "导入中…" : "导入"}
-            </Button>
-            <Button
-              variant="secondary"
-              disabled={busy !== null}
-              onClick={() => void exportMemory()}
-            >
-              {busy === "export" ? "导出中…" : "导出"}
-            </Button>
+            <ActionMenu disabled={busy !== null} actions={[
+              { label: "导入记忆", onClick: () => void importMemory() },
+              { label: "导出记忆", onClick: () => void exportMemory() },
+            ]} />
           </div>
         }
       />
@@ -180,18 +182,20 @@ export function MemoryPage({ snapshot, run }: PageProps) {
       >
         {displayFacts.length ? (
           <div className="fact-list">
-            {displayFacts.map((fact) => {
+            {visibleFacts.map((fact) => {
               const editing = editingId === fact.id;
               return (
                 <div className="fact-row" key={fact.id}>
                   {editing ? (
                     <div className="fact-edit">
                       <TextField
+                        label="编辑记忆主题"
                         value={editKey}
                         onChange={setEditKey}
                         placeholder="称呼 / 偏好"
                       />
                       <TextField
+                        label="编辑记忆内容"
                         value={editValue}
                         onChange={setEditValue}
                         placeholder="例如：喜欢喝美式咖啡"
@@ -223,9 +227,9 @@ export function MemoryPage({ snapshot, run }: PageProps) {
                           编辑
                         </Button>
                         <Button
-                          variant="danger"
-                          onClick={() => {
-                            if (window.confirm(`确定删除「${fact.key}」这条记忆吗？`)) {
+                          variant="ghost"
+                          onClick={async () => {
+                            if (await confirm({ title: "删除记忆", message: `确定删除「${fact.key}」这条记忆吗？`, confirmLabel: "删除" })) {
                               void run({ type: "forgetFact", id: fact.id });
                             }
                           }}
@@ -246,9 +250,15 @@ export function MemoryPage({ snapshot, run }: PageProps) {
           />
         )}
 
+        {displayFacts.length > 8 && (
+          <Button variant="ghost" disabled={editingId !== null} onClick={() => setExpanded((value) => !value)}>
+            {expanded ? "收起" : `展开其余 ${displayFacts.length - 8} 条`}
+          </Button>
+        )}
         <div className="fact-add fact-add-inline">
-          <TextField value={newKey} onChange={setNewKey} placeholder="主题，例如：称呼" />
+          <TextField label="新记忆主题" value={newKey} onChange={setNewKey} placeholder="主题，例如：称呼" />
           <TextField
+            label="新记忆内容"
             value={newValue}
             onChange={setNewValue}
             placeholder="内容，例如：可以叫我小周"
@@ -263,62 +273,47 @@ export function MemoryPage({ snapshot, run }: PageProps) {
         </div>
       </Card>
 
-      <Card
+      {pending.length ? <Card
         title="待确认的习惯"
         description="模型从聊天中归纳的候选不会自动进入长期记忆，需要你确认。"
       >
-        {(() => {
-          const pending = (memory.candidates ?? []).filter(
-            (candidate) => candidate.status === "pending",
-          );
-          if (!pending.length) {
-            return (
-              <EmptyState
-                title="没有待确认的习惯"
-                description="连续出现并达到证据门槛的习惯会出现在这里。"
-              />
-            );
-          }
-          return (
-            <div className="candidate-list">
-              {pending.map((candidate) => (
-                <div className="candidate-row" key={candidate.id}>
-                  <div className="candidate-copy">
-                    <div className="row-title">
-                      <strong>{candidate.key}</strong>
-                      <Badge tone="accent">
-                        可信度 {Math.round(candidate.confidence * 100)}%
-                      </Badge>
-                    </div>
-                    <span>{candidate.value}</span>
-                    {!!candidate.evidence.length && (
-                      <small title={candidate.evidence.join("\n")}>
-                        依据：{candidate.evidence.slice(0, 2).join("；")}
-                      </small>
-                    )}
-                  </div>
-                  <div className="button-group">
-                    <Button
-                      variant="primary"
-                      disabled={reviewBusy !== null}
-                      onClick={() => void reviewCandidate(candidate.id, true)}
-                    >
-                      {reviewBusy === candidate.id ? "处理中…" : "确认"}
-                    </Button>
-                    <Button
-                      variant="ghost"
-                      disabled={reviewBusy !== null}
-                      onClick={() => void reviewCandidate(candidate.id, false)}
-                    >
-                      忽略
-                    </Button>
-                  </div>
+        <div className="candidate-list">
+          {pending.map((candidate) => (
+            <div className="candidate-row" key={candidate.id}>
+              <div className="candidate-copy">
+                <div className="row-title">
+                  <strong>{candidate.key}</strong>
+                  <Badge tone="accent">
+                    可信度 {Math.round(candidate.confidence * 100)}%
+                  </Badge>
                 </div>
-              ))}
+                <span>{candidate.value}</span>
+                {!!candidate.evidence.length && (
+                  <small title={candidate.evidence.join("\n")}>
+                    依据：{candidate.evidence.slice(0, 2).join("；")}
+                  </small>
+                )}
+              </div>
+              <div className="button-group">
+                <Button
+                  variant="primary"
+                  disabled={reviewBusy !== null}
+                  onClick={() => void reviewCandidate(candidate.id, true)}
+                >
+                  {reviewBusy === candidate.id ? "处理中…" : "确认"}
+                </Button>
+                <Button
+                  variant="ghost"
+                  disabled={reviewBusy !== null}
+                  onClick={() => void reviewCandidate(candidate.id, false)}
+                >
+                  忽略
+                </Button>
+              </div>
             </div>
-          );
-        })()}
-      </Card>
+          ))}
+        </div>
+      </Card> : <p className="status-line">没有待确认的习惯；有新候选时会在这里提示。</p>}
 
       {snapshot.status && (
         <p className="status-line">
@@ -333,7 +328,7 @@ export function MemoryPage({ snapshot, run }: PageProps) {
         tone="danger"
       >
         <div className="danger-actions">
-          <Button variant="danger" onClick={() => confirmClear(0, "清空全部记忆")}>
+          <Button variant="danger" onClick={() => void confirmClear(0, "清空全部记忆")}>
             清空全部
           </Button>
         </div>
@@ -343,6 +338,7 @@ export function MemoryPage({ snapshot, run }: PageProps) {
         记忆只保存在本机；只有配置并使用模型服务时，必要的记忆片段才会随对话发送给该服务。
         清空聊天记录不会删除已保存的长期偏好或互动事件。
       </InlineNotice>
+      {confirmation}
     </div>
   );
 }

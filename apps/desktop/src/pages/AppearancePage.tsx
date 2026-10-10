@@ -2,8 +2,6 @@ import { useEffect, useRef, useState } from "react";
 import { Card, PageHeader, SettingRow, Switch, TextArea } from "../components/ui";
 import type { PageProps } from "../types";
 
-const SCALE_STOPS = [0.5, 0.75, 1, 1.25, 1.5, 1.75, 2];
-
 export function AppearancePage({ snapshot, run }: PageProps) {
   const [scale, setScale] = useState(snapshot.scale);
   const dirty = useRef(false);
@@ -76,7 +74,6 @@ export function AppearancePage({ snapshot, run }: PageProps) {
         <div className="scale-control">
           <div className="scale-value">
             <strong>{scale.toFixed(2)}×</strong>
-            <span>当前 {snapshot.scale.toFixed(2)}×</span>
           </div>
           <input
             className="range"
@@ -88,18 +85,7 @@ export function AppearancePage({ snapshot, run }: PageProps) {
             onChange={(event) => changeScale(Number(event.target.value))}
             aria-label="宠物缩放"
           />
-          <div className="range-stops" aria-hidden>
-            {SCALE_STOPS.map((stop) => (
-              <button
-                key={stop}
-                type="button"
-                className={Math.abs(scale - stop) < 0.001 ? "active" : ""}
-                onClick={() => changeScale(stop)}
-              >
-                {stop}
-              </button>
-            ))}
-          </div>
+
         </div>
       </Card>
 
@@ -115,7 +101,7 @@ export function AppearancePage({ snapshot, run }: PageProps) {
           <TextArea
             value={greetingText}
             onChange={changeGreetingText}
-            rows={3}
+            rows={2}
             placeholder="例如：我在这儿呢，需要我陪你聊聊吗？"
           />
         </SettingRow>

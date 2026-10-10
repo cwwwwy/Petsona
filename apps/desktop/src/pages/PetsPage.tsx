@@ -7,6 +7,8 @@ import {
   InlineNotice,
   PageHeader,
 } from "../components/ui";
+import { ActionMenu } from "../components/ActionMenu";
+import { Dialog, useConfirm } from "../components/ConfirmDialog";
 import { PetThumb } from "../components/PetThumb";
 import { pickExportZip, pickImportFolder, pickImportZip } from "../lib/api";
 import type { ImportConflict, PageProps } from "../types";
@@ -22,7 +24,7 @@ type Busy =
 
 export function PetsPage({ snapshot, run }: PageProps) {
   const [selectedId, setSelectedId] = useState(snapshot.petId);
-  const [importMenuOpen, setImportMenuOpen] = useState(false);
+  const { confirm, confirmation } = useConfirm();
   const [busy, setBusy] = useState<Busy>(null);
   const conflict = snapshot.importConflict as ImportConflict | null;
 
@@ -42,7 +44,6 @@ export function PetsPage({ snapshot, run }: PageProps) {
   };
 
   const importFromDialog = async (kind: "zip" | "folder") => {
-    setImportMenuOpen(false);
     setBusy(kind);
     try {
       const path = kind === "zip" ? await pickImportZip() : await pickImportFolder();
@@ -78,7 +79,7 @@ export function PetsPage({ snapshot, run }: PageProps) {
 
   const deleteSelected = async () => {
     if (!selected) return;
-    if (!window.confirm(`确定删除宠物「${selected.name}」吗？宠物文件会从本地宠物库移除。`)) {
+    if (!await confirm({ title: "删除宠物", message: `确定删除宠物「${selected.name}」吗？宠物文件会从本地宠物库移除。人格与记忆会保留，重新导入同 ID 可继续使用。`, confirmLabel: "删除" })) {
       return;
     }
     setBusy("delete");
@@ -96,37 +97,12 @@ export function PetsPage({ snapshot, run }: PageProps) {
         title="宠物库"
         description="本地宠物库。单击选择、双击切换；可拖入 ZIP / 宠物文件夹，或用导入菜单（含 Codex 扫描）。"
         actions={
-          <div className="import-control">
-            <Button
-              variant="primary"
-              disabled={busy !== null}
-              onClick={() => setImportMenuOpen((open) => !open)}
-            >
-              {busy === "zip" || busy === "folder" ? "正在导入…" : "导入"}
-            </Button>
-            {importMenuOpen && (
-              <div className="popover-menu">
-                <button type="button" onClick={() => void importFromDialog("zip")}>
-                  <strong>选择 ZIP 文件</strong>
-                  <span>导入压缩包中的宠物</span>
-                </button>
-                <button type="button" onClick={() => void importFromDialog("folder")}>
-                  <strong>选择宠物文件夹</strong>
-                  <span>导入包含 pet.json 的目录</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setImportMenuOpen(false);
-                    void scan();
-                  }}
-                >
-                  <strong>扫描 Codex 宠物</strong>
-                  <span>从 ~/.codex/pets 导入，不改原文件</span>
-                </button>
-              </div>
-            )}
-          </div>
+          <ActionMenu label={busy === "zip" || busy === "folder" ? "正在导入…" : "导入"} primary disabled={busy !== null}
+            actions={[
+              { label: "选择 ZIP 文件", hint: "导入压缩包中的宠物", onClick: () => void importFromDialog("zip") },
+              { label: "选择宠物文件夹", hint: "导入包含 pet.json 的目录", onClick: () => void importFromDialog("folder") },
+              { label: "扫描 Codex 宠物", hint: "复制到本地库，保留原文件", onClick: () => void scan() },
+            ]} />
         }
       />
 
@@ -251,36 +227,34 @@ export function PetsPage({ snapshot, run }: PageProps) {
       </InlineNotice>
 
       {conflict && (
-        <div className="modal-backdrop" role="presentation">
-          <div className="modal" role="dialog" aria-modal="true" aria-labelledby="import-conflict-title">
-            <h2 id="import-conflict-title">发现同 ID 宠物</h2>
-            <p>
-              本地已有宠物「{conflict.name || conflict.id}」。覆盖会替换 Petsona 宠物库中的副本，
-              不会影响 Codex 原始文件。
-            </p>
-            <div className="modal-actions">
-              <Button
-                variant="ghost"
-                onClick={() => void run({ type: "clearImportConflict" })}
-              >
-                取消
-              </Button>
-              <Button
-                variant="danger"
-                onClick={() => {
-                  void run({
-                    type: "importPet",
-                    path: conflict.path,
-                    overwrite: true,
-                  });
-                }}
-              >
-                覆盖导入
-              </Button>
-            </div>
+        <Dialog title="发现同 ID 宠物" onClose={() => void run({ type: "clearImportConflict" })}>
+          <p>
+            本地已有宠物「{conflict.name || conflict.id}」。覆盖会替换 Petsona 宠物库中的副本，
+            不会影响 Codex 原始文件。
+          </p>
+          <div className="modal-actions">
+            <Button
+              variant="ghost"
+              onClick={() => void run({ type: "clearImportConflict" })}
+            >
+              取消
+            </Button>
+            <Button
+              variant="danger"
+              onClick={() => {
+                void run({
+                  type: "importPet",
+                  path: conflict.path,
+                  overwrite: true,
+                });
+              }}
+            >
+              覆盖导入
+            </Button>
           </div>
-        </div>
+        </Dialog>
       )}
+      {confirmation}
     </div>
   );
 }

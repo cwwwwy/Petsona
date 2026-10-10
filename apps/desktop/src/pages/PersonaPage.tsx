@@ -5,10 +5,10 @@ import {
   Card,
   InlineNotice,
   PageHeader,
-  SettingRow,
-  Switch,
   TextArea,
 } from "../components/ui";
+import { ActionMenu } from "../components/ActionMenu";
+import { Dialog, useConfirm } from "../components/ConfirmDialog";
 import { PersonaSourcePanel } from "../components/PersonaSourcePanel";
 import {
   loadSnapshot,
@@ -17,7 +17,10 @@ import {
 } from "../lib/api";
 import type { PageProps } from "../types";
 
-type Busy = "autosave" | "import" | "export" | "copy" | null;
+// Matches the existing builtin prompt; no business field is changed.
+const DEFAULT_SYSTEM_PROMPT = "你是一只住在用户桌面上的宠物伙伴。你友好、好奇、说话简洁。你可以陪用户聊天、帮忙梳理思路，但不要编造事实。回答时优先使用用户使用的语言。";
+
+type Busy = "autosave" | "import" | "export" | null;
 
 function safeFileName(value: string): string {
   const cleaned = value.trim().replace(/[\\/:*?"<>|]+/g, "_");
@@ -28,7 +31,7 @@ export function PersonaPage({ snapshot, run }: PageProps) {
   const persona = snapshot.persona;
   const dirty = useRef(false);
   const personaId = useRef(persona.id);
-  const [emoji, setEmoji] = useState(persona.traits?.emoji ?? true);
+  const { confirm, confirmation } = useConfirm();
   const [systemPrompt, setSystemPrompt] = useState(persona.systemPrompt ?? "");
   const [busy, setBusy] = useState<Busy>(null);
   const [copyOpen, setCopyOpen] = useState(false);
@@ -43,7 +46,6 @@ export function PersonaPage({ snapshot, run }: PageProps) {
       dirty.current = false;
     }
     if (dirty.current) return;
-    setEmoji(persona.traits?.emoji ?? true);
     setSystemPrompt(persona.systemPrompt ?? "");
   }, [persona]);
 
@@ -57,7 +59,6 @@ export function PersonaPage({ snapshot, run }: PageProps) {
       await run({
         type: "updatePersona",
         patch: {
-          emoji,
           system_prompt: systemPrompt,
         },
       });
@@ -66,7 +67,7 @@ export function PersonaPage({ snapshot, run }: PageProps) {
     } finally {
       setBusy(null);
     }
-  }, [emoji, run, systemPrompt]);
+  }, [run, systemPrompt]);
 
   useEffect(() => {
     if (!dirty.current) return;
@@ -75,10 +76,10 @@ export function PersonaPage({ snapshot, run }: PageProps) {
       if (personaId.current === targetPersonaId) void persistDraft();
     }, 450);
     return () => window.clearTimeout(timer);
-  }, [persistDraft, emoji, persona.id, systemPrompt]);
+  }, [persistDraft, persona.id, systemPrompt]);
 
   const reset = async () => {
-    if (!window.confirm("确定把当前宠物的说话方式重置为内置默认值吗？")) return;
+    if (!await confirm({ title: "重置说话方式", message: "确定把当前宠物的说话方式重置为内置默认值吗？宠物记忆会保留。", confirmLabel: "重置" })) return;
     await run({ type: "resetPersona" });
     dirty.current = false;
   };
@@ -132,47 +133,20 @@ export function PersonaPage({ snapshot, run }: PageProps) {
             >
               复制到…
             </Button>
-            <Button
-              variant="secondary"
-              disabled={busy !== null}
-              onClick={() => void importPersona()}
-            >
-              {busy === "import" ? "导入中…" : "导入"}
-            </Button>
-            <Button
-              variant="secondary"
-              disabled={busy !== null}
-              onClick={() => void exportPersona()}
-            >
-              {busy === "export" ? "导出中…" : "导出"}
-            </Button>
-            <Button variant="ghost" onClick={() => void reset()}>
-              重置为内置
-            </Button>
-            <Badge tone={busy === "autosave" ? "warning" : "positive"}>
-              {busy === "autosave" ? "自动保存中…" : "自动保存"}
-            </Badge>
+            <ActionMenu disabled={busy !== null} actions={[
+              { label: "导入", onClick: () => void importPersona() },
+              { label: "导出", onClick: () => void exportPersona() },
+              { label: "重置为内置", onClick: () => void reset() },
+            ]} />
           </div>
         }
       />
 
-      <Card title="表达" description="说话方式由资料学习塑造；这里保留一个直接的输出偏好。">
-        <SettingRow label="允许使用 emoji" hint="默认开启，只影响后续生成的回复。">
-          <Switch
-            label="允许使用 emoji"
-            checked={emoji}
-            onChange={(value) => {
-              setEmoji(value);
-              markDirty();
-            }}
-          />
-        </SettingRow>
-      </Card>
-
       <Card title="高级：系统提示词" description="会作为模型对话的基础指令。普通使用无需修改。">
         <details className="advanced-disclosure">
-          <summary>展开编辑</summary>
+          <summary>展开编辑 <Badge>{systemPrompt.trim() === DEFAULT_SYSTEM_PROMPT ? "默认" : "已自定义"}</Badge></summary>
           <TextArea
+            label="系统提示词"
             value={systemPrompt}
             onChange={(value) => {
               setSystemPrompt(value);
@@ -199,66 +173,62 @@ export function PersonaPage({ snapshot, run }: PageProps) {
         </p>
       )}
 
+      <p className="status-line" role="status">{busy === "autosave" ? "自动保存中…" : "修改后自动保存"}</p>
       <InlineNotice>
-        emoji 和系统提示词会自动保存；固定问候文案已归入「外观与交互」页。
-        导入与导出的都是 Petsona 人格 JSON；导入会切换当前宠物，覆盖前会二次确认。
+        系统提示词会自动保存；固定问候文案已归入「外观与交互」页。
+        导入与导出的都是 Petsona 人格 JSON；导入会更新当前宠物的说话方式，覆盖前会二次确认。
       </InlineNotice>
 
       {copyOpen && (
-        <div className="modal-backdrop" role="presentation">
-          <div className="modal" role="dialog" aria-modal="true" aria-labelledby="copy-persona-title">
-            <h2 id="copy-persona-title">复制到其他宠物</h2>
-            <p>选择目标宠物。会创建当前说话方式的独立副本，不改变源宠物。</p>
-            <div className="copy-target-list">
-              {otherPets.map((pet) => (
-                <button
-                  key={pet.id}
-                  type="button"
-                  onClick={() => {
-                    setCopyOpen(false);
-                    void run({ type: "copyPersonaToPet", target_pet_id: pet.id });
-                  }}
-                >
-                  <strong>{pet.name}</strong>
-                  <span className="mono">{pet.id}</span>
-                </button>
-              ))}
-            </div>
-            <div className="modal-actions">
-              <Button variant="ghost" onClick={() => setCopyOpen(false)}>
-                取消
-              </Button>
-            </div>
+        <Dialog title="复制到其他宠物" onClose={() => setCopyOpen(false)}>
+          <p>选择目标宠物。会创建当前说话方式的独立副本，不改变源宠物。</p>
+          <div className="copy-target-list">
+            {otherPets.map((pet) => (
+              <button
+                key={pet.id}
+                type="button"
+                onClick={() => {
+                  setCopyOpen(false);
+                  void run({ type: "copyPersonaToPet", target_pet_id: pet.id });
+                }}
+              >
+                <strong>{pet.name}</strong>
+                <span className="mono">{pet.id}</span>
+              </button>
+            ))}
           </div>
-        </div>
+          <div className="modal-actions">
+            <Button variant="ghost" onClick={() => setCopyOpen(false)}>
+              取消
+            </Button>
+          </div>
+        </Dialog>
       )}
 
       {importConflict && (
-        <div className="modal-backdrop" role="presentation">
-          <div className="modal" role="dialog" aria-modal="true" aria-labelledby="persona-conflict-title">
-            <h2 id="persona-conflict-title">人格 ID 已存在</h2>
-            <p>
-              本地已经存在同 ID 的人格文件。覆盖会替换现有文件，但不会影响其他宠物的绑定副本。
-            </p>
-            <p className="modal-detail">{importConflict.message}</p>
-            <div className="modal-actions">
-              <Button variant="ghost" onClick={() => setImportConflict(null)}>
-                取消
-              </Button>
-              <Button
-                variant="danger"
-                onClick={() => {
-                  const path = importConflict.path;
-                  setImportConflict(null);
-                  void run({ type: "importPersona", path, overwrite: true });
-                }}
-              >
-                覆盖导入
-              </Button>
-            </div>
+        <Dialog title="人格 ID 已存在" onClose={() => setImportConflict(null)}>
+          <p>
+            本地已经存在同 ID 的人格文件。覆盖会替换现有文件，但不会影响其他宠物的绑定副本。
+          </p>
+          <p className="modal-detail">{importConflict.message}</p>
+          <div className="modal-actions">
+            <Button variant="ghost" onClick={() => setImportConflict(null)}>
+              取消
+            </Button>
+            <Button
+              variant="danger"
+              onClick={() => {
+                const path = importConflict.path;
+                setImportConflict(null);
+                void run({ type: "importPersona", path, overwrite: true });
+              }}
+            >
+              覆盖导入
+            </Button>
           </div>
-        </div>
+        </Dialog>
       )}
+      {confirmation}
     </div>
   );
 }

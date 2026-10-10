@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type KeyboardEvent } from "react";
 import { Badge, Button, EmptyState, InlineNotice } from "./components/ui";
+import { useConfirm } from "./components/ConfirmDialog";
 import { useSettings } from "./lib/useSettings";
 import type { ConversationTurn, SettingsAction } from "./types";
 
@@ -12,6 +13,7 @@ function isNearBottom(element: HTMLDivElement): boolean {
 }
 
 export default function ChatApp() {
+  const { confirm, confirmation } = useConfirm();
   const { snapshot, loading, error, apply } = useSettings(250);
   const [draft, setDraft] = useState("");
   const [composing, setComposing] = useState(false);
@@ -105,7 +107,7 @@ export default function ChatApp() {
   };
 
   const clearHistory = async () => {
-    if (!window.confirm("确定清空当前宠物的聊天记录吗？此操作不可撤销。")) return;
+    if (!await confirm({ title: "清空聊天记录", message: "确定清空当前宠物的聊天记录吗？此操作不可撤销，长期记忆会保留。", confirmLabel: "清空" })) return;
     setBusy(true);
     try {
       await run({ type: "clearConversationHistory", pet_id: snapshot.petId });
@@ -257,6 +259,7 @@ export default function ChatApp() {
           )}
         </div>
       </footer>
+      {confirmation}
     </div>
   );
 }

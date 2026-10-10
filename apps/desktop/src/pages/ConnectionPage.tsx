@@ -9,6 +9,7 @@ import {
   SettingRow,
   TextField,
 } from "../components/ui";
+import { useConfirm } from "../components/ConfirmDialog";
 import { loadSnapshot } from "../lib/api";
 import type { DeepSeekConfig, PageProps } from "../types";
 
@@ -32,6 +33,7 @@ function validHttpUrl(value: string): boolean {
 }
 
 export function ConnectionPage({ snapshot, run }: PageProps) {
+  const { confirm, confirmation } = useConfirm();
   const source = snapshot.deepseek;
   const dirty = useRef(false);
   const [config, setConfig] = useState<DeepSeekConfig>(source);
@@ -129,7 +131,7 @@ export function ConnectionPage({ snapshot, run }: PageProps) {
   };
 
   const clearKey = async () => {
-    if (!window.confirm("确定清除当前模型服务商保存的 API Key 吗？")) return;
+    if (!await confirm({ title: "清除密钥", message: "确定清除当前模型服务商保存的 API Key 吗？", confirmLabel: "清除" })) return;
     setSavingKey(true);
     setKeyNotice(null);
     try {
@@ -169,7 +171,7 @@ export function ConnectionPage({ snapshot, run }: PageProps) {
 
       <Card
         title="服务"
-        description="顺序固定为服务商 → Base URL → API Key → 模型。"
+        description="选择用于聊天和问候的模型服务。"
       >
         <SettingRow label="模型服务商" hint="DeepSeek 使用官方 OpenAI 兼容端点；自定义可接任意兼容服务。">
           <div className="connection-control">
@@ -211,7 +213,7 @@ export function ConnectionPage({ snapshot, run }: PageProps) {
           hint={
             config.keyConfigured
               ? "当前凭据已保存在系统凭据库；输入新值会覆盖。"
-              : "尚未配置。Key 不会写入 config.json。"
+              : "尚未配置。密钥不会写入设置文件。"
           }
         >
           <div className="key-control">
@@ -248,6 +250,7 @@ export function ConnectionPage({ snapshot, run }: PageProps) {
           <div className="model-control">
             <input
               className="control-input"
+              aria-label="模型"
               list="petsona-model-options"
               value={config.model}
               onChange={(event) => patch({ model: event.target.value })}
@@ -296,9 +299,10 @@ export function ConnectionPage({ snapshot, run }: PageProps) {
       </Card>
 
       <InlineNotice>
-        凭据保存在系统凭据库；config.json 只保留 provider、URL、模型等非敏感字段。
+        密钥保存在系统凭据库，不会写入设置文件。
         拉取模型和聊天会访问你填写的服务商。
       </InlineNotice>
+      {confirmation}
     </div>
   );
 }

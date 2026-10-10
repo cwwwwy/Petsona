@@ -245,7 +245,7 @@ export function PersonaSourcePanel({
               <TextArea
                 value={description}
                 onChange={setDescription}
-                rows={4}
+                rows={3}
                 placeholder="描述性格、表达方式、关系边界和你喜欢的回应习惯"
               />
             </SettingRow>
@@ -339,7 +339,7 @@ export function PersonaSourcePanel({
         <Card
           title="人格草稿：试聊后应用"
           description="先试聊确认风格，再应用到当前宠物。应用不会清空或覆盖宠物记忆。"
-          tone="danger"
+          tone="accent"
         >
           <SettingRow label="草稿名称">
             <TextField value={draftName} onChange={setDraftName} />

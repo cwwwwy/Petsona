@@ -77,9 +77,7 @@ export function SystemPage({ snapshot }: PageProps) {
             <Button variant="secondary" onClick={() => void copyDiagnostics()}>
               复制诊断
             </Button>
-            <Button variant="primary" onClick={() => void openRepository()}>
-              打开仓库
-            </Button>
+
           </div>
         }
       />
@@ -89,7 +87,7 @@ export function SystemPage({ snapshot }: PageProps) {
           <div className="brand-mark large">P</div>
           <div>
             <h2>Petsona</h2>
-            <p>Rust 原生浮层 + TypeScript 内容界面</p>
+            <p>桌面上的宠物与 AI 伙伴</p>
           </div>
           <Badge tone="accent">v{snapshot.appVersion}</Badge>
         </div>
@@ -106,10 +104,10 @@ export function SystemPage({ snapshot }: PageProps) {
         </SettingRow>
       </Card>
 
-      <Card title="启动" description="登录 Windows 后自动启动 Petsona。">
+      <Card title="启动" description="登录后自动启动 Petsona。">
         <SettingRow
           label="开机自启"
-          hint="写入或删除 HKCU\Software\Microsoft\Windows\CurrentVersion\Run；真实登录后行为在 M6 发布验收。"
+          hint="开启后，下次登录时 Petsona 会自动出现。"
         >
           <Switch
             label="开机自启"
@@ -120,7 +118,7 @@ export function SystemPage({ snapshot }: PageProps) {
         </SettingRow>
       </Card>
 
-      <Card title="本机数据" description="设置窗口关闭不会退出 Petsona；从托盘菜单「退出」才会结束进程。">
+      <Card title="本机数据" description="宠物、设置和记忆保存在数据目录；日志用于排查问题。">
         <SettingRow label="数据目录">
           <div className="path-control">
             <span className="mono" title={paths.dataDir}>
@@ -143,7 +141,7 @@ export function SystemPage({ snapshot }: PageProps) {
         </SettingRow>
       </Card>
 
-      <InlineNotice>主题跟随 Windows 系统自动切换。</InlineNotice>
+      <InlineNotice>主题跟随系统自动切换。</InlineNotice>
       {notice && <InlineNotice>{notice}</InlineNotice>}
     </div>
   );
