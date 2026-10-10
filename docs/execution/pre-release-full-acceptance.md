@@ -454,14 +454,15 @@ $env:PETSONA_AUTOSTART_VALUE = "PetsonaLcAccept"
 | 项 | 实现 | 自动证据 | 人工验收 |
 |---|---|---|---|
 | FX-1-1 人格页顺序 | 「从资料学习说话方式」移到「高级：系统提示词」之前 | `pnpm build` 通过 | 打开人格页目视：资料学习在前 |
-| FX-1-2 悬停互动 | 光标进入宠物不透明像素 → 播放一次 `jumping`（Codex V2 契约 hover jump）；1.2s 冷却；拖动 / 单击判定 / 输入框打开时不触发；jumping 优先级 40 > look 20，跳跃结束自动回注视或 idle | 新增单测 `hover_jump_fires_once_on_enter_and_respects_busy_states` | 移入宠物→跳一次；移出再移入→再跳；拖动与输入框打开时不跳 |
+| FX-1-2 悬停互动（对齐 Codex） | 移入宠物触发 **3 连跳**（0.85s 间隔，用户实测 Codex 为 3 次）；持续悬停每 **6–12s 随机**挥手/跳跃提醒；点击立即结束连跳；拖动 / 单击判定 / 输入框打开时暂停；jumping 优先级 40 > look 20，动作结束自动回注视或 idle | 新增单测 `hover_entry_burst_plays_three_jumps_then_random_reminders`、`hover_random_stays_non_zero_and_changes` | 移入看 3 连跳；持续悬停 ≥6s 出现随机提醒；点击不再被连跳打断 |
 | FX-1-3 输入框聚焦 | 新增 `focus_composer`：必要时 `AttachThreadInput` 到前台线程后 `SetForegroundWindow` + `SetFocus`（不注入输入）；打开与 1.5s 重试都走它 | Windows 构建通过；键盘焦点由实机确认 | 滚轮打开后直接打字（含中文 IME） |
-| FX-1-4 滚轮行程 | 同方向累计 360（3 格）才触发；间隔 >700ms 或反向清零；新增 `WheelTravel` 纯函数 | 新增 3 条单测（三格触发 / 停顿与反向清零 / 高分辨率滚轮） | 单格滚动不误开；连续 3 格向下打开、向上关闭 |
+| FX-1-4 滚轮行程 | 同方向累计 360（3 格）才触发；间隔 >700ms 或反向清零；新增 `WheelTravel` 纯函数 | 新增 3 条单测（三格触发 / 停顿与反向清零 / 高分辨率滚轮） | 单格滚动不误开；连续 3 格向下打开、向上关闭 || FX-1-5 输入框注视时机（最终） | 只要输入框打开就始终注视文本插入符。**根因 1**：`GetCaretPos` 依赖系统 caret，失焦/未激活时停在旧坐标（实测读到 `(2,0)`）→ 改读 EDIT 选区 `EM_GETSEL` + `EM_POSFROMCHAR`（越界回退输入框中线）。**根因 2（用户二次复测）**：方向以「宠物窗口中心」为原点，输入框紧贴宠物下方时姿态偏到「左」（render 实测 row10 col3 = 247.5°，而插入符真实方向约 231°）；实测 Codex V2 图集眼睛线约在格子高度 32% 处，改为**从脸部瞄准插入符** → row10 col2（225°，误差 6°）。重开草稿时插入符落到末尾 | 运行时渲染取证：修正前 sprite_index=83（row10c3），修正后 =82（row10c2）；插入符左缘→末尾时方向 11→6；单测 18 passed | 打开即看向插入符；打字跟随；切窗口不取消 |
+| FX-1-6 光标样式 | 输入框区域显示文本 I 型指针（EDIT 子类 `WM_SETCURSOR → IDC_IBEAM`，输入框外沿保持箭头）；拖动宠物时手型指针（拖动开始设置，松手恢复箭头，`WM_SETCURSOR` 同步） | Windows 构建通过；观感由实机确认 | 悬停输入框 → I 型；拖动宠物 → 手型；松手恢复箭头 |
 
 自动证据（2026-10-10，Windows 11 / MSVC 1.98.0 / WSL Node 24.19.0）：
 
 - `PATH=…/node24 pnpm --dir apps/desktop build`：exit 0（CSS 20.81 kB / JS 197.47 kB）。
-- `cargo test`（`apps/desktop/src-tauri`）：**16 passed**（原 13 → 净增 3；`WheelAction::None` 死变体一并移除，构建无告警）。
+- `cargo test`（`apps/desktop/src-tauri`）：**18 passed**（原 13 → 净增 5；`WheelAction::None` 死变体一并移除，构建无告警）。
 - `cargo build`（debug）：exit 0，`Finished dev profile`。
 - `scripts/desktop-settings-smoke.ps1`：**PASS**（设置窗前台 True；关闭只隐藏；重显颜色 53）。
 

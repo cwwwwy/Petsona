@@ -50,14 +50,14 @@ use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
 };
 use windows_sys::Win32::UI::WindowsAndMessaging::{
     CallNextHookEx, CallWindowProcW, CreateWindowExW, DefWindowProcW, DispatchMessageW,
-    GetCaretPos, GetClientRect, GetCursorPos, GetForegroundWindow, GetMessageW, GetWindowLongPtrW,
+    GetClientRect, GetCursorPos, GetForegroundWindow, GetMessageW, GetWindowLongPtrW,
     GetWindowRect, GetWindowTextLengthW, GetWindowTextW, GetWindowThreadProcessId, KillTimer,
     LoadCursorW, PostMessageW, PostQuitMessage, RegisterClassExW, SendMessageW, SetCursor,
     SetForegroundWindow, SetTimer, SetWindowLongPtrW, SetWindowPos, SetWindowTextW,
     SetWindowsHookExW, ShowWindow, TranslateMessage, UnhookWindowsHookEx, UpdateLayeredWindow,
     WindowFromPoint, ES_AUTOVSCROLL, ES_LEFT, ES_MULTILINE, ES_WANTRETURN, GWLP_USERDATA,
-    GWL_EXSTYLE, GWL_WNDPROC, IDC_ARROW, IDC_HAND, MSG, MSLLHOOKSTRUCT, SWP_NOACTIVATE, SWP_NOSIZE,
-    SWP_NOZORDER, SW_HIDE, SW_SHOW, SW_SHOWNOACTIVATE, ULW_ALPHA, WH_MOUSE_LL, WM_APP,
+    GWL_EXSTYLE, GWL_WNDPROC, IDC_ARROW, IDC_HAND, IDC_IBEAM, MSG, MSLLHOOKSTRUCT, SWP_NOACTIVATE,
+    SWP_NOSIZE, SWP_NOZORDER, SW_HIDE, SW_SHOW, SW_SHOWNOACTIVATE, ULW_ALPHA, WH_MOUSE_LL, WM_APP,
     WM_CTLCOLOREDIT, WM_DESTROY, WM_ERASEBKGND, WM_KEYDOWN, WM_LBUTTONDOWN, WM_LBUTTONUP,
     WM_MOUSEMOVE, WM_MOUSEWHEEL, WM_NCHITTEST, WM_PAINT, WM_SETCURSOR, WM_TIMER, WNDCLASSEXW,
     WS_CHILD, WS_EX_LAYERED, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_EX_TRANSPARENT,
@@ -79,6 +79,10 @@ const DRAG_STATE_TTL_MS: u64 = 300;
 const DRAG_STATE_RESEND_MS: u128 = 80;
 /// Counter-movement needed before a drag flips its running direction.
 const DRAG_DIRECTION_FLIP_PX: i32 = 3;
+/// Gaze origin on the pet's face line: the pose is aimed from the eyes, not
+/// the window centre, which is where a viewer reads "what is it looking at".
+/// Measured from Codex V2 atlases (eye line lands around 30-33% of the cell).
+const GAZE_FACE_LINE: f32 = 0.32;
 /// Gaze ellipse: enter margin 80% / exit margin 100% of the short side, and
 /// a 35% centre dead zone (ported from `GazeFilter.cs`, git 6bca241).
 const GAZE_ENTER_MARGIN: f32 = 0.80;
@@ -137,10 +141,19 @@ const COMPOSER_HEIGHT: i32 = 44;
 const COMPOSER_SEND_SIZE: i32 = 30;
 const COMPOSER_SEND_INSET: i32 = 8;
 const COMPOSER_EDIT_ID: i32 = 1001;
-/// Codex V2 maps the `jumping` row to the hover/playful jump. Play one jump
-/// when the cursor enters the pet, with a cooldown so crossing the sprite does
-/// not loop the animation.
-const HOVER_JUMP_COOLDOWN_MS: u64 = 1200;
+/// Edit-control messages used by the composer caret read; windows-sys does not
+/// export these macro constants.
+const EM_GETSEL: u32 = 0x00B0;
+const EM_SETSEL: u32 = 0x00B1;
+const EM_POSFROMCHAR: u32 = 0x00D6;
+/// Codex's hover jump plays three times; the overlay repeats the one-shot
+/// `jumping` row with one animation length between hops.
+const HOVER_JUMP_BURST: u8 = 3;
+const HOVER_BURST_GAP_MS: u64 = 850;
+/// While the cursor stays on the pet, a random wave/jump every 6-12 s keeps
+/// the pet visibly interactive.
+const HOVER_REMIND_MIN_MS: u64 = 6_000;
+const HOVER_REMIND_MAX_MS: u64 = 12_000;
 /// Accumulated same-direction wheel travel needed before the composer toggles.
 /// One classic notch is 120, so this needs three notches; shorter or reversed
 /// bursts are discarded so page scrolling over the pet cannot open the input.
@@ -217,6 +230,31 @@ struct ComposerState {
     brush_dark: bool,
 }
 
+/// Hover reaction state: the Codex-style entry jump burst plus the reminders
+/// that keep a long hover visibly alive.
+struct HoverState {
+    active: bool,
+    burst_remaining: u8,
+    due_at: Option<Instant>,
+    rng: u64,
+}
+
+impl HoverState {
+    fn new() -> Self {
+        let seed = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos() as u64)
+            .unwrap_or(0x9E37_79B9_7F4A_7C15)
+            | 1;
+        Self {
+            active: false,
+            burst_remaining: 0,
+            due_at: None,
+            rng: seed,
+        }
+    }
+}
+
 /// Same-direction wheel travel accumulated between composer gestures.
 #[derive(Default)]
 struct WheelTravel {
@@ -252,8 +290,7 @@ struct State {
     gaze_active: bool,
     gaze_direction: i32,
     gaze_last: (f32, f32),
-    hover_active: bool,
-    hover_last_jump: Option<Instant>,
+    hover: HoverState,
     wheel: WheelTravel,
     fault_reported: bool,
     fault_message: Option<String>,
@@ -365,8 +402,7 @@ unsafe fn thread_main(engine: Arc<Mutex<RuntimeEngine>>) {
         gaze_active: false,
         gaze_direction: -1,
         gaze_last: (0.0, 0.0),
-        hover_active: false,
-        hover_last_jump: None,
+        hover: HoverState::new(),
         wheel: WheelTravel::default(),
         fault_reported: false,
         fault_message: None,
@@ -545,7 +581,13 @@ unsafe extern "system" fn wnd_proc(
                 Some(0)
             }
             WM_SETCURSOR => {
-                SetCursor(LoadCursorW(ptr::null_mut(), IDC_ARROW));
+                // A hand while the pet is being dragged, arrow otherwise.
+                let cursor = if state.dragging && state.moved {
+                    IDC_HAND
+                } else {
+                    IDC_ARROW
+                };
+                SetCursor(LoadCursorW(ptr::null_mut(), cursor));
                 Some(1)
             }
             WM_DESTROY => {
@@ -1102,6 +1144,10 @@ unsafe fn on_click_timer(hwnd: HWND, state: &mut State) {
 }
 
 unsafe fn on_lbutton_down(hwnd: HWND, state: &mut State) {
+    // A press ends the hover burst so a pending hover jump cannot cut the
+    // click or double-click reaction short.
+    state.hover.burst_remaining = 0;
+    state.hover.due_at = None;
     // Old semantics: a second press inside the click window is a double click;
     // it cancels the pending single click and never starts a drag.
     if state
@@ -1156,6 +1202,7 @@ unsafe fn on_mouse_move(hwnd: HWND, state: &mut State) {
         KillTimer(hwnd, CLICK_TIMER);
         state.last_click_at = None;
         state.last_move_cursor = (cursor.x, cursor.y);
+        SetCursor(LoadCursorW(ptr::null_mut(), IDC_HAND));
         log("pet: drag started");
     }
 
@@ -1208,6 +1255,7 @@ unsafe fn on_lbutton_up(hwnd: HWND, state: &mut State) {
     }
     ReleaseCapture();
     state.dragging = false;
+    SetCursor(LoadCursorW(ptr::null_mut(), IDC_ARROW));
     if state.moved {
         let mut rect: RECT = std::mem::zeroed();
         if GetWindowRect(hwnd, &mut rect) != 0 {
@@ -1252,19 +1300,76 @@ unsafe fn composer_caret_position(edit: HWND) -> Option<(f32, f32)> {
     if GetWindowRect(edit, &mut rect) == 0 {
         return None;
     }
-    let mut caret: POINT = std::mem::zeroed();
-    if GetCaretPos(&mut caret) == 0 {
-        return Some((
-            (rect.left + rect.right) as f32 / 2.0,
-            (rect.top + rect.bottom) as f32 / 2.0,
-        ));
+    let center = (
+        (rect.left + rect.right) as f32 / 2.0,
+        (rect.top + rect.bottom) as f32 / 2.0,
+    );
+
+    // Read the caret index from the edit's own selection instead of the system
+    // caret (`GetCaretPos` goes stale or disappears once the composer loses the
+    // foreground, which made the pet stare at a fixed left point). Low word =
+    // selection start, high word = selection end; the caret sits at the end.
+    let selection = SendMessageW(edit, EM_GETSEL, 0, 0) as u32;
+    let length = GetWindowTextLengthW(edit).max(0);
+    let mut index = ((selection >> 16) & 0xFFFF) as u16 as i32;
+    if index < 0 || index > length {
+        index = length;
     }
-    // GetCaretPos is in edit client coordinates; the edit has no border, so
-    // the window origin maps directly. +8 aims at the middle of the text line.
+    let position = SendMessageW(edit, EM_POSFROMCHAR, index as usize, 0);
+    let position = if position == -1 && length > 0 {
+        SendMessageW(edit, EM_POSFROMCHAR, (length - 1) as usize, 0)
+    } else {
+        position
+    };
+    let (x, y) = if position == -1 {
+        if length == 0 {
+            // Empty field: the caret sits at the first text cell.
+            (0, 0)
+        } else {
+            return Some(center);
+        }
+    } else {
+        unpack_char_position(position)
+    };
+    // Long drafts scroll inside the 20 px edit; keep the target inside the box
+    // so the gaze never points at a scrolled-away cell.
+    let width = rect.right - rect.left;
+    let height = rect.bottom - rect.top;
+    let x = x.clamp(0, width.max(0));
+    let y = y.clamp(0, height.max(0));
     Some((
-        rect.left as f32 + caret.x as f32 + 2.0,
-        rect.top as f32 + caret.y as f32 + 8.0,
+        rect.left as f32 + x as f32 + 2.0,
+        rect.top as f32 + y as f32 + 8.0,
     ))
+}
+
+/// `EM_POSFROMCHAR` packs the client-space x/y into the low/high words.
+fn unpack_char_position(value: isize) -> (i32, i32) {
+    let raw = value as u32;
+    let x = (raw & 0xFFFF) as u16 as i16 as i32;
+    let y = ((raw >> 16) & 0xFFFF) as u16 as i16 as i32;
+    (x, y)
+}
+
+/// Aims the stabilized gaze at a screen-space target, bypassing the normal
+/// enter/exit margins and dead zone (the composer caret and a cursor resting on
+/// the pet both sit outside the idle ellipse).
+unsafe fn aim_gaze_at(state: &mut State, hwnd: HWND, width: f32, height: f32, target: (f32, f32)) {
+    let mut rect: RECT = std::mem::zeroed();
+    if GetWindowRect(hwnd, &mut rect) == 0 {
+        return;
+    }
+    let dx = target.0 - (rect.left as f32 + width / 2.0);
+    let dy = target.1 - (rect.top as f32 + height * GAZE_FACE_LINE);
+    let direction = gaze_stabilize(state, dx, dy);
+    let (unit_x, unit_y) = gaze_unit_vector(direction);
+    if let Ok(engine) = state.engine.lock() {
+        let _ = engine.send(RuntimeCommand::SetGazeTarget {
+            dx: unit_x,
+            dy: unit_y,
+        });
+    }
+    state.gaze_active = true;
 }
 
 unsafe fn update_gaze(hwnd: HWND, state: &mut State) {
@@ -1277,26 +1382,17 @@ unsafe fn update_gaze(hwnd: HWND, state: &mut State) {
         return;
     };
 
-    // While the composer is focused the pet watches the text caret so typing
-    // feels attended. The caret sits outside the gaze ellipse, so this branch
-    // bypasses the enter/exit margins and always drives the pose.
-    if state.composer.open && GetForegroundWindow() == state.composer.hwnd {
-        if let Some((caret_x, caret_y)) = composer_caret_position(state.composer.edit) {
-            let mut rect: RECT = std::mem::zeroed();
-            if GetWindowRect(hwnd, &mut rect) != 0 {
-                let dx = caret_x - (rect.left as f32 + width as f32 / 2.0);
-                let dy = caret_y - (rect.top as f32 + height as f32 / 2.0);
-                let direction = gaze_stabilize(state, dx, dy);
-                let (unit_x, unit_y) = gaze_unit_vector(direction);
-                if let Ok(engine) = state.engine.lock() {
-                    let _ = engine.send(RuntimeCommand::SetGazeTarget {
-                        dx: unit_x,
-                        dy: unit_y,
-                    });
-                }
-                state.gaze_active = true;
-                return;
-            }
+    let width = width as f32;
+    let height = height as f32;
+
+    // While the composer is open the pet always attends to the text caret --
+    // before the first keystroke as well as after focus moves to another
+    // window. No foreground check and no cursor phase: `composer_caret_position`
+    // falls back to the field centre when the edit currently has no caret.
+    if state.composer.open {
+        if let Some(target) = composer_caret_position(state.composer.edit) {
+            aim_gaze_at(state, hwnd, width, height, target);
+            return;
         }
     }
 
@@ -1308,9 +1404,6 @@ unsafe fn update_gaze(hwnd: HWND, state: &mut State) {
     if GetWindowRect(hwnd, &mut rect) == 0 {
         return;
     }
-
-    let width = width as f32;
-    let height = height as f32;
     let dx = cursor.x as f32 - (rect.left as f32 + width / 2.0);
     let dy = cursor.y as f32 - (rect.top as f32 + height / 2.0);
 
@@ -1321,7 +1414,10 @@ unsafe fn update_gaze(hwnd: HWND, state: &mut State) {
         return;
     }
 
-    let direction = gaze_stabilize(state, dx, dy);
+    // Margins use the window centre, but the pose is aimed from the face line
+    // so the head turns towards what the viewer expects it to look at.
+    let face_dy = cursor.y as f32 - (rect.top as f32 + height * GAZE_FACE_LINE);
+    let direction = gaze_stabilize(state, dx, face_dy);
     let (unit_x, unit_y) = gaze_unit_vector(direction);
     if let Ok(engine) = state.engine.lock() {
         let _ = engine.send(RuntimeCommand::SetGazeTarget {
@@ -1442,12 +1538,13 @@ unsafe fn update_pass_through(hwnd: HWND, state: &mut State) {
     state.transparent = Some(want_transparent);
 }
 
-/// 16 ms hover reaction: entering the pet's opaque pixels plays one jump.
-/// Dragging, the pending single-click window and an open composer suppress it,
-/// and a cooldown keeps re-entry from looping the animation.
+/// 16 ms hover reaction. Entering the pet's opaque pixels starts the Codex
+/// entry burst (three jumps); a long hover keeps waving or jumping every
+/// 6-12 s. Dragging, the pending single-click window and an open composer
+/// pause the reactions without losing the hover state.
 unsafe fn update_hover(hwnd: HWND, state: &mut State) {
     if !state.visible || state.fault_reported {
-        state.hover_active = false;
+        reset_hover(&mut state.hover);
         return;
     }
     let mut cursor: POINT = std::mem::zeroed();
@@ -1458,31 +1555,70 @@ unsafe fn update_hover(hwnd: HWND, state: &mut State) {
     if GetWindowRect(hwnd, &mut rect) == 0 {
         return;
     }
-    let inside = hit(state, cursor.x - rect.left, cursor.y - rect.top);
-    let now = Instant::now();
-    let cooldown_ready = state.hover_last_jump.map_or(true, |at| {
-        now.duration_since(at) >= Duration::from_millis(HOVER_JUMP_COOLDOWN_MS)
-    });
-    let should_jump = hover_should_jump(
-        state.hover_active,
-        inside,
-        state.dragging,
-        state.composer.open,
-        state.last_click_at.is_some(),
-        cooldown_ready,
-    );
-    state.hover_active = inside;
-    if !should_jump {
+    if !hit(state, cursor.x - rect.left, cursor.y - rect.top) {
+        reset_hover(&mut state.hover);
         return;
     }
-    state.hover_last_jump = Some(now);
+    let now = Instant::now();
+    if !state.hover.active {
+        state.hover.active = true;
+        state.hover.burst_remaining = HOVER_JUMP_BURST;
+        state.hover.due_at = Some(now);
+    }
+    if state.dragging || state.composer.open || state.last_click_at.is_some() {
+        return;
+    }
+    if !state.hover.due_at.is_some_and(|at| now >= at) {
+        return;
+    }
+    let random = next_hover_random(&mut state.hover.rng);
+    let (reaction, delay) = hover_reaction(state.hover.burst_remaining, random);
+    if state.hover.burst_remaining > 0 {
+        state.hover.burst_remaining -= 1;
+    }
+    state.hover.due_at = Some(now + Duration::from_millis(delay));
     if let Ok(engine) = state.engine.lock() {
         let _ = engine.send(RuntimeCommand::SetState {
-            state: PetState::Jumping,
+            state: reaction,
             ttl: None,
         });
     }
-    log("pet: hover -> jumping");
+    log(&format!("pet: hover -> {}", reaction.name()));
+}
+
+fn reset_hover(hover: &mut HoverState) {
+    hover.active = false;
+    hover.burst_remaining = 0;
+    hover.due_at = None;
+}
+
+/// Reaction owed right now: the entry burst first, then a random reminder.
+fn hover_reaction(burst_remaining: u8, random: u64) -> (PetState, u64) {
+    if burst_remaining > 0 {
+        (PetState::Jumping, HOVER_BURST_GAP_MS)
+    } else {
+        let wave = random & 1 == 1;
+        let span = HOVER_REMIND_MAX_MS - HOVER_REMIND_MIN_MS;
+        let delay = HOVER_REMIND_MIN_MS + ((random >> 1) % (span + 1));
+        (
+            if wave {
+                PetState::Waving
+            } else {
+                PetState::Jumping
+            },
+            delay,
+        )
+    }
+}
+
+/// xorshift64: no dependency, deterministic in tests, seeded at window setup.
+fn next_hover_random(rng: &mut u64) -> u64 {
+    let mut x = *rng;
+    x ^= x << 13;
+    x ^= x >> 7;
+    x ^= x << 17;
+    *rng = x;
+    x
 }
 
 fn hit(state: &State, x: i32, y: i32) -> bool {
@@ -1554,20 +1690,6 @@ fn wheel_travel_action(travel: &mut WheelTravel, delta: i32, now: Instant) -> Op
         return Some(WheelAction::Close);
     }
     None
-}
-
-/// True when the cursor just entered the pet and the pet is free to react.
-/// The Codex V2 contract maps `jumping` to the hover jump, so the overlay
-/// plays it once per entry and later resumes the gaze/idle state.
-fn hover_should_jump(
-    was_hovering: bool,
-    inside: bool,
-    dragging: bool,
-    composer_open: bool,
-    click_pending: bool,
-    cooldown_ready: bool,
-) -> bool {
-    inside && !was_hovering && !dragging && !composer_open && !click_pending && cooldown_ready
 }
 
 /// Global low-level wheel hook. Only wheel input that lands on the pet is
@@ -2018,6 +2140,23 @@ unsafe fn create_composer_edit(parent: HWND) -> HWND {
     edit
 }
 
+/// True while the cursor is inside the edit field (the pill around it keeps
+/// the arrow, the field shows the text cursor).
+unsafe fn composer_over_edit(state: &State) -> bool {
+    if state.composer.edit.is_null() {
+        return false;
+    }
+    let mut cursor: POINT = std::mem::zeroed();
+    if GetCursorPos(&mut cursor) == 0 {
+        return false;
+    }
+    let mut rect: RECT = std::mem::zeroed();
+    if GetWindowRect(state.composer.edit, &mut rect) == 0 {
+        return false;
+    }
+    cursor.x >= rect.left && cursor.x < rect.right && cursor.y >= rect.top && cursor.y < rect.bottom
+}
+
 unsafe fn composer_wnd_proc_msg(
     hwnd: HWND,
     msg: u32,
@@ -2077,6 +2216,8 @@ unsafe fn composer_wnd_proc_msg(
         WM_SETCURSOR => {
             let cursor_name = if state.composer.button_hovered {
                 IDC_HAND
+            } else if composer_over_edit(state) {
+                IDC_IBEAM
             } else {
                 IDC_ARROW
             };
@@ -2310,6 +2451,15 @@ fn open_composer(state: &mut State) {
     unsafe {
         let draft = wide(&state.composer.draft);
         SetWindowTextW(state.composer.edit, draft.as_ptr());
+        // A restored draft continues from its end, and the pet's caret gaze
+        // therefore also starts at the end of the text.
+        let length = GetWindowTextLengthW(state.composer.edit).max(0);
+        SendMessageW(
+            state.composer.edit,
+            EM_SETSEL,
+            length as usize,
+            length as isize,
+        );
         update_composer(state);
         ShowWindow(state.composer.hwnd, SW_SHOW);
         focus_composer(state.composer.hwnd, state.composer.edit);
@@ -2464,6 +2614,10 @@ unsafe extern "system" fn edit_proc(
     wparam: WPARAM,
     lparam: LPARAM,
 ) -> LRESULT {
+    if msg == WM_SETCURSOR {
+        SetCursor(LoadCursorW(ptr::null_mut(), IDC_IBEAM));
+        return 1;
+    }
     if msg == WM_KEYDOWN {
         if wparam == VK_ESCAPE as usize {
             let text = read_window_text(hwnd);
@@ -2521,8 +2675,8 @@ fn wide(text: &str) -> Vec<u16> {
 #[cfg(test)]
 mod tests {
     use super::{
-        hover_should_jump, next_drag_direction, wheel_travel_action, PetState, WheelAction,
-        WheelTravel,
+        hover_reaction, next_drag_direction, next_hover_random, wheel_travel_action, PetState,
+        WheelAction, WheelTravel, HOVER_BURST_GAP_MS, HOVER_REMIND_MAX_MS, HOVER_REMIND_MIN_MS,
     };
     use std::time::{Duration, Instant};
 
@@ -2611,13 +2765,37 @@ mod tests {
     }
 
     #[test]
-    fn hover_jump_fires_once_on_enter_and_respects_busy_states() {
-        assert!(hover_should_jump(false, true, false, false, false, true));
-        assert!(!hover_should_jump(true, true, false, false, false, true));
-        assert!(!hover_should_jump(false, false, false, false, false, true));
-        assert!(!hover_should_jump(false, true, true, false, false, true));
-        assert!(!hover_should_jump(false, true, false, true, false, true));
-        assert!(!hover_should_jump(false, true, false, false, true, true));
-        assert!(!hover_should_jump(false, true, false, false, false, false));
+    fn hover_entry_burst_plays_three_jumps_then_random_reminders() {
+        // the Codex hover jump plays three times
+        for remaining in [3u8, 2, 1] {
+            assert_eq!(
+                hover_reaction(remaining, 0),
+                (PetState::Jumping, HOVER_BURST_GAP_MS)
+            );
+        }
+        // after the burst the reminder alternates between wave and jump
+        let (even_action, even_delay) = hover_reaction(0, 0b10);
+        assert_eq!(even_action, PetState::Jumping);
+        let (odd_action, odd_delay) = hover_reaction(0, 0b11);
+        assert_eq!(odd_action, PetState::Waving);
+        for delay in [even_delay, odd_delay] {
+            assert!((HOVER_REMIND_MIN_MS..=HOVER_REMIND_MAX_MS).contains(&delay));
+        }
+    }
+
+    #[test]
+    fn em_posfromchar_unpacks_low_and_high_words() {
+        assert_eq!(super::unpack_char_position(10 | (20 << 16)), (10, 20));
+        assert_eq!(super::unpack_char_position(-1), (-1, -1));
+    }
+
+    #[test]
+    fn hover_random_stays_non_zero_and_changes() {
+        let mut rng = 1u64;
+        let first = next_hover_random(&mut rng);
+        let second = next_hover_random(&mut rng);
+        assert_ne!(first, 0);
+        assert_ne!(first, second);
+        assert_ne!(second, 0);
     }
 }
