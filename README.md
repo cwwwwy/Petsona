@@ -1,8 +1,10 @@
 # Petsona
 
+[简体中文](README.md) | [English](README.en.md)
+
 Windows / macOS 桌宠与 AI 伴侣。宠物在桌面上陪伴你，支持聊天、查看历史、编辑角色设定，以及管理关于你、共同经历和约定的记忆。
 
-当前版本为 0.1.0 发布准备。桌面壳、功能验收与 M6-A 清理已通过；安装包、签名、公证与安装升级验收尚未完成。
+当前版本为 0.1.0 发布准备。桌面壳、功能验收与 M6-A 清理已通过；安装包、签名、公证与安装升级验收尚未完成。项目 Git 历史已重建为单一初始提交。
 
 ## 使用与数据
 
@@ -62,9 +64,9 @@ Windows 构建产物位于 %USERPROFILE%\petsona-build\desktop-target；Mac.app 
 
 M6-B 将制作 Windows 与 macOS 安装包并准备发布流程。候选包生成后，再集中验收首次安装、升级时保留宠物/角色/记忆/设置、登录自启、卸载后的数据保留、Windows 运行时处理和 macOS 首次打开。
 
-## 当前工作文档
+## 开发文档
 
-只在 docs/plans 和 docs/execution 保留当前任务计划及执行状态。Git 历史重建尚待用户在 Windows 回归通过后执行；当前保留的任务记录见 [收束计划](docs/plans/project-consolidation.md) 和 [执行状态](docs/execution/project-consolidation.md)。
+长期开发计划与阶段执行结果分别维护在[开发计划](docs/DEVELOPMENT_PLAN.md)和[开发执行记录](docs/DEVELOPMENT_EXECUTION.md)。
 
 ## License
 
