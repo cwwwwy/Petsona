@@ -1,0 +1,45 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/petsona-core",
+    "crates/petsona-runtime",
+]
+exclude = [
+    "apps/desktop/src-tauri",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+authors = ["cwwwwy"]
+
+[workspace.dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+anyhow = "1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+parking_lot = "0.12"
+uuid = { version = "1", features = ["v4", "serde"] }
+time = { version = "0.3", features = ["formatting", "macros", "local-offset"] }
+dirs = "6"
+image = { version = "0.25", default-features = false, features = ["webp", "png", "jpeg"] }
+zip = { version = "8", default-features = false, features = ["deflate"] }
+ureq = { version = "3", features = ["json"] }
+keyring = { version = "3", default-features = false, features = ["apple-native", "windows-native"] }
+
+[profile.dev]
+opt-level = 1
+
+[profile.dev.package."*"]
+opt-level = 2
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = true
+# 新的 Tauri 壳与运行时同进程；保持 unwind 以便引擎任务捕获 panic 并记录，
+# 而不是让一次任务 panic 结束整个常驻进程。
+panic = "unwind"

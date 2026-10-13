@@ -1,0 +1,1375 @@
+//! Pet animation states, the official Codex timing table, and the priority
+//! state machine that turns chat/agent/auto-walk events into a state.
+
+use std::collections::BTreeMap;
+use std::time::{Duration, Instant};
+
+use serde::{Deserialize, Serialize};
+
+use crate::pet::atlas::PetAtlas;
+use crate::pet::manifest::{FrameSpec, PetManifest};
+
+/// The Codex-compatible animation rows.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum PetState {
+    Idle,
+    RunningRight,
+    RunningLeft,
+    Waving,
+    Jumping,
+    Failed,
+    Waiting,
+    Running,
+    Review,
+    LookRow9,
+    LookRow10,
+}
+
+impl PetState {
+    pub const ALL: [PetState; 11] = [
+        PetState::Idle,
+        PetState::RunningRight,
+        PetState::RunningLeft,
+        PetState::Waving,
+        PetState::Jumping,
+        PetState::Failed,
+        PetState::Waiting,
+        PetState::Running,
+        PetState::Review,
+        PetState::LookRow9,
+        PetState::LookRow10,
+    ];
+
+    /// Canonical Codex row index.
+    pub fn row(self) -> u32 {
+        match self {
+            PetState::Idle => 0,
+            PetState::RunningRight => 1,
+            PetState::RunningLeft => 2,
+            PetState::Waving => 3,
+            PetState::Jumping => 4,
+            PetState::Failed => 5,
+            PetState::Waiting => 6,
+            PetState::Running => 7,
+            PetState::Review => 8,
+            PetState::LookRow9 => 9,
+            PetState::LookRow10 => 10,
+        }
+    }
+
+    /// Canonical Codex state name.
+    pub fn name(self) -> &'static str {
+        match self {
+            PetState::Idle => "idle",
+            PetState::RunningRight => "running-right",
+            PetState::RunningLeft => "running-left",
+            PetState::Waving => "waving",
+            PetState::Jumping => "jumping",
+            PetState::Failed => "failed",
+            PetState::Waiting => "waiting",
+            PetState::Running => "running",
+            PetState::Review => "review",
+            PetState::LookRow9 => "look-row-9",
+            PetState::LookRow10 => "look-row-10",
+        }
+    }
+
+    /// Parse a state name from the protocol / manifest, accepting common aliases.
+    pub fn from_name(name: &str) -> Option<Self> {
+        let normalized = name.trim().to_ascii_lowercase().replace(['_', ' '], "-");
+        let normalized = normalized.trim_start_matches("look-row-");
+        match normalized {
+            "idle" | "still" | "default" => Some(PetState::Idle),
+            "running-right" | "runningright" | "walk-right" | "walkright" | "right" => {
+                Some(PetState::RunningRight)
+            }
+            "running-left" | "runningleft" | "walk-left" | "walkleft" | "left" => {
+                Some(PetState::RunningLeft)
+            }
+            "waving" | "wave" | "hello" | "greeting" => Some(PetState::Waving),
+            "jumping" | "jump" | "hop" => Some(PetState::Jumping),
+            "failed" | "fail" | "error" | "sad" => Some(PetState::Failed),
+            "waiting" | "wait" | "blocked" | "input" => Some(PetState::Waiting),
+            "running" | "working" | "work" | "busy" | "thinking" => Some(PetState::Running),
+            "review" | "success" | "done" | "complete" => Some(PetState::Review),
+            "9" | "look9" => Some(PetState::LookRow9),
+            "10" | "look10" => Some(PetState::LookRow10),
+            _ => None,
+        }
+    }
+
+    /// Higher wins. Used to arbitrate competing events.
+    pub fn priority(self) -> u8 {
+        match self {
+            PetState::Failed => 90,
+            PetState::Waiting => 80,
+            PetState::Running => 70,
+            PetState::Review => 60,
+            PetState::Waving | PetState::Jumping => 40,
+            PetState::LookRow9 | PetState::LookRow10 => 20,
+            PetState::RunningLeft | PetState::RunningRight => 10,
+            PetState::Idle => 0,
+        }
+    }
+
+    /// One-shot states return to their fallback after playing once. Explicit
+    /// protocol raises of the V2 look rows remain one-shot; cursor-driven gaze
+    /// uses the separate holdable lifecycle below.
+    pub fn is_one_shot(self) -> bool {
+        matches!(
+            self,
+            PetState::Waving | PetState::Jumping | PetState::LookRow9 | PetState::LookRow10
+        )
+    }
+
+    /// Direction of a V2 look row, measured from the shipped Codex pet: the
+    /// dark facial features sit right of the head centre in row 9 and left of
+    /// it in row 10 (the same measure puts `running-right` in row 1).
+    pub fn look_towards_right(self) -> bool {
+        matches!(self, PetState::LookRow9)
+    }
+
+    pub fn look_towards_left(self) -> bool {
+        matches!(self, PetState::LookRow10)
+    }
+
+    /// The look row that turns the pet towards `dx` (negative = screen left).
+    pub fn look_towards(dx: f32) -> Option<PetState> {
+        if dx > 0.0 {
+            Some(PetState::LookRow9)
+        } else if dx < 0.0 {
+            Some(PetState::LookRow10)
+        } else {
+            None
+        }
+    }
+
+    /// Locomotion states are driven by the auto-walk engine as the base state.
+    pub fn is_locomotion(self) -> bool {
+        matches!(self, PetState::RunningLeft | PetState::RunningRight)
+    }
+
+    pub fn requires_row(self) -> u32 {
+        self.row()
+    }
+}
+
+/// The lifecycle of a cursor-driven V2 look animation.
+///
+/// A look row contains both the turn towards the cursor and the return to the
+/// front-facing pose.  Continuous gaze splits that row into three phases so
+/// the strongest side-facing frame can be held while the cursor stays in the
+/// trigger region.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GazePhase {
+    Turning,
+    Holding,
+    Returning,
+}
+
+impl GazePhase {
+    pub fn name(self) -> &'static str {
+        match self {
+            GazePhase::Turning => "turning",
+            GazePhase::Holding => "holding",
+            GazePhase::Returning => "returning",
+        }
+    }
+}
+
+/// A resolved animation: global sprite indices with per-frame durations.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Animation {
+    pub state: PetState,
+    pub row: u32,
+    pub sprites: Vec<u32>,
+    pub durations_ms: Vec<f32>,
+    pub loop_anim: bool,
+    pub fallback: PetState,
+    pub total_ms: f32,
+}
+
+impl Animation {
+    fn new(
+        state: PetState,
+        row: u32,
+        columns: u32,
+        durations_ms: Vec<f32>,
+        loop_anim: bool,
+        fallback: PetState,
+    ) -> Self {
+        let count = durations_ms.len() as u32;
+        let sprites = (0..count).map(|i| row * columns + i).collect::<Vec<_>>();
+        let total_ms = durations_ms.iter().sum();
+        Self {
+            state,
+            row,
+            sprites,
+            durations_ms,
+            loop_anim,
+            fallback,
+            total_ms,
+        }
+    }
+
+    /// Global sprite index for the frame at `elapsed_ms`.
+    pub fn sprite_at(&self, elapsed_ms: f32) -> Option<u32> {
+        if self.sprites.is_empty() {
+            return None;
+        }
+        if self.total_ms <= 0.0 {
+            return self.sprites.first().copied();
+        }
+        let mut t = elapsed_ms.max(0.0);
+        if self.loop_anim {
+            t %= self.total_ms;
+        } else if t >= self.total_ms {
+            return self.sprites.last().copied();
+        }
+        let mut acc = 0.0;
+        for (i, dur) in self.durations_ms.iter().enumerate() {
+            acc += dur.max(0.0);
+            if t < acc {
+                return self.sprites.get(i).copied();
+            }
+        }
+        self.sprites.last().copied()
+    }
+}
+
+/// Look rows are pose tables, not turn/return timelines. The middle frame is
+/// the neutral, front-facing pose for the row; cursor gaze animates directly
+/// between this pose and the requested pose.
+const GAZE_FRAME_MS: f32 = 16.0;
+/// Official Codex v2 look rows use 16 clockwise directions in 22.5-degree
+/// steps; 0 degrees is up/12 o'clock.
+const GAZE_DIRECTION_STEP_DEGREES: f32 = 22.5;
+
+fn gaze_neutral_frame(animation: &Animation) -> usize {
+    animation.sprites.len().saturating_sub(1) / 2
+}
+
+/// The pose nearest the vertical axis is the bridge between the left and
+/// right look rows. Cross-row gaze changes visit this pose before switching
+/// rows so a cursor sweep over the top or bottom does not flip diagonally.
+fn gaze_crossing_frame(state: PetState, animation: &Animation, dy: f32) -> usize {
+    let last = animation.sprites.len().saturating_sub(1);
+    if dy.abs() < f32::EPSILON {
+        gaze_neutral_frame(animation)
+    } else if state.look_towards_right() == (dy > 0.0) {
+        last
+    } else {
+        0
+    }
+}
+
+/// Return the discrete pose for a transition and whether it has reached its
+/// destination. Index direction is preserved, so up/down gaze moves through
+/// the row in the correct visual order.
+fn gaze_segment_frame(from: usize, to: usize, elapsed_ms: f32) -> (usize, bool) {
+    let distance = from.abs_diff(to);
+    if distance == 0 {
+        return (to, true);
+    }
+    let step = ((elapsed_ms.max(0.0) / GAZE_FRAME_MS).floor() as usize).min(distance);
+    let frame = if to >= from { from + step } else { from - step };
+    (frame, step >= distance)
+}
+
+fn gaze_next_frame_after(elapsed_ms: f32) -> Duration {
+    let elapsed = elapsed_ms.max(0.0);
+    let remainder = elapsed % GAZE_FRAME_MS;
+    let wait = if remainder <= f32::EPSILON {
+        GAZE_FRAME_MS
+    } else {
+        GAZE_FRAME_MS - remainder
+    };
+    Duration::from_millis(wait.ceil().max(1.0) as u64)
+}
+
+/// Codex repeats idle holds six times longer than its regular frame table.
+pub const CODEX_IDLE_LOOP_MULTIPLIER: f32 = 6.0;
+
+/// Codex per-row rendered frame durations (milliseconds).
+pub fn official_durations(state: PetState) -> Vec<f32> {
+    match state {
+        PetState::Idle => vec![280.0, 110.0, 110.0, 140.0, 140.0, 320.0]
+            .into_iter()
+            .map(|duration| duration * CODEX_IDLE_LOOP_MULTIPLIER)
+            .collect(),
+        PetState::RunningRight | PetState::RunningLeft => {
+            let mut v = vec![120.0; 7];
+            v.push(220.0);
+            v
+        }
+        PetState::Waving => vec![140.0, 140.0, 140.0, 280.0],
+        PetState::Jumping => vec![140.0, 140.0, 140.0, 140.0, 280.0],
+        PetState::Failed => {
+            let mut v = vec![140.0; 7];
+            v.push(240.0);
+            v
+        }
+        PetState::Waiting => {
+            let mut v = vec![150.0; 5];
+            v.push(260.0);
+            v
+        }
+        PetState::Running => {
+            let mut v = vec![120.0; 5];
+            v.push(220.0);
+            v
+        }
+        PetState::Review => {
+            let mut v = vec![150.0; 5];
+            v.push(280.0);
+            v
+        }
+        PetState::LookRow9 | PetState::LookRow10 => vec![140.0; 8],
+    }
+}
+
+/// Build every animation available for the given geometry and manifest.
+///
+/// `occupancy` is an optional `columns * rows` bitmap (`true` = the cell holds
+/// at least one opaque pixel). When it is supplied the engine uses the number
+/// of frames a pet actually drew instead of the frame count of the official
+/// table, which keeps community pets and re-published Codex pets in sync.
+pub fn resolve_animations(
+    frame: FrameSpec,
+    manifest: &PetManifest,
+) -> BTreeMap<PetState, Animation> {
+    resolve_animations_with_occupancy(frame, manifest, None)
+}
+
+/// Occupancy-aware variant of [`resolve_animations`].
+pub fn resolve_animations_with_occupancy(
+    frame: FrameSpec,
+    manifest: &PetManifest,
+    occupancy: Option<&[bool]>,
+) -> BTreeMap<PetState, Animation> {
+    let mut out = BTreeMap::new();
+    for state in PetState::ALL {
+        if !frame.has_row(state.requires_row()) {
+            continue;
+        }
+        if let Some(anim) = resolve_one(state, frame, manifest, occupancy) {
+            out.insert(state, anim);
+        }
+    }
+    out
+}
+
+fn track_key(
+    manifest: &PetManifest,
+    state: PetState,
+) -> Option<&crate::pet::manifest::AnimationTrack> {
+    let name = state.name();
+    let snake = name.replace('-', "_");
+    manifest
+        .animations
+        .get(name)
+        .or_else(|| manifest.animations.get(&snake))
+        .or_else(|| manifest.animations.get(&name.replace('-', "")))
+        .or_else(|| manifest.animations.get(&snake.replace('_', "")))
+}
+
+fn resolve_one(
+    state: PetState,
+    frame: FrameSpec,
+    manifest: &PetManifest,
+    occupancy: Option<&[bool]>,
+) -> Option<Animation> {
+    let fallback = track_key(manifest, state)
+        .and_then(|t| t.fallback.as_deref())
+        .and_then(PetState::from_name)
+        .unwrap_or(PetState::Idle);
+
+    if let Some(track) = track_key(manifest, state) {
+        if let Some(frames) = track.frames.as_ref().filter(|f| !f.is_empty()) {
+            let default_dur = track
+                .fps
+                .filter(|f| *f > 0.0)
+                .map(|f| 1000.0 / f)
+                .unwrap_or(140.0);
+            let sprites = frames.iter().map(|f| f.sprite_index()).collect::<Vec<_>>();
+            let durations = frames
+                .iter()
+                .map(|f| f.duration_ms().unwrap_or(default_dur).max(1.0))
+                .collect::<Vec<_>>();
+            let loop_anim = track.loop_anim.unwrap_or(!state.is_one_shot());
+            let total_ms = durations.iter().sum();
+            return Some(Animation {
+                state,
+                row: state.row(),
+                sprites,
+                durations_ms: durations,
+                loop_anim,
+                fallback,
+                total_ms,
+            });
+        }
+    }
+
+    // Fall back to the official Codex timing table, clipped to the real grid.
+    // The frame count comes from the artwork when the caller supplied an
+    // occupancy bitmap, so pets with fewer or extra frames still animate in
+    // their own length instead of the length of the reference sheet.
+    let available = frame.columns as usize;
+    let official = official_durations(state);
+    // Without an occupancy bitmap the official frame count is authoritative;
+    // with one, the artwork decides and the pattern is reshaped to match.
+    let drawn = match occupancy.and_then(|cells| drawn_frames(state.row(), frame, cells)) {
+        Some(count) => count.clamp(1, available),
+        None => official.len().min(available),
+    };
+    let durations = adapt_durations(official, drawn);
+    if durations.is_empty() {
+        return None;
+    }
+    let loop_anim = !state.is_one_shot();
+    Some(Animation::new(
+        state,
+        state.row(),
+        frame.columns,
+        durations,
+        loop_anim,
+        fallback,
+    ))
+}
+
+/// Number of cells drawn from column 0 of `row` (contiguous run of opaque or
+/// partially opaque cells). Returns `None` when the row is completely empty.
+///
+/// Occupancy is authoritative because real V2 packs can differ from the
+/// official timing table: this Codex pet's `idle` row draws 7 cells while
+/// the table lists 6. `adapt_durations` stretches the official pattern to
+/// whatever this returns.
+fn drawn_frames(row: u32, frame: FrameSpec, occupancy: &[bool]) -> Option<usize> {
+    if row >= frame.rows || frame.columns == 0 {
+        return None;
+    }
+    let mut count = 0;
+    for col in 0..frame.columns {
+        let index = (row * frame.columns + col) as usize;
+        if occupancy.get(index).copied().unwrap_or(false) {
+            count += 1;
+        } else {
+            break;
+        }
+    }
+    (count > 0).then_some(count)
+}
+
+/// Reshape the official duration pattern so it covers exactly `count` frames.
+///
+/// The reference sheet keeps a longer hold on the final frame of most rows, so
+/// growing the pattern repeats the dominant middle duration and shrinking it
+/// drops middle frames while preserving that hold.
+pub fn adapt_durations(patterns: Vec<f32>, count: usize) -> Vec<f32> {
+    if count == 0 || patterns.is_empty() {
+        return Vec::new();
+    }
+    if count == patterns.len() {
+        return patterns;
+    }
+    let last = patterns[patterns.len() - 1];
+    let middle = median_duration(&patterns[..patterns.len() - 1]).unwrap_or(last);
+    let mut out = Vec::with_capacity(count);
+    if count == 1 {
+        out.push(last);
+        return out;
+    }
+    let body = &patterns[..patterns.len() - 1];
+    out.extend(body.iter().take(count - 1).copied());
+    while out.len() < count - 1 {
+        out.push(middle);
+    }
+    out.push(last);
+    out
+}
+
+/// Median of a duration slice, ignoring non-finite entries.
+fn median_duration(values: &[f32]) -> Option<f32> {
+    let mut sorted = values
+        .iter()
+        .copied()
+        .filter(|value| value.is_finite())
+        .collect::<Vec<_>>();
+    if sorted.is_empty() {
+        return None;
+    }
+    sorted.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+    Some(sorted[sorted.len() / 2])
+}
+
+/// A state change emitted by the engine.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Transition {
+    pub state: PetState,
+    pub source: String,
+    pub message: Option<String>,
+    pub one_shot: bool,
+}
+
+struct ActiveOverride {
+    state: PetState,
+    source: String,
+    message: Option<String>,
+    expires_at: Option<Instant>,
+    one_shot: bool,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct GazeOverride {
+    state: PetState,
+    phase: GazePhase,
+    from_frame: usize,
+    target_frame: usize,
+    neutral_frame: usize,
+    current_frame: usize,
+}
+
+/// Priority state machine.
+///
+/// `base` is the passive state (idle or auto-walk locomotion); `override_state`
+/// is the highest-priority transient event (chat / agent status / greeting).
+pub struct PetEngine {
+    pub frame: FrameSpec,
+    pub animations: BTreeMap<PetState, Animation>,
+    base: PetState,
+    active: Option<ActiveOverride>,
+    gaze: Option<GazeOverride>,
+}
+
+impl PetEngine {
+    pub fn new(frame: FrameSpec, manifest: &PetManifest) -> Self {
+        Self {
+            frame,
+            animations: resolve_animations(frame, manifest),
+            base: PetState::Idle,
+            active: None,
+            gaze: None,
+        }
+    }
+
+    /// Build an engine that only animates the cells a pet actually drew.
+    pub fn from_atlas(atlas: &PetAtlas, manifest: &PetManifest) -> Self {
+        Self {
+            frame: atlas.frame,
+            animations: resolve_animations_with_occupancy(
+                atlas.frame,
+                manifest,
+                Some(&atlas.occupancy()),
+            ),
+            base: PetState::Idle,
+            active: None,
+            gaze: None,
+        }
+    }
+
+    pub fn current(&self) -> PetState {
+        match (self.active.as_ref(), self.gaze.as_ref()) {
+            (Some(active), Some(gaze)) if active.state.priority() < gaze.state.priority() => {
+                gaze.state
+            }
+            (Some(active), _) => active.state,
+            (None, Some(gaze)) => gaze.state,
+            (None, None) => self.base,
+        }
+    }
+
+    /// Start a horizontal gaze using the row's default middle pose.
+    pub fn glance(&mut self, dx: f32, now: Instant) -> Option<PetState> {
+        self.glance_towards(dx, 0.0, now)
+    }
+
+    /// Start a gaze toward a cursor vector. The two V2 look rows contain eight
+    /// directional poses each; use the target frame instead of always holding
+    /// the middle frame. This keeps the original row animation as the turn
+    /// path while exposing all sixteen look-related cells as target poses.
+    pub fn glance_towards(&mut self, dx: f32, dy: f32, now: Instant) -> Option<PetState> {
+        let (state, target_frame) = self.gaze_target(dx, dy)?;
+        let animation = self.animations.get(&state)?;
+        let neutral_frame = gaze_neutral_frame(animation);
+
+        if let Some(active) = &self.active {
+            let expired = active.expires_at.is_some_and(|at| now >= at);
+            if !expired && state.priority() <= active.state.priority() {
+                return None;
+            }
+        }
+        self.gaze = Some(GazeOverride {
+            state,
+            phase: GazePhase::Turning,
+            from_frame: neutral_frame,
+            target_frame,
+            neutral_frame,
+            current_frame: neutral_frame,
+        });
+        Some(state)
+    }
+
+    /// Resolve a cursor vector to the official V2 look pose.
+    ///
+    /// The desktop app computes `angle = atan2(dx, -dy)` (0 degrees = up,
+    /// clockwise), rounds it to 16 directions in 22.5-degree steps, and maps
+    /// directions 0..7 to row 9 and 8..15 to row 10 (`column = direction % 8`).
+    /// The full angle is used instead of a clamped `dy / |dx|` slope so the
+    /// 22.5, 45, 67.5, 112.5, ... poses are all reachable.
+    pub fn gaze_target(&self, dx: f32, dy: f32) -> Option<(PetState, usize)> {
+        if dx.abs() < f32::EPSILON && dy.abs() < f32::EPSILON {
+            return None;
+        }
+        let angle = (dx.atan2(-dy).to_degrees() + 360.0) % 360.0;
+        let direction = ((angle / GAZE_DIRECTION_STEP_DEGREES).round() as usize) % 16;
+        let state = if direction < 8 {
+            PetState::LookRow9
+        } else {
+            PetState::LookRow10
+        };
+        let len = self.animations.get(&state)?.sprites.len();
+        if len == 0 {
+            return None;
+        }
+
+        let column = direction % 8;
+        let target = if len >= 8 {
+            column.min(len - 1)
+        } else {
+            ((column as f32 * (len - 1) as f32) / 7.0).round() as usize
+        };
+        Some((state, target.min(len - 1)))
+    }
+
+    /// Retarget an active gaze without waiting for the old return segment.
+    /// Returns true when the visible animation should restart at the new
+    /// target pose.
+    pub fn retarget_gaze(&mut self, dx: f32, dy: f32) -> bool {
+        let Some((state, target_frame)) = self.gaze_target(dx, dy) else {
+            return false;
+        };
+        let Some(target_animation) = self.animations.get(&state) else {
+            return false;
+        };
+        let neutral_frame = gaze_neutral_frame(target_animation);
+        let crossing_frame = gaze_crossing_frame(state, target_animation, dy);
+        let Some(existing) = self.gaze else {
+            return false;
+        };
+        let Some(gaze) = &mut self.gaze else {
+            return false;
+        };
+
+        if existing.state != state {
+            let Some(current_animation) = self.animations.get(&existing.state) else {
+                return false;
+            };
+            let current_crossing = gaze_crossing_frame(existing.state, current_animation, dy);
+
+            // Finish moving to the top/bottom/forward bridge in the current
+            // row first. The next pointer update can then switch rows from
+            // the corresponding edge pose instead of snapping to row center.
+            if existing.phase != GazePhase::Holding
+                || existing.current_frame != current_crossing
+                || existing.target_frame != current_crossing
+            {
+                if existing.phase == GazePhase::Turning && existing.target_frame == current_crossing
+                {
+                    return false;
+                }
+                gaze.phase = GazePhase::Turning;
+                gaze.from_frame = existing.current_frame;
+                gaze.target_frame = current_crossing;
+                gaze.current_frame = existing.current_frame;
+                return true;
+            }
+
+            // The old row is already holding its vertical bridge pose. Begin
+            // the new row at its matching edge, then animate inward to target.
+            gaze.state = state;
+            gaze.phase = GazePhase::Turning;
+            gaze.from_frame = crossing_frame;
+            gaze.target_frame = target_frame;
+            gaze.neutral_frame = neutral_frame;
+            gaze.current_frame = crossing_frame;
+            return true;
+        }
+
+        let changed =
+            existing.target_frame != target_frame || existing.phase == GazePhase::Returning;
+        if changed {
+            gaze.phase = GazePhase::Turning;
+            gaze.from_frame = existing.current_frame;
+            gaze.target_frame = target_frame;
+            gaze.neutral_frame = neutral_frame;
+            gaze.current_frame = existing.current_frame;
+        }
+        changed
+    }
+
+    /// Request the return segment of the current gaze.
+    pub fn release_gaze(&mut self, _now: Instant) -> bool {
+        let Some(gaze) = &mut self.gaze else {
+            return false;
+        };
+        if gaze.phase == GazePhase::Returning {
+            return false;
+        }
+        gaze.from_frame = gaze.current_frame;
+        gaze.target_frame = gaze.neutral_frame;
+        gaze.phase = GazePhase::Returning;
+        true
+    }
+
+    /// Cancel a gaze without playing its return segment.
+    pub fn cancel_gaze(&mut self) -> bool {
+        self.gaze.take().is_some()
+    }
+
+    /// Direction currently owned by the gaze state, including a gaze hidden
+    /// temporarily behind a higher-priority event.
+    pub fn gaze_direction(&self) -> Option<i8> {
+        self.gaze.as_ref().map(|gaze| {
+            if gaze.state.look_towards_right() {
+                1
+            } else {
+                -1
+            }
+        })
+    }
+
+    /// Return the visible gaze phase. A higher-priority event can temporarily
+    /// cover a gaze, in which case the phase is kept internally but is not
+    /// currently being rendered.
+    pub fn gaze_phase(&self) -> Option<GazePhase> {
+        self.gaze
+            .as_ref()
+            .filter(|gaze| self.current() == gaze.state)
+            .map(|gaze| gaze.phase)
+    }
+
+    pub fn gaze_visible(&self) -> bool {
+        self.gaze_phase().is_some()
+    }
+
+    pub fn gaze_target_frame(&self) -> Option<usize> {
+        self.gaze.as_ref().map(|gaze| gaze.target_frame)
+    }
+
+    /// Render the active gaze phase. Returning `None` means the return segment
+    /// has completed and the engine has already fallen back to its base/event
+    /// state.
+    pub fn gaze_sprite_at(&mut self, elapsed_ms: f32) -> Option<u32> {
+        let current = self.current();
+        let gaze = self.gaze.as_mut()?;
+        if current != gaze.state {
+            return None;
+        }
+        let animation = self.animations.get(&gaze.state)?;
+        if animation.sprites.is_empty() {
+            self.gaze = None;
+            return None;
+        }
+        let (from_frame, to_frame) = match gaze.phase {
+            GazePhase::Turning => (gaze.from_frame, gaze.target_frame),
+            GazePhase::Holding => (gaze.target_frame, gaze.target_frame),
+            GazePhase::Returning => (gaze.from_frame, gaze.neutral_frame),
+        };
+        let (frame, done) = gaze_segment_frame(from_frame, to_frame, elapsed_ms);
+        gaze.current_frame = frame.min(animation.sprites.len().saturating_sub(1));
+        if done {
+            match gaze.phase {
+                GazePhase::Turning => gaze.phase = GazePhase::Holding,
+                GazePhase::Returning => {
+                    self.gaze = None;
+                    return None;
+                }
+                GazePhase::Holding => {}
+            }
+        }
+        animation.sprites.get(gaze.current_frame).copied()
+    }
+
+    /// Time until the next visible gaze frame changes. Holding has no frame
+    /// boundary; the app's global cursor poll is responsible for noticing a
+    /// release while the pet is holding its pose.
+    pub fn gaze_next_frame_after(&self, elapsed_ms: f32) -> Option<Duration> {
+        let gaze = self.gaze.as_ref()?;
+        if self.current() != gaze.state {
+            return None;
+        }
+        let (from_frame, to_frame) = match gaze.phase {
+            GazePhase::Turning => (gaze.from_frame, gaze.target_frame),
+            GazePhase::Holding => (gaze.target_frame, gaze.target_frame),
+            GazePhase::Returning => (gaze.from_frame, gaze.neutral_frame),
+        };
+        let (_, done) = gaze_segment_frame(from_frame, to_frame, elapsed_ms);
+        if gaze.phase == GazePhase::Holding {
+            Some(Duration::from_secs(1))
+        } else if done {
+            Some(Duration::from_millis(1))
+        } else {
+            Some(gaze_next_frame_after(elapsed_ms))
+        }
+    }
+
+    pub fn base(&self) -> PetState {
+        self.base
+    }
+
+    pub fn bubble(&self) -> Option<&str> {
+        self.active.as_ref().and_then(|a| a.message.as_deref())
+    }
+
+    pub fn source(&self) -> Option<&str> {
+        if let Some(active) = &self.active {
+            if self.current() == active.state {
+                return Some(active.source.as_str());
+            }
+        }
+        self.gaze_visible().then_some("gaze")
+    }
+
+    pub fn animation(&self, state: PetState) -> Option<&Animation> {
+        self.animations.get(&state)
+    }
+
+    pub fn current_animation(&self) -> Option<&Animation> {
+        self.animations
+            .get(&self.current())
+            .or_else(|| self.animations.get(&PetState::Idle))
+    }
+
+    /// Passive locomotion / idle state, only applied when no override is active.
+    pub fn set_base(&mut self, state: PetState) -> bool {
+        if !state.is_locomotion() && state != PetState::Idle {
+            return false;
+        }
+        if !self.animations.contains_key(&state) {
+            return false;
+        }
+        if self.base == state {
+            return false;
+        }
+        self.base = state;
+        self.active.is_none() && self.gaze.is_none()
+    }
+
+    /// Raise a transient state. Returns `true` if the visible state changed.
+    pub fn raise(
+        &mut self,
+        state: PetState,
+        source: &str,
+        message: Option<String>,
+        ttl: Option<Duration>,
+        now: Instant,
+    ) -> Option<Transition> {
+        if !self.animations.contains_key(&state) {
+            return None;
+        }
+        let incoming = state.priority();
+        if let Some(active) = &self.active {
+            let expired = active.expires_at.is_some_and(|t| now >= t);
+            // A source owns its own lifecycle: `running -> review` from the same
+            // agent must be allowed. Priority only arbitrates *competing* sources.
+            let same_source = active.source == source;
+            if !expired && !same_source && incoming <= active.state.priority() {
+                return None;
+            }
+        }
+        if self.active.is_none()
+            && self
+                .gaze
+                .as_ref()
+                .is_some_and(|gaze| incoming <= gaze.state.priority())
+        {
+            return None;
+        }
+        let one_shot = state.is_one_shot();
+        self.active = Some(ActiveOverride {
+            state,
+            source: source.to_string(),
+            message,
+            expires_at: ttl.map(|d| now + d),
+            one_shot,
+        });
+        Some(Transition {
+            state,
+            source: source.to_string(),
+            message: self.active.as_ref().and_then(|a| a.message.clone()),
+            one_shot,
+        })
+    }
+
+    /// Clear overrides from a source (e.g. an agent session ended).
+    pub fn clear_source(&mut self, source: &str, now: Instant) -> Option<Transition> {
+        if source == "gaze" && self.cancel_gaze() {
+            return Some(Transition {
+                state: self.current(),
+                source: source.to_string(),
+                message: None,
+                one_shot: false,
+            });
+        }
+        match &self.active {
+            Some(active) if active.source == source => {
+                self.active = None;
+                Some(Transition {
+                    state: self.current(),
+                    source: source.to_string(),
+                    message: None,
+                    one_shot: false,
+                })
+            }
+            _ => {
+                let _ = now;
+                None
+            }
+        }
+    }
+
+    pub fn clear_all(&mut self) -> Option<Transition> {
+        if self.active.take().is_some() || self.gaze.take().is_some() {
+            Some(Transition {
+                state: self.base,
+                source: "system".to_string(),
+                message: None,
+                one_shot: false,
+            })
+        } else {
+            None
+        }
+    }
+
+    /// Called when a one-shot animation finished playing.
+    pub fn on_one_shot_finished(&mut self) -> Option<Transition> {
+        let active = self.active.as_ref()?;
+        if !active.one_shot {
+            return None;
+        }
+        let source = active.source.clone();
+        let fallback = self
+            .animations
+            .get(&active.state)
+            .map(|a| a.fallback)
+            .unwrap_or(self.base);
+        self.active = None;
+        // Prefer the state's declared fallback if it is renderable, else base.
+        let next = if self.animations.contains_key(&fallback) {
+            fallback
+        } else {
+            self.base
+        };
+        let next = if self.gaze_visible() {
+            self.current()
+        } else {
+            next
+        };
+        Some(Transition {
+            state: next,
+            source,
+            message: None,
+            one_shot: false,
+        })
+    }
+
+    /// Expire TTLs. Returns a transition when the visible state changed.
+    pub fn tick(&mut self, now: Instant) -> Option<Transition> {
+        let expired = self
+            .active
+            .as_ref()
+            .and_then(|a| a.expires_at)
+            .is_some_and(|t| now >= t);
+        if !expired {
+            return None;
+        }
+        let source = self
+            .active
+            .as_ref()
+            .map(|a| a.source.clone())
+            .unwrap_or_else(|| "system".to_string());
+        self.active = None;
+        Some(Transition {
+            state: self.current(),
+            source,
+            message: None,
+            one_shot: false,
+        })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn engine(rows: u32) -> PetEngine {
+        let manifest = PetManifest::from_json_str(
+            r#"{"id":"t","displayName":"T","spritesheetPath":"s.webp"}"#,
+        )
+        .unwrap();
+        PetEngine::new(FrameSpec::new(8, rows), &manifest)
+    }
+
+    #[test]
+    fn official_table_matches_codex_spec() {
+        assert_eq!(official_durations(PetState::Idle).len(), 6);
+        assert_eq!(
+            official_durations(PetState::Idle),
+            vec![1680.0, 660.0, 660.0, 840.0, 840.0, 1920.0]
+        );
+        assert_eq!(official_durations(PetState::RunningRight).len(), 8);
+        assert_eq!(official_durations(PetState::Waving).len(), 4);
+        assert_eq!(official_durations(PetState::Running)[5], 220.0);
+        assert_eq!(official_durations(PetState::Review)[5], 280.0);
+    }
+
+    #[test]
+    fn locked_codex_bundle_animation_fixture_matches_the_engine_table() {
+        let reference: serde_json::Value = serde_json::from_str(include_str!(
+            "../../testdata/codex-26.930.31428-animation.json"
+        ))
+        .unwrap();
+        let multiplier = reference["idle"]["loopMultiplier"].as_f64().unwrap() as f32;
+        let idle = reference["idle"]["referenceDurationsMs"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|value| value.as_f64().unwrap() as f32 * multiplier)
+            .collect::<Vec<_>>();
+        assert_eq!(official_durations(PetState::Idle), idle);
+
+        for (name, expected) in reference["animations"].as_object().unwrap() {
+            let state = PetState::from_name(name).expect("known reference state");
+            let frames = expected["frames"].as_u64().unwrap() as usize;
+            let frame_ms = expected["frameMs"].as_f64().unwrap() as f32;
+            let last_ms = expected["lastFrameMs"].as_f64().unwrap() as f32;
+            let mut durations = vec![frame_ms; frames];
+            *durations.last_mut().unwrap() = last_ms;
+            assert_eq!(official_durations(state), durations, "{name}");
+        }
+    }
+
+    #[test]
+    fn nine_row_pet_has_no_look_rows() {
+        let e = engine(9);
+        assert!(e.animation(PetState::Idle).is_some());
+        assert!(e.animation(PetState::LookRow9).is_none());
+        let e = engine(11);
+        assert!(e.animation(PetState::LookRow9).is_some());
+        assert!(e.animation(PetState::LookRow10).is_some());
+    }
+
+    #[test]
+    fn adapt_durations_preserves_the_final_hold() {
+        // The reference idle row has six frames; the shipped Codex pet draws
+        // seven. The extra frame inherits the median middle duration.
+        assert_eq!(
+            adapt_durations(vec![280.0, 110.0, 110.0, 140.0, 140.0, 320.0], 7),
+            vec![280.0, 110.0, 110.0, 140.0, 140.0, 140.0, 320.0]
+        );
+        // Shrinking keeps the hold on the last drawn frame.
+        assert_eq!(
+            adapt_durations(vec![280.0, 110.0, 110.0, 140.0, 140.0, 320.0], 3),
+            vec![280.0, 110.0, 320.0]
+        );
+        assert_eq!(adapt_durations(vec![140.0, 280.0], 2), vec![140.0, 280.0]);
+    }
+
+    #[test]
+    fn occupancy_limits_frames_to_the_drawn_cells() {
+        // Row 0 draws five cells, every other row draws one; the pet is a
+        // 3-row grid so only idle and the two running rows exist.
+        let frame = FrameSpec::new(8, 3);
+        let mut occupancy = vec![false; (frame.columns * frame.rows) as usize];
+        for col in 0..5 {
+            occupancy[col as usize] = true;
+        }
+        occupancy[frame.columns as usize] = true;
+        occupancy[(frame.columns * 2) as usize] = true;
+        let manifest = PetManifest::from_json_str(r#"{"id":"t"}"#).unwrap();
+        let animations = resolve_animations_with_occupancy(frame, &manifest, Some(&occupancy));
+        let idle = animations.get(&PetState::Idle).unwrap();
+        assert_eq!(idle.durations_ms.len(), 5);
+        assert_eq!(idle.sprites, vec![0, 1, 2, 3, 4]);
+        assert_eq!(*idle.durations_ms.last().unwrap(), 1920.0);
+        let running = animations.get(&PetState::RunningRight).unwrap();
+        assert_eq!(running.sprites, vec![8]);
+    }
+
+    #[test]
+    fn glance_plays_the_look_row_for_the_cursor_side() {
+        let mut e = engine(11);
+        let now = Instant::now();
+        assert_eq!(e.glance(40.0, now), Some(PetState::LookRow9));
+        assert_eq!(e.current(), PetState::LookRow9);
+        // A glance never interrupts a higher-priority event.
+        let mut busy = engine(11);
+        busy.raise(PetState::Running, "agent", None, None, now);
+        assert_eq!(busy.glance(-40.0, now), None);
+        assert_eq!(busy.current(), PetState::Running);
+        // V1 atlases have no look rows, so the glance is a no-op.
+        let mut narrow = engine(9);
+        assert_eq!(narrow.glance(40.0, now), None);
+        assert_eq!(narrow.current(), PetState::Idle);
+    }
+
+    #[test]
+    fn gaze_target_matches_the_official_16_direction_table() {
+        let e = engine(11);
+        let diagonal = 2.0f32.sqrt() / 2.0;
+        let cases = [
+            (0.0, -1.0, PetState::LookRow9, 0),
+            (diagonal, -diagonal, PetState::LookRow9, 2),
+            (1.0, 0.0, PetState::LookRow9, 4),
+            (0.0, 1.0, PetState::LookRow10, 0),
+            (-1.0, 0.0, PetState::LookRow10, 4),
+            (-diagonal, -diagonal, PetState::LookRow10, 6),
+        ];
+        for (dx, dy, state, column) in cases {
+            assert_eq!(
+                e.gaze_target(dx, dy),
+                Some((state, column)),
+                "dx={dx} dy={dy}"
+            );
+        }
+        assert_eq!(e.gaze_target(0.0, 0.0), None);
+    }
+
+    #[test]
+    fn gaze_holds_the_side_pose_until_released_then_returns() {
+        let mut e = engine(11);
+        let now = Instant::now();
+        let animation = e.animation(PetState::LookRow9).unwrap().clone();
+        let neutral = gaze_neutral_frame(&animation);
+        let (_, target) = e.gaze_target(10.0, -40.0).expect("upper-right pose");
+        let distance = neutral.abs_diff(target) as f32;
+        let transition_ms = distance * GAZE_FRAME_MS;
+
+        assert_eq!(e.glance_towards(10.0, -40.0, now), Some(PetState::LookRow9));
+        assert_eq!(e.gaze_phase(), Some(GazePhase::Turning));
+        assert_eq!(e.gaze_sprite_at(0.0), Some(animation.sprites[neutral]));
+        assert_eq!(
+            e.gaze_sprite_at(transition_ms + 1.0),
+            Some(animation.sprites[target])
+        );
+        assert_eq!(e.gaze_phase(), Some(GazePhase::Holding));
+        assert_eq!(e.gaze_sprite_at(10_000.0), Some(animation.sprites[target]));
+
+        assert!(e.release_gaze(now));
+        assert_eq!(e.gaze_phase(), Some(GazePhase::Returning));
+        assert_eq!(e.gaze_sprite_at(0.0), Some(animation.sprites[target]));
+        assert_eq!(e.gaze_sprite_at(transition_ms + 1.0), None);
+        assert_eq!(e.current(), PetState::Idle);
+        assert_eq!(e.gaze_phase(), None);
+    }
+
+    #[test]
+    fn gaze_crosses_left_and_right_through_the_vertical_edge_pose() {
+        for (dy, left_edge, right_edge) in [(-40.0, 7, 0), (40.0, 0, 7)] {
+            let mut e = engine(11);
+            let now = Instant::now();
+            let left = e.animation(PetState::LookRow10).unwrap().clone();
+            let right = e.animation(PetState::LookRow9).unwrap().clone();
+            let (_, left_target) = e.gaze_target(-100.0, dy).unwrap();
+            let (_, right_target) = e.gaze_target(100.0, dy).unwrap();
+
+            assert_eq!(e.glance_towards(-100.0, dy, now), Some(PetState::LookRow10));
+            let neutral = gaze_neutral_frame(&left);
+            let initial_turn_ms = neutral.abs_diff(left_target) as f32 * GAZE_FRAME_MS;
+            assert_eq!(
+                e.gaze_sprite_at(initial_turn_ms + 1.0),
+                Some(left.sprites[left_target])
+            );
+
+            assert!(e.retarget_gaze(100.0, dy));
+            assert_eq!(e.current(), PetState::LookRow10);
+            assert_eq!(e.gaze_target_frame(), Some(left_edge));
+            let bridge_ms = left_target.abs_diff(left_edge) as f32 * GAZE_FRAME_MS;
+            assert_eq!(
+                e.gaze_sprite_at(bridge_ms + 1.0),
+                Some(left.sprites[left_edge])
+            );
+            assert_eq!(e.gaze_phase(), Some(GazePhase::Holding));
+
+            assert!(e.retarget_gaze(100.0, dy));
+            assert_eq!(e.current(), PetState::LookRow9);
+            assert_eq!(e.gaze_sprite_at(0.0), Some(right.sprites[right_edge]));
+            let target_ms = right_edge.abs_diff(right_target) as f32 * GAZE_FRAME_MS;
+            assert_eq!(
+                e.gaze_sprite_at(target_ms + 1.0),
+                Some(right.sprites[right_target])
+            );
+            assert_eq!(e.gaze_phase(), Some(GazePhase::Holding));
+        }
+    }
+
+    #[test]
+    fn gaze_does_not_override_higher_priority_events_or_get_replaced_by_motion() {
+        let mut e = engine(11);
+        let now = Instant::now();
+        assert_eq!(e.glance(40.0, now), Some(PetState::LookRow9));
+        assert_eq!(
+            e.raise(PetState::RunningRight, "motion", None, None, now),
+            None
+        );
+        assert_eq!(e.current(), PetState::LookRow9);
+
+        assert!(e
+            .raise(
+                PetState::Waving,
+                "click",
+                None,
+                Some(Duration::from_secs(1)),
+                now,
+            )
+            .is_some());
+        assert_eq!(e.current(), PetState::Waving);
+        assert_eq!(e.gaze_phase(), None);
+        assert!(e.tick(now + Duration::from_secs(2)).is_some());
+        assert_eq!(e.current(), PetState::LookRow9);
+    }
+
+    #[test]
+    fn look_rows_point_away_from_the_shipped_pet_measurement() {
+        assert!(PetState::LookRow9.look_towards_right());
+        assert!(PetState::LookRow10.look_towards_left());
+        assert_eq!(PetState::look_towards(-12.0), Some(PetState::LookRow10));
+        assert_eq!(PetState::look_towards(12.0), Some(PetState::LookRow9));
+        assert_eq!(PetState::look_towards(0.0), None);
+        assert!(PetState::LookRow9.is_one_shot());
+        assert!(PetState::LookRow10.is_one_shot());
+    }
+
+    #[test]
+    fn sprite_indices_are_global() {
+        let e = engine(9);
+        let anim = e.animation(PetState::Waving).unwrap();
+        assert_eq!(anim.sprites, vec![24, 25, 26, 27]);
+    }
+
+    #[test]
+    fn sprite_at_respects_durations_and_loop() {
+        let e = engine(9);
+        let idle = e.animation(PetState::Idle).unwrap();
+        assert_eq!(idle.sprite_at(0.0), Some(0));
+        assert_eq!(idle.sprite_at(2000.0), Some(1));
+        // Codex holds each idle frame six times longer than the frame table.
+        assert_eq!(idle.sprite_at(2500.0), Some(2));
+        assert_eq!(idle.sprite_at(4800.0), Some(5));
+        // loops back to the start
+        assert_eq!(idle.sprite_at(idle.total_ms), Some(0));
+        assert_eq!(idle.sprite_at(idle.total_ms + 1.0), Some(0));
+        let wave = e.animation(PetState::Waving).unwrap();
+        assert!(!wave.loop_anim);
+        assert_eq!(wave.sprite_at(10_000.0), Some(27));
+    }
+
+    #[test]
+    fn priority_arbitration() {
+        let mut e = engine(9);
+        let now = Instant::now();
+        assert!(e
+            .raise(PetState::Running, "agent:codex", None, None, now)
+            .is_some());
+        // waiting outranks running
+        assert!(e
+            .raise(
+                PetState::Waiting,
+                "agent:codex",
+                Some("approve".into()),
+                None,
+                now
+            )
+            .is_some());
+        assert_eq!(e.current(), PetState::Waiting);
+        // idle cannot override waiting
+        assert!(e.raise(PetState::Idle, "system", None, None, now).is_none());
+        assert_eq!(e.current(), PetState::Waiting);
+        // failed outranks waiting
+        assert!(e.raise(PetState::Failed, "chat", None, None, now).is_some());
+        assert_eq!(e.current(), PetState::Failed);
+    }
+
+    #[test]
+    fn same_source_can_step_down_but_others_cannot() {
+        let mut e = engine(9);
+        let now = Instant::now();
+        assert!(e
+            .raise(PetState::Running, "agent:claude", None, None, now)
+            .is_some());
+        // Same agent session finishing: running -> review is a downgrade but valid.
+        assert!(e
+            .raise(PetState::Review, "agent:claude", None, None, now)
+            .is_some());
+        assert_eq!(e.current(), PetState::Review);
+        // A different source may not downgrade it.
+        assert!(e.raise(PetState::Idle, "system", None, None, now).is_none());
+        assert_eq!(e.current(), PetState::Review);
+        // ...but may still upgrade it.
+        assert!(e
+            .raise(PetState::Waiting, "agent:codex", None, None, now)
+            .is_some());
+        assert_eq!(e.current(), PetState::Waiting);
+    }
+
+    #[test]
+    fn ttl_expiry_falls_back_to_base() {
+        let mut e = engine(9);
+        let now = Instant::now();
+        e.set_base(PetState::RunningLeft);
+        e.raise(
+            PetState::Running,
+            "agent:codex",
+            None,
+            Some(Duration::from_millis(50)),
+            now,
+        );
+        assert_eq!(e.current(), PetState::Running);
+        assert!(e.tick(now + Duration::from_millis(10)).is_none());
+        let t = e.tick(now + Duration::from_millis(60)).unwrap();
+        assert_eq!(t.state, PetState::RunningLeft);
+    }
+
+    #[test]
+    fn one_shot_returns_to_fallback() {
+        let mut e = engine(9);
+        let now = Instant::now();
+        e.raise(PetState::Waving, "system", None, None, now);
+        assert_eq!(e.current(), PetState::Waving);
+        let t = e.on_one_shot_finished().unwrap();
+        assert_eq!(t.state, PetState::Idle);
+    }
+
+    #[test]
+    fn manifest_track_overrides_defaults() {
+        let manifest = PetManifest::from_json_str(
+            r#"{"id":"t","spritesheetPath":"s.webp",
+                "animations":{"waving":{"frames":[24,25],"fps":10,"loop":false,"fallback":"idle"}}}"#,
+        )
+        .unwrap();
+        let e = PetEngine::new(FrameSpec::new(8, 9), &manifest);
+        let wave = e.animation(PetState::Waving).unwrap();
+        assert_eq!(wave.sprites, vec![24, 25]);
+        assert_eq!(wave.durations_ms, vec![100.0, 100.0]);
+        assert!(!wave.loop_anim);
+    }
+
+    #[test]
+    fn parses_state_aliases() {
+        assert_eq!(
+            PetState::from_name("running-right"),
+            Some(PetState::RunningRight)
+        );
+        assert_eq!(
+            PetState::from_name("running_right"),
+            Some(PetState::RunningRight)
+        );
+        assert_eq!(PetState::from_name("working"), Some(PetState::Running));
+        assert_eq!(PetState::from_name("RUNNING"), Some(PetState::Running));
+        assert_eq!(PetState::from_name("look-row-9"), Some(PetState::LookRow9));
+        assert_eq!(PetState::from_name("nope"), None);
+    }
+}

@@ -1,0 +1,49 @@
+[package]
+name = "petsona-desktop"
+version = "0.1.0"
+edition = "2021"
+description = "Petsona desktop shell (Rust platform layer + TypeScript content UI)"
+license = "MIT"
+
+[features]
+default = []
+acceptance-hooks = []
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = ["tray-icon", "image-ico", "image-png"] }
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp"] }
+petsona-core = { path = "../../../crates/petsona-core" }
+petsona-runtime = { path = "../../../crates/petsona-runtime" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = [
+    "Win32_Foundation",
+    "Win32_Graphics_Dwm",
+    "Win32_Graphics_Gdi",
+    "Win32_Graphics_GdiPlus",
+    "Win32_System_Com",
+    "Win32_System_Registry",
+    "Win32_System_LibraryLoader",
+    "Win32_System_Threading",
+    "Win32_UI_Controls_Dialogs",
+    "Win32_UI_HiDpi",
+    "Win32_UI_Shell",
+    "Win32_UI_Shell_Common",
+    "Win32_UI_Input_KeyboardAndMouse",
+    "Win32_UI_WindowsAndMessaging",
+] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "=0.6.5"
+objc2-app-kit = { version = "=0.3.2", default-features = false, features = ["std", "NSApplication", "NSOpenPanel", "NSSavePanel", "NSPanel", "NSResponder", "NSWindow", "NSView", "NSImage", "NSImageRep", "NSBitmapImageRep", "NSGraphics", "NSColor", "NSScreen", "NSEvent", "NSCursor", "NSTextField", "NSControl", "NSFont", "NSGlassEffectView", "NSText", "NSTextView", "NSTextInputClient", "NSLayoutManager", "NSTextContainer", "NSScrollView", "NSClipView", "NSButton", "NSCell", "NSButtonCell", "objc2-core-foundation"] }
+objc2-foundation = { version = "=0.3.2", default-features = false, features = ["std", "NSArray", "NSString", "NSURL", "NSDictionary", "NSValue", "NSData", "NSRange", "NSAttributedString"] }
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = true

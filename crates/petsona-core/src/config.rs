@@ -1,0 +1,366 @@
+//! Application configuration and paths.
+
+use std::collections::BTreeMap;
+use std::path::{Path, PathBuf};
+
+use serde::{Deserialize, Serialize};
+
+use crate::error::{Error, Result};
+
+pub const CONFIG_SCHEMA_VERSION: u32 = 1;
+
+/// Built-in provider presets.
+pub const PROVIDER_DEEPSEEK: &str = "deepseek";
+pub const PROVIDER_CUSTOM: &str = "custom";
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase", default)]
+pub struct DeepSeekConfig {
+    /// `deepseek` (the built-in preset) or `custom` (any OpenAI-compatible
+    /// endpoint). Anything else normalises to `deepseek` (REQ-S16).
+    pub provider: String,
+    /// DeepSeek exposes an OpenAI-compatible endpoint at `/v1/chat/completions`.
+    pub base_url: String,
+    pub model: String,
+    pub api_key_env: String,
+    pub timeout_seconds: u64,
+    /// The short proactive greeting budget remains separate from conversation generation.
+    pub max_tokens: u32,
+    #[serde(default = "default_conversation_max_tokens")]
+    pub conversation_max_tokens: u32,
+    pub temperature: f32,
+    /// Ask DeepSeek to skip reasoning for short greetings.
+    pub thinking_disabled: bool,
+}
+
+fn default_conversation_max_tokens() -> u32 {
+    512
+}
+
+impl Default for DeepSeekConfig {
+    fn default() -> Self {
+        Self {
+            provider: PROVIDER_DEEPSEEK.to_string(),
+            base_url: "https://api.deepseek.com/v1".to_string(),
+            model: "deepseek-v4-flash".to_string(),
+            api_key_env: "DEEPSEEK_API_KEY".to_string(),
+            timeout_seconds: 20,
+            max_tokens: 80,
+            conversation_max_tokens: default_conversation_max_tokens(),
+            temperature: 0.9,
+            thinking_disabled: true,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase", default)]
+pub struct GreetingConfig {
+    pub enabled: bool,
+    pub idle_minutes: u32,
+    pub cooldown_minutes: u32,
+    pub max_chars: usize,
+}
+
+impl Default for GreetingConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            idle_minutes: 30,
+            cooldown_minutes: 120,
+            max_chars: 40,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase", default)]
+pub struct MemoryConfig {
+    pub enabled: bool,
+    pub recent_events: usize,
+    pub fact_limit: usize,
+    /// Drop events older than this many days; 0 keeps everything (REQ-P05).
+    #[serde(default)]
+    pub event_retention_days: u32,
+    /// Fold facts beyond `fact_limit` into one 「画像」 fact instead of dropping
+    /// them (REQ-P05). On by default: it replaces a silent truncation.
+    #[serde(default = "default_true")]
+    pub fact_compress: bool,
+}
+
+fn default_true() -> bool {
+    true
+}
+
+impl Default for MemoryConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            recent_events: 5,
+            fact_limit: 20,
+            event_retention_days: 0,
+            fact_compress: true,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase", default)]
+pub struct ConversationConfig {
+    pub save_history: bool,
+}
+
+impl Default for ConversationConfig {
+    fn default() -> Self {
+        Self { save_history: true }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase", default)]
+pub struct PetWindowConfig {
+    pub scale: f32,
+    pub opacity: f32,
+    pub always_on_top: bool,
+    pub click_through: bool,
+    /// Physics: the pet falls to the bottom of the current monitor's work
+    /// area when it is dropped in mid-air. Off by default.
+    pub gravity_enabled: bool,
+    pub auto_walk: AutoWalkConfig,
+    pub start_position: Option<WindowPosition>,
+}
+
+impl Default for PetWindowConfig {
+    fn default() -> Self {
+        Self {
+            scale: 1.0,
+            opacity: 1.0,
+            always_on_top: true,
+            click_through: true,
+            gravity_enabled: false,
+            auto_walk: AutoWalkConfig::default(),
+            start_position: None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase", default)]
+pub struct AutoWalkConfig {
+    pub enabled: bool,
+    /// Minutes between short activity reminders.
+    pub interval_minutes: u32,
+    /// How long each short walk lasts.
+    pub walk_seconds: f32,
+    /// Logical pixels per second.
+    pub speed_px_s: f32,
+    /// Total wandering range in logical pixels.
+    pub range_px: f32,
+    pub user_grace_seconds: f32,
+}
+
+impl Default for AutoWalkConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            interval_minutes: 45,
+            walk_seconds: 8.0,
+            speed_px_s: 18.0,
+            range_px: 120.0,
+            user_grace_seconds: 30.0,
+        }
+    }
+}
+
+/// Saved pet-window origin in **physical pixels**.
+///
+/// Win32 window coordinates are physical, and mixing them with a logical
+/// `scale_factor` drifts on mixed-DPI desktops: a 100% monitor next to a 150%
+/// one would restore the pet tens of pixels away from where the user left it.
+/// The UI converts to logical points only at the winit boundary.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase", default)]
+pub struct WindowPosition {
+    /// Horizontal offset from the selected display's left edge, in physical pixels.
+    pub x: f32,
+    /// Vertical offset down from the selected display's top edge, in physical pixels.
+    pub y: f32,
+    /// Display identity is advisory; an unavailable display falls back to a visible display.
+    pub display_id: Option<String>,
+    /// Backing scale used to encode x/y. Old two-field positions use 1.0.
+    pub backing_scale: f32,
+}
+
+impl Default for WindowPosition {
+    fn default() -> Self {
+        Self {
+            x: 0.0,
+            y: 0.0,
+            display_id: None,
+            backing_scale: 1.0,
+        }
+    }
+}
+
+/// The local state protocol hooks use to drive the pet.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase", default)]
+pub struct StateServerConfig {
+    pub enabled: bool,
+    pub port: u16,
+}
+
+impl Default for StateServerConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            port: crate::state_server::DEFAULT_PORT,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase", default)]
+pub struct AppConfig {
+    pub schema_version: u32,
+    pub active_pet: Option<String>,
+    pub active_persona: Option<String>,
+    /// One speaking style per pet (REQ-P01). A missing entry means "the built-in
+    /// persona"; `active_persona` keeps mirroring the currently loaded one.
+    #[serde(default)]
+    pub persona_by_pet: BTreeMap<String, String>,
+    pub first_run: bool,
+    pub window: PetWindowConfig,
+    pub deepseek: DeepSeekConfig,
+    pub greeting: GreetingConfig,
+    pub memory: MemoryConfig,
+    pub conversation: ConversationConfig,
+    pub state_server: StateServerConfig,
+}
+
+impl Default for AppConfig {
+    fn default() -> Self {
+        Self {
+            schema_version: CONFIG_SCHEMA_VERSION,
+            active_pet: None,
+            active_persona: None,
+            persona_by_pet: BTreeMap::new(),
+            first_run: true,
+            window: PetWindowConfig::default(),
+            deepseek: DeepSeekConfig::default(),
+            greeting: GreetingConfig::default(),
+            memory: MemoryConfig::default(),
+            conversation: ConversationConfig::default(),
+            state_server: StateServerConfig::default(),
+        }
+    }
+}
+
+impl AppConfig {
+    pub fn load(path: &Path) -> Result<Self> {
+        if !path.is_file() {
+            return Ok(Self::default());
+        }
+        let text = std::fs::read_to_string(path)?;
+        let mut config: AppConfig = serde_json::from_str(&text)
+            .map_err(|error| Error::config(format!("cannot parse {}: {error}", path.display())))?;
+        if config.schema_version > CONFIG_SCHEMA_VERSION {
+            return Err(Error::config(format!(
+                "config schema {} is newer than this build supports ({CONFIG_SCHEMA_VERSION})",
+                config.schema_version
+            )));
+        }
+        config.schema_version = CONFIG_SCHEMA_VERSION;
+        Ok(config)
+    }
+
+    pub fn save(&self, path: &Path) -> Result<()> {
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        let temp = path.with_extension("json.tmp");
+        std::fs::write(&temp, serde_json::to_string_pretty(self)?)?;
+        std::fs::rename(temp, path)?;
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct AppPaths {
+    pub config_dir: PathBuf,
+    pub pets_dir: PathBuf,
+    pub personas_dir: PathBuf,
+    pub logs_dir: PathBuf,
+    pub config_file: PathBuf,
+    pub memory_file: PathBuf,
+}
+
+impl AppPaths {
+    /// `PETSONA_HOME` overrides the platform config directory, which keeps
+    /// portable installs and smoke tests out of the user's real data.
+    pub fn default_dir() -> PathBuf {
+        if let Some(dir) = std::env::var_os("PETSONA_HOME") {
+            return PathBuf::from(dir);
+        }
+        dirs::config_dir()
+            .unwrap_or_else(|| PathBuf::from("."))
+            .join("Petsona")
+    }
+
+    pub fn resolve(config_dir: PathBuf) -> Self {
+        Self {
+            pets_dir: config_dir.join("pets"),
+            personas_dir: config_dir.join("personas"),
+            logs_dir: config_dir.join("logs"),
+            config_file: config_dir.join("config.json"),
+            memory_file: config_dir.join("memory.json"),
+            config_dir,
+        }
+    }
+
+    pub fn ensure(&self) -> Result<()> {
+        for dir in [
+            &self.config_dir,
+            &self.pets_dir,
+            &self.personas_dir,
+            &self.logs_dir,
+        ] {
+            if !dir.is_dir() {
+                std::fs::create_dir_all(dir)?;
+            }
+        }
+        Ok(())
+    }
+}
+
+impl Default for AppPaths {
+    fn default() -> Self {
+        Self::resolve(Self::default_dir())
+    }
+}
+
+#[cfg(test)]
+mod position_compatibility_tests {
+    use super::*;
+
+    #[test]
+    fn old_two_coordinate_positions_load_and_new_monitor_metadata_round_trips() {
+        let old = r#"{"scale":1.0,"startPosition":{"x":640,"y":480}}"#;
+        let parsed: PetWindowConfig = serde_json::from_str(old).unwrap();
+        let position = parsed.start_position.unwrap();
+        assert_eq!(position.x, 640.0);
+        assert_eq!(position.y, 480.0);
+        assert_eq!(position.display_id, None);
+        assert_eq!(position.backing_scale, 1.0);
+
+        let migrated = WindowPosition {
+            x: 240.0,
+            y: 360.0,
+            display_id: Some("display-a".to_string()),
+            backing_scale: 2.0,
+        };
+        let encoded = serde_json::to_string(&migrated).unwrap();
+        let decoded: WindowPosition = serde_json::from_str(&encoded).unwrap();
+        assert_eq!(decoded, migrated);
+    }
+}

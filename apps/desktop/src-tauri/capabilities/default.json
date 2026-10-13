@@ -1,0 +1,9 @@
+{
+  "identifier": "default",
+  "description": "Only local Petsona settings/chat IPC; no Tauri core API permissions are needed.",
+  "windows": [
+    "settings",
+    "chat"
+  ],
+  "permissions": []
+}

@@ -1,0 +1,598 @@
+//! Personas: system prompt, style traits and greeting. A persona is the unit of
+//! "customisation" the user edits. Sampling / model binding / TTS / proactive
+//! fields were removed in the settings-consolidation batch (REQ-S01) because
+//! nothing consumed them: sampling and model come from the global DeepSeek
+//! config, and idle greetings use `GreetingConfig` in `config.rs`.
+
+use std::collections::BTreeMap;
+use std::path::{Path, PathBuf};
+
+use serde::{Deserialize, Serialize};
+
+use crate::error::{Error, Result};
+
+pub const DEFAULT_PERSONA_ID: &str = "default";
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase", default)]
+pub struct PersonaTraits {
+    /// Free-form tone description, chosen from a preset or typed by the user.
+    pub tone: String,
+    /// `short` | `normal` | `detailed`. Kept in the schema because the system
+    /// prompt uses it, but the settings UI folds it into the tone presets.
+    pub verbosity: String,
+    /// Emoji are allowed by default (settings-consolidation REQ-S13).
+    pub emoji: bool,
+}
+
+impl Default for PersonaTraits {
+    fn default() -> Self {
+        Self {
+            tone: "friendly and concise".to_string(),
+            verbosity: "normal".to_string(),
+            emoji: true,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase", default)]
+pub struct Persona {
+    pub id: String,
+    pub name: String,
+    pub system_prompt: String,
+    /// Unified user-authored character; absent in legacy files.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub character_definition: Option<String>,
+    pub greeting: Option<String>,
+    pub traits: PersonaTraits,
+    #[serde(default)]
+    pub style_profile: Option<PersonaStyleProfile>,
+    #[serde(default)]
+    pub source: Option<PersonaSource>,
+    /// Built-in personas can be edited but not deleted.
+    pub builtin: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+#[serde(rename_all = "camelCase", default)]
+pub struct PersonaStyleProfile {
+    pub personality: String,
+    pub expression_style: String,
+    pub response_habits: String,
+    pub relationship: String,
+    pub examples: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct PersonaSource {
+    pub kind: String,
+    pub label: String,
+    pub description: String,
+    pub sample_count: usize,
+    #[serde(default)]
+    pub target_speaker: Option<String>,
+    pub generated_at: i64,
+}
+
+impl PersonaStyleProfile {
+    pub fn character_text(&self, name: &str) -> String {
+        let mut parts = vec![format!("角色名称：{name}")];
+        for (label, text) in [
+            ("性格与身份", &self.personality),
+            ("说话方式", &self.expression_style),
+            ("回应习惯", &self.response_habits),
+            ("与你的关系", &self.relationship),
+        ] {
+            if !text.trim().is_empty() {
+                parts.push(format!("{label}：{}", text.trim()));
+            }
+        }
+        if !self.examples.is_empty() {
+            parts.push(format!(
+                "典型表达（风格参考）：\n{}",
+                self.examples.join("\n")
+            ));
+        }
+        parts.join("\n\n")
+    }
+}
+
+impl Default for Persona {
+    fn default() -> Self {
+        Self {
+            id: DEFAULT_PERSONA_ID.to_string(),
+            name: "小助手".to_string(),
+            system_prompt: "你是一只住在用户桌面上的宠物伙伴。你友好、好奇、说话简洁。\
+                你可以陪用户聊天、帮忙梳理思路，但不要编造事实。\
+                回答时优先使用用户使用的语言。"
+                .to_string(),
+            character_definition: None,
+            greeting: Some("我在这儿呢，需要我陪你聊聊吗？".to_string()),
+            traits: PersonaTraits::default(),
+            style_profile: None,
+            source: None,
+            builtin: true,
+        }
+    }
+}
+
+impl Persona {
+    pub fn new(id: impl Into<String>, name: impl Into<String>) -> Self {
+        Self {
+            id: id.into(),
+            name: name.into(),
+            builtin: false,
+            ..Self::default()
+        }
+    }
+
+    /// Lossless visible editor projection for existing personas.
+    pub fn character_text(&self) -> String {
+        self.character_definition.clone().unwrap_or_else(|| {
+            let prompt = self.effective_system_prompt(None, None);
+            prompt.trim_end_matches("\n\n只输出你要对用户说的话，不要描述自己的动作或心理活动，不要使用 Markdown 标题。").to_string()
+        })
+    }
+
+    pub fn set_character_text(&mut self, text: String) {
+        self.system_prompt = text.clone(); // readable by older versions
+        self.character_definition = Some(text);
+        self.builtin = false;
+        self.style_profile = None;
+    }
+
+    /// The system prompt actually sent to the model.
+    pub fn effective_system_prompt(&self, pet_name: Option<&str>, state: Option<&str>) -> String {
+        let mut parts = Vec::new();
+        if let Some(definition) = &self.character_definition {
+            parts.push(definition.trim().to_string());
+            if let Some(pet) = pet_name {
+                parts.push(format!("当前桌宠形象：{pet}"));
+            }
+            parts.push("用用户的语言回答；保持角色设定。不要把参考资料或自己的虚构回复当作与用户实际发生的经历。".into());
+            return parts.join("\n\n");
+        }
+        parts.push(self.system_prompt.trim().to_string());
+
+        let mut style = Vec::new();
+        if !self.traits.tone.trim().is_empty() {
+            style.push(format!("语气：{}", self.traits.tone.trim()));
+        }
+        style.push("用与用户相同的语言回答。".to_string());
+        match self.traits.verbosity.as_str() {
+            "short" => style.push("回答保持简短，通常不超过三句话。".to_string()),
+            "detailed" => style.push("回答可以详细一些，必要时分点说明。".to_string()),
+            _ => style.push("回答长度适中，避免冗长。".to_string()),
+        }
+        if !self.traits.emoji {
+            style.push("不要使用 emoji。".to_string());
+        }
+        if !style.is_empty() {
+            parts.push(style.join("\n"));
+        }
+
+        if let Some(pet) = pet_name {
+            parts.push(format!(
+                "你现在的桌宠形象是「{pet}」{}",
+                state
+                    .map(|s| format!("，当前状态：{s}"))
+                    .unwrap_or_default()
+            ));
+        }
+        if let Some(profile) = &self.style_profile {
+            let mut authored_style = vec!["【人格设定】".to_string()];
+            for (label, value) in [
+                ("性格", profile.personality.as_str()),
+                ("表达方式", profile.expression_style.as_str()),
+                ("回应习惯", profile.response_habits.as_str()),
+                ("与用户的关系", profile.relationship.as_str()),
+            ] {
+                if !value.trim().is_empty() {
+                    authored_style.push(format!("{label}：{}", value.trim()));
+                }
+            }
+            if !profile.examples.is_empty() {
+                authored_style.push(format!(
+                    "表达示例（只作为风格参考）：{}",
+                    profile
+                        .examples
+                        .iter()
+                        .take(3)
+                        .map(String::as_str)
+                        .collect::<Vec<_>>()
+                        .join("；")
+                ));
+            }
+            parts.push(authored_style.join("\n"));
+        }
+        parts.push(
+            "只输出你要对用户说的话，不要描述自己的动作或心理活动，不要使用 Markdown 标题。"
+                .to_string(),
+        );
+        parts.join("\n\n")
+    }
+
+    pub fn validate(&self) -> Result<()> {
+        if self
+            .character_definition
+            .as_ref()
+            .is_some_and(|text| text.trim().is_empty() || text.chars().count() > 24_000)
+        {
+            return Err(Error::config("角色设定不能为空或超过24000字"));
+        }
+        if self.id.is_empty() {
+            return Err(Error::config("persona id must not be empty"));
+        }
+        if self.name.trim().is_empty() {
+            return Err(Error::config("persona name must not be empty"));
+        }
+        if self.system_prompt.trim().is_empty() {
+            return Err(Error::config("persona system prompt must not be empty"));
+        }
+        if let Some(profile) = &self.style_profile {
+            for value in [
+                &profile.personality,
+                &profile.expression_style,
+                &profile.response_habits,
+                &profile.relationship,
+            ] {
+                if value.chars().count() > 4000 {
+                    return Err(Error::config("persona style field exceeds 4000 characters"));
+                }
+            }
+            if profile.examples.len() > 8
+                || profile
+                    .examples
+                    .iter()
+                    .any(|example| example.chars().count() > 1000)
+            {
+                return Err(Error::config("persona examples exceed the supported size"));
+            }
+        }
+        Ok(())
+    }
+
+    fn file_name(&self) -> String {
+        // Ids are already validated to be filesystem safe.
+        format!("{}.json", self.id)
+    }
+}
+
+/// Persona storage on disk (`personas/<id>.json`).
+pub struct PersonaStore {
+    dir: PathBuf,
+}
+
+impl PersonaStore {
+    pub fn new(dir: PathBuf) -> Self {
+        Self { dir }
+    }
+
+    pub fn dir(&self) -> &Path {
+        &self.dir
+    }
+
+    pub fn ensure(&self) -> Result<()> {
+        std::fs::create_dir_all(&self.dir)?;
+        if self.list()?.is_empty() {
+            self.save(&Persona::default())?;
+        }
+        Ok(())
+    }
+
+    pub fn list(&self) -> Result<Vec<Persona>> {
+        let mut out = Vec::new();
+        let Ok(entries) = std::fs::read_dir(&self.dir) else {
+            return Ok(out);
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.extension().and_then(|e| e.to_str()) != Some("json") {
+                continue;
+            }
+            match std::fs::read_to_string(&path)
+                .ok()
+                .and_then(|t| serde_json::from_str::<Persona>(&t).ok())
+            {
+                Some(persona) => out.push(persona),
+                None => tracing::warn!(path = %path.display(), "skipping invalid persona file"),
+            }
+        }
+        out.sort_by_key(|p| p.name.to_lowercase());
+        Ok(out)
+    }
+
+    pub fn get(&self, id: &str) -> Result<Option<Persona>> {
+        Ok(self.list()?.into_iter().find(|p| p.id == id))
+    }
+
+    pub fn save(&self, persona: &Persona) -> Result<()> {
+        persona.validate()?;
+        std::fs::create_dir_all(&self.dir)?;
+        let path = self.dir.join(persona.file_name());
+        let tmp = path.with_extension("json.tmp");
+        std::fs::write(&tmp, serde_json::to_string_pretty(persona)?)?;
+        std::fs::rename(&tmp, &path)?;
+        Ok(())
+    }
+
+    pub fn delete(&self, id: &str) -> Result<()> {
+        if id == DEFAULT_PERSONA_ID {
+            return Err(Error::config("the default persona cannot be deleted"));
+        }
+        let path = self.dir.join(format!("{id}.json"));
+        if !path.is_file() {
+            return Err(Error::NotFound(format!("persona '{id}'")));
+        }
+        std::fs::remove_file(path)?;
+        Ok(())
+    }
+
+    pub fn duplicate(&self, id: &str, new_id: &str, new_name: &str) -> Result<Persona> {
+        let mut persona = self
+            .get(id)?
+            .ok_or_else(|| Error::NotFound(format!("persona '{id}'")))?;
+        persona.id = new_id.to_string();
+        persona.name = new_name.to_string();
+        persona.builtin = false;
+        self.save(&persona)?;
+        Ok(persona)
+    }
+
+    /// Import a persona from a JSON file.
+    pub fn import_file(&self, path: &Path, overwrite: bool) -> Result<Persona> {
+        let text = std::fs::read_to_string(path)?;
+        let mut persona: Persona = serde_json::from_str(&text)
+            .map_err(|e| Error::config(format!("cannot parse persona file: {e}")))?;
+        persona.validate()?;
+        if !overwrite && self.get(&persona.id)?.is_some() {
+            return Err(Error::config(format!(
+                "persona '{}' already exists",
+                persona.id
+            )));
+        }
+        persona.builtin = false;
+        self.save(&persona)?;
+        Ok(persona)
+    }
+
+    pub fn export_file(&self, id: &str, out: &Path) -> Result<()> {
+        let persona = self
+            .get(id)?
+            .ok_or_else(|| Error::NotFound(format!("persona '{id}'")))?;
+        if let Some(parent) = out.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        std::fs::write(out, serde_json::to_string_pretty(&persona)?)?;
+        Ok(())
+    }
+}
+
+/// Starter personas offered in the UI.
+pub fn templates() -> BTreeMap<String, Persona> {
+    let mut out = BTreeMap::new();
+
+    let mut genki = Persona::new("genki", "元气助手");
+    genki.system_prompt = "你是一只元气满满的桌面宠物。你热情、爱鼓励人，喜欢用轻快的语气回应，\
+        但在用户需要认真帮助时会立刻切换到靠谱模式。"
+        .into();
+    genki.traits.tone = "元气、鼓励、轻快".into();
+    genki.traits.verbosity = "short".into();
+    genki.greeting = Some("今天也要一起加油呀！".into());
+    genki.builtin = true;
+    out.insert(genki.id.clone(), genki);
+
+    let mut snark = Persona::new("snark", "毒舌吐槽");
+    snark.system_prompt = "你是一只嘴很毒的桌面宠物。你爱吐槽，但吐槽背后是真的关心用户，\
+        绝不进行人身攻击，也不会贬低用户的努力。用户认真提问时要给出准确答案。"
+        .into();
+    snark.traits.tone = "毒舌但温柔".into();
+    snark.traits.verbosity = "short".into();
+    snark.greeting = Some("又见面了，今天又想偷懒多久？".into());
+    snark.builtin = true;
+    out.insert(snark.id.clone(), snark);
+
+    let mut advisor = Persona::new("advisor", "沉稳顾问");
+    advisor.system_prompt = "你是一只沉稳的桌面宠物顾问。你冷静、结构化，习惯先澄清问题再给建议，\
+        会指出风险，也会给出可执行的下一步。"
+        .into();
+    advisor.traits.tone = "沉稳、克制".into();
+    advisor.traits.verbosity = "detailed".into();
+    advisor.greeting = Some("需要我帮你理一理思路吗？".into());
+    advisor.builtin = true;
+    out.insert(advisor.id.clone(), advisor);
+
+    out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn store_round_trips_and_seeds_default() {
+        let tmp = tempfile::tempdir().unwrap();
+        let store = PersonaStore::new(tmp.path().join("personas"));
+        store.ensure().unwrap();
+        assert_eq!(store.list().unwrap().len(), 1);
+        let mut p = Persona::new("snarky", "毒舌");
+        p.system_prompt = "be snarky".into();
+        store.save(&p).unwrap();
+        assert!(store.get("snarky").unwrap().is_some());
+        store.delete("snarky").unwrap();
+        assert!(store.get("snarky").unwrap().is_none());
+        assert!(store.delete(DEFAULT_PERSONA_ID).is_err());
+    }
+
+    #[test]
+    fn traits_default_to_emoji_enabled() {
+        assert!(PersonaTraits::default().emoji);
+        // A user who wants no emoji still gets the explicit instruction.
+        let mut p = Persona::default();
+        p.traits.emoji = false;
+        assert!(p
+            .effective_system_prompt(None, None)
+            .contains("不要使用 emoji"));
+    }
+
+    #[test]
+    fn duplicate_and_templates() {
+        let tmp = tempfile::tempdir().unwrap();
+        let store = PersonaStore::new(tmp.path().to_path_buf());
+        store.ensure().unwrap();
+        let copy = store.duplicate(DEFAULT_PERSONA_ID, "copy", "副本").unwrap();
+        assert!(!copy.builtin);
+        assert_eq!(store.list().unwrap().len(), 2);
+        assert_eq!(templates().len(), 3);
+    }
+
+    #[test]
+    fn effective_prompt_includes_traits_and_pet() {
+        let mut p = Persona::default();
+        p.traits.verbosity = "short".into();
+        let prompt = p.effective_system_prompt(Some("珍珠小子"), Some("工作中"));
+        assert!(prompt.contains("珍珠小子"));
+        assert!(prompt.contains("工作中"));
+        assert!(prompt.contains("简短"));
+        assert!(
+            prompt.contains("用与用户相同的语言回答"),
+            "the prompt must follow the user's language instead of a stored tag"
+        );
+        assert!(
+            !prompt.contains("默认语言"),
+            "the removed language setting must not leak into the prompt"
+        );
+    }
+
+    #[test]
+    fn validation_rejects_bad_values() {
+        let unnamed = Persona {
+            name: "   ".into(),
+            ..Persona::default()
+        };
+        assert!(unnamed.validate().is_err());
+
+        let promptless = Persona {
+            system_prompt: "  ".into(),
+            ..Persona::default()
+        };
+        assert!(promptless.validate().is_err());
+    }
+
+    /// REQ-S01: persona files written by older versions still load; the fields
+    /// that were removed in the settings-consolidation batch are simply ignored.
+    #[test]
+    fn legacy_persona_files_still_load_without_the_removed_fields() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().join("personas");
+        std::fs::create_dir_all(&dir).unwrap();
+        let legacy = r#"{
+            "id": "legacy",
+            "name": "旧人格",
+            "description": "来自旧版本",
+            "avatarPet": "boba",
+            "systemPrompt": "说话简短一点。",
+            "greeting": "我在。",
+            "traits": { "tone": "温和", "verbosity": "short", "language": "zh-CN", "emoji": false },
+            "sampling": { "temperature": 0.4, "maxTokens": 256 },
+            "model": { "provider": "deepseek", "model": "deepseek-v4-flash" },
+            "memory": { "enabled": true, "windowTurns": 12, "longTerm": true, "summarizeAfterTurns": 20 },
+            "tts": { "enabled": true, "voice": "Ting-Ting", "rate": 1.2 },
+            "proactive": { "enabled": true, "idleMinutes": 30 },
+            "builtin": false
+        }"#;
+        std::fs::write(dir.join("legacy.json"), legacy).unwrap();
+
+        let store = PersonaStore::new(dir.clone());
+        let loaded = store.get("legacy").unwrap().expect("legacy persona loads");
+        assert_eq!(loaded.name, "旧人格");
+        assert_eq!(loaded.traits.verbosity, "short");
+        assert_eq!(loaded.greeting.as_deref(), Some("我在。"));
+
+        // Saving rewrites the file without the removed keys.
+        store.save(&loaded).unwrap();
+        let rewritten = std::fs::read_to_string(dir.join("legacy.json")).unwrap();
+        for removed in [
+            "avatarPet",
+            "sampling",
+            "model",
+            "memory",
+            "tts",
+            "proactive",
+        ] {
+            assert!(
+                !rewritten.contains(removed),
+                "removed field {removed} must not be written back: {rewritten}"
+            );
+        }
+    }
+
+    #[test]
+    fn export_then_import() {
+        let tmp = tempfile::tempdir().unwrap();
+        let store = PersonaStore::new(tmp.path().join("a"));
+        store.ensure().unwrap();
+        let mut custom = Persona::new("custom", "自定义");
+        custom.system_prompt = "be custom".into();
+        store.save(&custom).unwrap();
+
+        let out = tmp.path().join("out.json");
+        store.export_file("custom", &out).unwrap();
+
+        let store2 = PersonaStore::new(tmp.path().join("b"));
+        store2.ensure().unwrap();
+        let imported = store2.import_file(&out, false).unwrap();
+        assert_eq!(imported.id, "custom");
+        assert_eq!(imported.name, "自定义");
+    }
+}
+
+#[cfg(test)]
+mod character_tests {
+    use super::*;
+    #[test]
+    fn legacy_projection_preserves_style_and_unified_text_is_authoritative() {
+        let mut persona = Persona::default();
+        persona.traits.emoji = false;
+        persona.style_profile = Some(PersonaStyleProfile {
+            personality: "沉静的旅人".into(),
+            expression_style: "先停顿再回答".into(),
+            ..Default::default()
+        });
+        let legacy = persona.character_text();
+        assert!(
+            legacy.contains("沉静的旅人")
+                && legacy.contains("先停顿再回答")
+                && legacy.contains("不要使用 emoji")
+        );
+        assert!(
+            persona.character_definition.is_none(),
+            "reading cannot migrate disk state"
+        );
+        persona.set_character_text("你是海上的船长，长句回应，使用航海比喻。".into());
+        let effective = persona.effective_system_prompt(Some("Boba"), Some("idle"));
+        assert!(effective.contains("航海比喻"));
+        assert!(!effective.contains("沉静的旅人") && !effective.contains("回答长度适中"));
+        assert!(persona.style_profile.is_none());
+    }
+    #[test]
+    fn character_export_import_keeps_text_and_stable_binding_copy() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = PersonaStore::new(dir.path().join("personas"));
+        let mut persona = Persona::new("pet-a", "旅人");
+        persona.set_character_text("你是旅人，用轻缓的语句回应。".into());
+        store.save(&persona).unwrap();
+        let path = dir.path().join("export.json");
+        store.export_file(&persona.id, &path).unwrap();
+        store.import_file(&path, true).unwrap();
+        let copy = store.duplicate("pet-a", "pet-b", "副本").unwrap();
+        assert_eq!(copy.character_text(), persona.character_text());
+        assert_eq!(
+            store.get("pet-a").unwrap().unwrap().character_text(),
+            persona.character_text()
+        );
+        assert_ne!(copy.id, persona.id);
+    }
+}
